@@ -1,0 +1,5 @@
+# Global configuration
+listen_addr: 127.0.0.1
+port: 3333
+log_level: info
+reactivate_after: 1h

@@ -1,0 +1,24 @@
+# Claude Code API providers configuration
+# Providers are sorted by priority (lower number = higher priority)
+
+providers:
+  # Primary provider - Anthropic official API
+  - name: "anthropic-direct"
+    base_url: "https://api.anthropic.com"
+    api_key: "sk-ant-xxx"
+    priority: 1
+    enabled: true
+
+  # Fallback provider - OpenRouter
+  - name: "openrouter"
+    base_url: "https://openrouter.ai/api"
+    api_key: "sk-or-xxx"
+    priority: 2
+    enabled: true
+
+  # Backup provider (disabled by default)
+  - name: "backup-provider"
+    base_url: "https://backup.example.com"
+    api_key: "sk-backup-xxx"
+    priority: 3
+    enabled: false
