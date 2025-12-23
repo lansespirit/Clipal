@@ -1,5 +1,15 @@
-# Global configuration
+# Global configuration for clipal
+# Copy to ~/.clipal/config.yaml
+
 listen_addr: 127.0.0.1
 port: 3333
-log_level: info
+log_level: info # debug | info | warn | error
 reactivate_after: 1h
+
+# Default: <config-dir>/logs (e.g. ~/.clipal/logs)
+# log_dir: ""
+log_retention_days: 7
+log_stdout: true
+
+# Claude Code: if true, /v1/messages/count_tokens failures won't affect the main conversation provider.
+ignore_count_tokens_failover: false

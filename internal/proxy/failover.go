@@ -157,6 +157,120 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 	http.Error(w, "All providers failed", http.StatusServiceUnavailable)
 }
 
+// forwardCountTokensWithFailover forwards Claude Code /v1/messages/count_tokens requests while
+// keeping the main conversation provider sticky (cp.currentIndex) unchanged.
+//
+// Rationale: Claude Code calls count_tokens frequently; using those failures to move the primary
+// provider can reduce context-cache effectiveness and increase token usage.
+func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req *http.Request, path string) {
+	cp.reactivateExpired()
+
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer req.Body.Close()
+
+	active := cp.activeProviderCount()
+	if active == 0 {
+		wait, reason, ok := cp.timeUntilNextAvailable()
+		if ok && wait > 0 {
+			secs := int(wait / time.Second)
+			if wait%time.Second != 0 {
+				secs++
+			}
+			if secs < 1 {
+				secs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			if reason == "rate_limit" || reason == "overloaded" {
+				http.Error(w, "All providers are rate limited; retry later", http.StatusTooManyRequests)
+				return
+			}
+			http.Error(w, "All providers are temporarily unavailable; retry later", http.StatusServiceUnavailable)
+			return
+		}
+		logger.Error("[%s] all providers unavailable", cp.clientType)
+		http.Error(w, "All providers are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	startIndex := cp.ensureActiveCountTokensStartIndex()
+	attempted := 0
+
+	for offset := 0; offset < len(cp.providers) && attempted < active; offset++ {
+		index := (startIndex + offset) % len(cp.providers)
+		if cp.isDeactivated(index) {
+			continue
+		}
+		attempted++
+		provider := cp.providers[index]
+
+		logger.Debug("[%s] forwarding to: %s (count_tokens attempt %d/%d)", cp.clientType, provider.Name, attempted, active)
+
+		proxyReq, err := cp.createProxyRequest(req, provider, path, bodyBytes)
+		if err != nil {
+			logger.Error("[%s] failed to create request for %s: %v", cp.clientType, provider.Name, err)
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			continue
+		}
+
+		proxyReq.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+
+		resp, err := cp.httpClient.Do(proxyReq)
+		if err != nil {
+			logger.Warn("[%s] %s failed (count_tokens): %v, trying next provider", cp.clientType, provider.Name, err)
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			continue
+		}
+
+		// For count_tokens, only treat auth/billing failures as hard signals that can deactivate a provider.
+		// Other transient failures should not impact the main conversation stickiness (cp.currentIndex).
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			msg := readAndTruncate(resp.Body, 2048)
+			resp.Body.Close()
+			cp.deactivateFor(index, "auth", resp.StatusCode, msg, cp.reactivateAfter)
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			logger.Error("[%s] %s deactivated (count_tokens auth): %d %s", cp.clientType, provider.Name, resp.StatusCode, msg)
+			continue
+		}
+		if resp.StatusCode == http.StatusPaymentRequired {
+			msg := readAndTruncate(resp.Body, 2048)
+			resp.Body.Close()
+			cp.deactivateFor(index, "billing", resp.StatusCode, msg, cp.reactivateAfter)
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			logger.Error("[%s] %s deactivated (count_tokens billing): %d %s", cp.clientType, provider.Name, resp.StatusCode, msg)
+			continue
+		}
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			msg := readAndTruncate(resp.Body, 2048)
+			resp.Body.Close()
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			logger.Warn("[%s] %s failed (count_tokens): %d %s, trying next provider", cp.clientType, provider.Name, resp.StatusCode, msg)
+			continue
+		}
+
+		// Success (or any non-retriable response) - return to client and make count_tokens sticky to this provider.
+		cp.setCountTokensIndex(index)
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		if resp.Body != nil {
+			if _, err := io.Copy(newFlushWriter(w), resp.Body); err != nil {
+				logger.Warn("[%s] response copy failed via %s (count_tokens): %v", cp.clientType, provider.Name, err)
+			}
+		}
+		resp.Body.Close()
+		return
+	}
+
+	logger.Error("[%s] all providers failed (count_tokens)", cp.clientType)
+	http.Error(w, "All providers failed", http.StatusServiceUnavailable)
+}
+
 func (cp *ClientProxy) reactivateExpired() {
 	now := time.Now()
 
@@ -279,6 +393,30 @@ func (cp *ClientProxy) ensureActiveStartIndex() int {
 	}
 	cp.currentIndex = cp.nextActiveIndexLocked(cp.currentIndex)
 	return cp.currentIndex
+}
+
+func (cp *ClientProxy) ensureActiveCountTokensStartIndex() int {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	now := time.Now()
+
+	if len(cp.providers) == 0 {
+		return 0
+	}
+	if cp.countTokensIndex < 0 || cp.countTokensIndex >= len(cp.providers) {
+		cp.countTokensIndex = 0
+	}
+	if cp.deactivated[cp.countTokensIndex].until.IsZero() || !now.Before(cp.deactivated[cp.countTokensIndex].until) {
+		return cp.countTokensIndex
+	}
+	cp.countTokensIndex = cp.nextActiveIndexLocked(cp.countTokensIndex)
+	return cp.countTokensIndex
+}
+
+func (cp *ClientProxy) setCountTokensIndex(index int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	cp.countTokensIndex = index
 }
 
 func (cp *ClientProxy) nextActiveIndex(from int) int {

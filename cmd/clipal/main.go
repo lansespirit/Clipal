@@ -4,9 +4,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/lansespirit/Clipal/internal/config"
@@ -66,6 +69,9 @@ func main() {
 
 	// Set log level
 	logger.SetLevel(cfg.Global.LogLevel)
+	if err := configureFileLogging(cfgDir, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "log file setup failed: %v\n", err)
+	}
 
 	// Create and start the router
 	router := proxy.NewRouter(cfg)
@@ -93,4 +99,30 @@ func main() {
 	}
 
 	logger.Info("clipal stopped")
+}
+
+func configureFileLogging(cfgDir string, cfg *config.Config) error {
+	logDir := strings.TrimSpace(cfg.Global.LogDir)
+	if logDir == "" {
+		logDir = filepath.Join(cfgDir, "logs")
+	}
+
+	retention := cfg.Global.LogRetentionDays
+	if retention <= 0 {
+		retention = 7
+	}
+
+	w, err := logger.NewRotatingFileWriter(logDir, "clipal", retention)
+	if err != nil {
+		return err
+	}
+
+	// Keep the file writer alive for the duration of the process.
+	// Closing on exit is optional; the OS will release the fd.
+	if cfg.Global.LogStdout == nil || *cfg.Global.LogStdout {
+		logger.SetOutput(io.MultiWriter(os.Stdout, w))
+	} else {
+		logger.SetOutput(w)
+	}
+	return nil
 }

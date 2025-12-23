@@ -11,6 +11,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func ptr[T any](v T) *T { return &v }
+
 // LogLevel represents the log level
 type LogLevel string
 
@@ -23,10 +25,16 @@ const (
 
 // GlobalConfig represents the global configuration
 type GlobalConfig struct {
-	ListenAddr      string   `yaml:"listen_addr"`
-	Port            int      `yaml:"port"`
-	LogLevel        LogLevel `yaml:"log_level"`
-	ReactivateAfter string   `yaml:"reactivate_after"`
+	ListenAddr       string   `yaml:"listen_addr"`
+	Port             int      `yaml:"port"`
+	LogLevel         LogLevel `yaml:"log_level"`
+	ReactivateAfter  string   `yaml:"reactivate_after"`
+	LogDir           string   `yaml:"log_dir"`
+	LogRetentionDays int      `yaml:"log_retention_days"`
+	LogStdout        *bool    `yaml:"log_stdout"`
+	// IgnoreCountTokensFailover disables provider switching for Claude Code
+	// /v1/messages/count_tokens requests, which helps keep context cache warm.
+	IgnoreCountTokensFailover bool `yaml:"ignore_count_tokens_failover"`
 }
 
 // Provider represents an API provider configuration
@@ -63,10 +71,15 @@ type Config struct {
 // DefaultGlobalConfig returns the default global configuration
 func DefaultGlobalConfig() GlobalConfig {
 	return GlobalConfig{
-		ListenAddr:      "127.0.0.1",
-		Port:            3333,
-		LogLevel:        LogLevelInfo,
-		ReactivateAfter: "1h",
+		ListenAddr:       "127.0.0.1",
+		Port:             3333,
+		LogLevel:         LogLevelInfo,
+		ReactivateAfter:  "1h",
+		LogDir:           "",
+		LogRetentionDays: 7,
+		LogStdout:        ptr(true),
+		// Keep existing behavior by default.
+		IgnoreCountTokensFailover: false,
 	}
 }
 
@@ -95,6 +108,12 @@ func Load(configDir string) (*Config, error) {
 	}
 	if cfg.Global.ReactivateAfter == "" {
 		cfg.Global.ReactivateAfter = "1h"
+	}
+	if cfg.Global.LogRetentionDays == 0 {
+		cfg.Global.LogRetentionDays = 7
+	}
+	if cfg.Global.LogStdout == nil {
+		cfg.Global.LogStdout = ptr(true)
 	}
 
 	// Load client configs
@@ -179,6 +198,9 @@ func (c *Config) Validate() error {
 	d, err := time.ParseDuration(c.Global.ReactivateAfter)
 	if err != nil || d < 0 {
 		return fmt.Errorf("invalid reactivate_after: %s", c.Global.ReactivateAfter)
+	}
+	if c.Global.LogRetentionDays < 0 {
+		return fmt.Errorf("invalid log_retention_days: %d", c.Global.LogRetentionDays)
 	}
 
 	// Validate providers

@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ const (
 type Logger struct {
 	mu       sync.RWMutex
 	minLevel Level
+	outMu    sync.Mutex
+	out      io.Writer
 }
 
 var (
@@ -35,6 +38,7 @@ func GetLogger() *Logger {
 	once.Do(func() {
 		instance = &Logger{
 			minLevel: LevelInfo,
+			out:      os.Stdout,
 		}
 	})
 	return instance
@@ -74,9 +78,24 @@ func (l *Logger) log(level Level, levelStr string, format string, args ...interf
 		return
 	}
 
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
 	message := fmt.Sprintf(format, args...)
-	fmt.Fprintf(os.Stdout, "[%-5s] %s %s\n", levelStr, timestamp, message)
+	l.outMu.Lock()
+	fmt.Fprintf(l.out, "[%-5s] %s %s\n", levelStr, timestamp, message)
+	l.outMu.Unlock()
+}
+
+func (l *Logger) SetOutput(w io.Writer) {
+	if w == nil {
+		w = io.Discard
+	}
+	l.outMu.Lock()
+	l.out = w
+	l.outMu.Unlock()
+}
+
+func SetOutput(w io.Writer) {
+	GetLogger().SetOutput(w)
 }
 
 // Debug logs a debug message

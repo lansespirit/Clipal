@@ -42,13 +42,14 @@ type Router struct {
 
 // ClientProxy handles requests for a specific client type
 type ClientProxy struct {
-	clientType      ClientType
-	providers       []config.Provider
-	currentIndex    int
-	mu              sync.RWMutex
-	httpClient      *http.Client
-	deactivated     []providerDeactivation
-	reactivateAfter time.Duration
+	clientType       ClientType
+	providers        []config.Provider
+	currentIndex     int
+	countTokensIndex int
+	mu               sync.RWMutex
+	httpClient       *http.Client
+	deactivated      []providerDeactivation
+	reactivateAfter  time.Duration
 }
 
 // NewRouter creates a new Router instance
@@ -83,11 +84,12 @@ func NewRouter(cfg *config.Config) *Router {
 
 func newClientProxy(clientType ClientType, providers []config.Provider, reactivateAfter time.Duration) *ClientProxy {
 	return &ClientProxy{
-		clientType:      clientType,
-		providers:       providers,
-		currentIndex:    0,
-		deactivated:     make([]providerDeactivation, len(providers)),
-		reactivateAfter: reactivateAfter,
+		clientType:       clientType,
+		providers:        providers,
+		currentIndex:     0,
+		countTokensIndex: 0,
+		deactivated:      make([]providerDeactivation, len(providers)),
+		reactivateAfter:  reactivateAfter,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Minute,
 			Transport: &http.Transport{
@@ -311,6 +313,7 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 
 	r.mu.RLock()
 	proxy, exists := r.proxies[clientType]
+	ignoreCountTokensFailover := r.cfg.Global.IgnoreCountTokensFailover
 	r.mu.RUnlock()
 
 	if !exists || len(proxy.providers) == 0 {
@@ -324,8 +327,19 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 
 	logger.Debug("[%s] request received: %s %s", clientType, req.Method, newPath)
 
-	// Forward request with failover
+	// Claude Code: treat count_tokens as best-effort to avoid provider switching,
+	// which can reduce context-cache effectiveness and increase token usage.
+	if clientType == ClientClaudeCode && ignoreCountTokensFailover && isClaudeCountTokensPath(newPath) {
+		proxy.forwardCountTokensWithFailover(w, req, newPath)
+		return
+	}
+
+	// Forward request with failover.
 	proxy.forwardWithFailover(w, req, newPath)
+}
+
+func isClaudeCountTokensPath(path string) bool {
+	return path == "/v1/messages/count_tokens" || path == "/v1/messages/count_tokens/"
 }
 
 // createProxyRequest creates a new request to forward to the provider

@@ -85,6 +85,16 @@ clipal 是一个轻量级的 LLM API 反向代理服务，专为 Claude Code、C
 └── gemini.yaml             # Gemini CLI 专用配置
 ```
 
+从仓库 `examples/` 拷贝模板（首次使用推荐）：
+
+```bash
+mkdir -p ~/.clipal
+cp examples/config.yaml ~/.clipal/config.yaml
+cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
+cp examples/codex.yaml ~/.clipal/codex.yaml
+cp examples/gemini.yaml ~/.clipal/gemini.yaml
+```
+
 ### 全局配置
 
 ```yaml
@@ -93,6 +103,10 @@ listen_addr: 127.0.0.1    # 监听地址，默认 127.0.0.1（仅本机访问）
 port: 3333              # 服务端口，默认 3333
 log_level: info         # debug | info | warn | error
 reactivate_after: 1h    # Provider 自动恢复间隔，默认 1h（解除临时禁用）
+log_dir: ""             # 日志目录（默认：<config-dir>/logs，例如 ~/.clipal/logs）
+log_retention_days: 7   # 日志保留天数（默认 7）
+log_stdout: true        # 是否同时输出到 stdout（后台静默运行可设为 false）
+ignore_count_tokens_failover: false # Claude Code: count_tokens 失败不影响主会话 provider（保持 context cache）
 ```
 
 ### 客户端配置格式
@@ -129,6 +143,10 @@ providers:
 | `port` | int | 否 | 代理服务监听端口，默认 3333 |
 | `log_level` | string | 否 | 日志级别：debug/info/warn/error，默认 info |
 | `reactivate_after` | duration | 否 | Provider 自动恢复间隔（如 `1h`/`30m`），默认 `1h` |
+| `log_dir` | string | 否 | 日志目录（默认：`<config-dir>/logs`） |
+| `log_retention_days` | int | 否 | 日志保留天数（默认 7） |
+| `log_stdout` | bool | 否 | 是否同时输出到 stdout（默认 true） |
+| `ignore_count_tokens_failover` | bool | 否 | Claude Code：`/v1/messages/count_tokens` 的失败不影响主会话 provider 选择（默认 false） |
 
 **客户端配置 (claude-code.yaml / codex.yaml / gemini.yaml)**
 
@@ -166,6 +184,8 @@ clipal 对每个客户端（claude-code / codex / gemini）独立维护一组 pr
 
 ### 安装
 
+**方式 A：下载预编译二进制（推荐）**
+
 从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制文件。
 
 ```bash
@@ -175,6 +195,15 @@ sudo mv clipal /usr/local/bin/
 
 # Windows
 # 将 clipal.exe 添加到 PATH
+```
+
+**方式 B：从源码构建（当没有 Release 或你想自己编译时）**
+
+```bash
+git clone https://github.com/lansespirit/Clipal.git
+cd Clipal
+go build -o clipal ./cmd/clipal
+sudo mv clipal /usr/local/bin/
 ```
 
 ### 运行
@@ -208,6 +237,46 @@ sudo systemctl start clipal
 
 # macOS - 使用 launchd
 # 参考下方 launchd 配置示例
+```
+
+**macOS launchd 示例（LaunchAgent，登录后自动启动）**
+
+创建 `~/Library/LaunchAgents/com.lansespirit.clipal.plist`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.lansespirit.clipal</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/clipal</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/clipal.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/clipal.err.log</string>
+  </dict>
+</plist>
+```
+
+加载/卸载：
+
+```bash
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.lansespirit.clipal.plist
+launchctl kickstart -k "gui/$(id -u)/com.lansespirit.clipal"
+
+# 停止并卸载
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.lansespirit.clipal.plist
 ```
 
 ### 客户端配置

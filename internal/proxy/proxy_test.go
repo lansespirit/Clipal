@@ -218,6 +218,96 @@ func TestForwardWithFailover_RetryOn503DoesNotDeactivate(t *testing.T) {
 	}
 }
 
+func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
+	t.Parallel()
+
+	var srv1Count int
+	var srv2Count int
+
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/count_tokens" {
+			http.NotFound(w, r)
+			return
+		}
+		srv1Count++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("down"))
+	}))
+	t.Cleanup(srv1.Close)
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/count_tokens" {
+			http.NotFound(w, r)
+			return
+		}
+		srv2Count++
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	}))
+	t.Cleanup(srv2.Close)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			ListenAddr:                "127.0.0.1",
+			Port:                      3333,
+			LogLevel:                  config.LogLevelDebug,
+			ReactivateAfter:           "1h",
+			IgnoreCountTokensFailover: true,
+		},
+		ClaudeCode: config.ClientConfig{
+			Providers: []config.Provider{
+				{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
+				{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+			},
+		},
+	}
+
+	router := NewRouter(cfg)
+	cp := router.proxies[ClientClaudeCode]
+	if cp == nil {
+		t.Fatalf("expected claudecode proxy to be initialized")
+	}
+	if got := cp.getCurrentIndex(); got != 0 {
+		t.Fatalf("currentIndex: got %d want %d", got, 0)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages/count_tokens", bytes.NewReader([]byte(`{"x":1}`)))
+	router.handleRequest(rr, req)
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusOK)
+	}
+	if got := rr.Body.String(); got != "ok" {
+		t.Fatalf("body: got %q want %q", got, "ok")
+	}
+	if got := cp.getCurrentIndex(); got != 0 {
+		t.Fatalf("currentIndex changed by count_tokens: got %d want %d", got, 0)
+	}
+	if srv1Count != 1 || srv2Count != 1 {
+		t.Fatalf("unexpected request counts: srv1=%d srv2=%d", srv1Count, srv2Count)
+	}
+
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages/count_tokens", bytes.NewReader([]byte(`{"x":2}`)))
+	router.handleRequest(rr2, req2)
+
+	res2 := rr2.Result()
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("status2: got %d want %d", res2.StatusCode, http.StatusOK)
+	}
+	if got := rr2.Body.String(); got != "ok" {
+		t.Fatalf("body2: got %q want %q", got, "ok")
+	}
+	if got := cp.getCurrentIndex(); got != 0 {
+		t.Fatalf("currentIndex changed by count_tokens (second): got %d want %d", got, 0)
+	}
+	if srv1Count != 1 || srv2Count != 2 {
+		t.Fatalf("unexpected request counts after second call: srv1=%d srv2=%d", srv1Count, srv2Count)
+	}
+}
+
 func TestForwardWithFailover_DeactivateOn429Quota(t *testing.T) {
 	t.Parallel()
 
