@@ -182,6 +182,43 @@ clipal 对每个客户端（claude-code / codex / gemini）独立维护一组 pr
 
 ## 使用方法
 
+更多平台细节（下载/放置/权限/开机自启/静默运行）见：
+
+- [docs/README.md](docs/README.md)
+- [macOS](docs/macos.md) / [Linux](docs/linux.md) / [Windows](docs/windows.md)
+
+### 快速开始（通用）
+
+1) 从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制（例如 macOS M 系列：`clipal-darwin-arm64`）。
+
+2) 赋予可执行权限并放到 PATH：
+
+```bash
+chmod +x clipal*
+./clipal* --version
+```
+
+3) 初始化配置（从模板拷贝）：
+
+```bash
+mkdir -p ~/.clipal
+cp examples/config.yaml ~/.clipal/config.yaml
+cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
+cp examples/codex.yaml ~/.clipal/codex.yaml
+cp examples/gemini.yaml ~/.clipal/gemini.yaml
+```
+
+4) 编辑 `~/.clipal/*.yaml`，填入你的 `api_key`（以及需要的话 `base_url`）。
+
+5) 启动并检查健康：
+
+```bash
+clipal --log-level debug
+curl -fsS http://127.0.0.1:3333/health
+```
+
+6) 配置你的客户端（Claude Code / Codex CLI / Gemini CLI），见下方“客户端配置”。
+
 ### 安装
 
 **方式 A：下载预编译二进制（推荐）**
@@ -228,56 +265,16 @@ clipal --log-level debug
 ### 后台运行
 
 ```bash
-# Linux/macOS - 使用 nohup
-nohup clipal > /var/log/clipal.log 2>&1 &
-
-# Linux - 使用 systemd
-sudo systemctl enable clipal
-sudo systemctl start clipal
-
-# macOS - 使用 launchd
-# 参考下方 launchd 配置示例
+# Linux/macOS - 临时后台运行（推荐配合内置落盘日志）
+# 先在 ~/.clipal/config.yaml 设置 log_stdout: false，然后：
+nohup clipal >/dev/null 2>&1 &
 ```
 
-**macOS launchd 示例（LaunchAgent，登录后自动启动）**
+长期后台运行与开机自启（systemd / launchd / 任务计划程序）请看：
 
-创建 `~/Library/LaunchAgents/com.lansespirit.clipal.plist`：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>com.lansespirit.clipal</string>
-
-    <key>ProgramArguments</key>
-    <array>
-      <string>/usr/local/bin/clipal</string>
-    </array>
-
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-
-    <key>StandardOutPath</key>
-    <string>/tmp/clipal.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/clipal.err.log</string>
-  </dict>
-</plist>
-```
-
-加载/卸载：
-
-```bash
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.lansespirit.clipal.plist
-launchctl kickstart -k "gui/$(id -u)/com.lansespirit.clipal"
-
-# 停止并卸载
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.lansespirit.clipal.plist
-```
+- [macOS](docs/macos.md)
+- [Linux](docs/linux.md)
+- [Windows](docs/windows.md)
 
 ### 客户端配置
 
@@ -314,7 +311,18 @@ export GEMINI_API_BASE="http://localhost:3333/gemini"
 
 ## 日志输出
 
-clipal 按配置的日志级别输出运行日志到标准输出：
+clipal 默认同时输出到 stdout 与日志目录（按天滚动，默认保留 7 天）。
+
+- 默认日志目录：`<config-dir>/logs`（例如 `~/.clipal/logs`）
+- 日志文件：`clipal-YYYY-MM-DD.log`
+
+后台静默运行建议在 `~/.clipal/config.yaml` 设置：
+
+```yaml
+log_stdout: false
+log_retention_days: 7
+# log_dir: ""  # 留空则默认 ~/.clipal/logs
+```
 
 ```
 [INFO]  2024-01-01 12:00:00 clipal starting on :3333
