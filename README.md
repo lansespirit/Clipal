@@ -1,36 +1,38 @@
 # Clipal
 
-极简 CLI LLM API 反向代理服务
+English: [README.md](README.md) | 中文: [README.zh-CN.md](README.zh-CN.md)
 
-## 项目定位
+A minimal CLI-first LLM API reverse proxy for tools like Claude Code, Codex CLI, and Gemini CLI.
 
-clipal 是一个轻量级的 LLM API 反向代理服务，专为 Claude Code、Codex CLI、Gemini CLI 等命令行工具设计。它通过简单的 YAML 配置文件管理多个 API 供应商，实现自动故障转移和优先级调度。
+## What it is
 
-### 核心理念
+Clipal is a lightweight reverse proxy that routes requests to one of multiple upstream API providers based on a simple YAML configuration, with priority ordering and automatic failover.
 
-- **极简**：无 UI、无数据库、无历史记录，只做代理转发
-- **透明**：不转换消息格式，依赖上游 API 供应商的格式兼容能力
-- **便携**：单一二进制文件，跨平台运行
-- **可配置**：YAML 配置文件，按客户端类型分离
+## Core ideas
 
-## 功能特性
+- **Minimal**: no UI, no DB, no history — just proxying
+- **Transparent**: no message-format conversion; relies on upstream compatibility
+- **Portable**: single cross-platform binary
+- **Configurable**: YAML configs separated by client type
 
-- 多 API 供应商配置，支持优先级排序
-- 自动故障转移：当前供应商失败时自动切换到下一个
-- Provider 临时禁用：鉴权/额度错误会自动 deactivate，并按 `reactivate_after` 自动恢复
-- 配置热加载：更新 `claude-code.yaml` / `codex.yaml` / `gemini.yaml` 后自动重新加载并重新验证
-- 按日志级别输出运行日志（DEBUG/INFO/WARN/ERROR）
-- 三套独立配置文件，分别服务于：
+## Features
+
+- Multiple upstream providers with priority ordering
+- Automatic failover (tries the next provider on errors)
+- Temporary provider deactivation on auth/quota errors, with auto-reactivation via `reactivate_after`
+- Hot reload: changes to `claude-code.yaml` / `codex.yaml` / `gemini.yaml` reload automatically
+- Log levels: `debug` / `info` / `warn` / `error`
+- Separate client configs:
   - Claude Code (`claude-code.yaml`)
   - Codex CLI (`codex.yaml`)
   - Gemini CLI (`gemini.yaml`)
-- 跨平台支持：macOS、Linux、Windows
+- macOS / Linux / Windows support
 
-## 架构设计
+## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Claude Code    │     │   Codex CLI     │     │   Gemini CLI    │
+│   Claude Code   │     │    Codex CLI    │     │   Gemini CLI    │
 └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
          │                       │                       │
          │ /claudecode           │ /codex                │ /gemini
@@ -39,81 +41,56 @@ clipal 是一个轻量级的 LLM API 反向代理服务，专为 Claude Code、C
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    clipal (:3333)                               │
+│                         clipal (:3333)                          │
 │                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │                    HTTP Router                             │ │
-│  │  /claudecode/*  →  claude-code.yaml providers              │ │
-│  │  /codex/*       →  codex.yaml providers                    │ │
-│  │  /gemini/*      →  gemini.yaml providers                   │ │
-│  └───────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                       HTTP Router                         │  │
+│  │  /claudecode/*  →  claude-code.yaml providers             │  │
+│  │  /codex/*       →  codex.yaml providers                   │  │
+│  │  /gemini/*      →  gemini.yaml providers                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
 │                              │                                  │
 │                              ▼                                  │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │              Endpoint Router (优先级调度)                  │ │
-│  │         失败自动切换 → 下一优先级供应商                    │ │
-│  └───────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │               Endpoint Router (priority + failover)       │  │
+│  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                                │
          ┌─────────────────────┼─────────────────────┐
          ▼                     ▼                     ▼
 ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
 │  API Provider 1 │   │  API Provider 2 │   │  API Provider N │
-│  (优先级: 1)    │   │  (优先级: 2)    │   │  (优先级: N)    │
+│  (priority: 1)  │   │  (priority: 2)  │   │  (priority: N)  │
 └─────────────────┘   └─────────────────┘   └─────────────────┘
 ```
 
-### 端点路由
+### Route prefixes
 
-| 路径前缀 | 对应配置 | 说明 |
-|----------|----------|------|
-| `/claudecode/*` | `claude-code.yaml` | Claude Code 请求 |
-| `/codex/*` | `codex.yaml` | Codex CLI 请求 |
-| `/gemini/*` | `gemini.yaml` | Gemini CLI 请求 |
+| Path prefix | Config file | Notes |
+|------------|-------------|-------|
+| `/claudecode/*` | `~/.clipal/claude-code.yaml` | Claude Code upstreams |
+| `/codex/*` | `~/.clipal/codex.yaml` | Codex CLI upstreams |
+| `/gemini/*` | `~/.clipal/gemini.yaml` | Gemini CLI upstreams |
 
-## 配置文件
+## Configuration
 
-配置文件位于 `~/.clipal/` 目录下。
-
-### 目录结构
-
-```
-~/.clipal/
-├── config.yaml             # 全局配置（端口、日志级别）
-├── claude-code.yaml        # Claude Code 专用配置
-├── codex.yaml              # Codex CLI 专用配置
-└── gemini.yaml             # Gemini CLI 专用配置
-```
-
-从仓库 `examples/` 拷贝模板（首次使用推荐）：
-
-```bash
-mkdir -p ~/.clipal
-cp examples/config.yaml ~/.clipal/config.yaml
-cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
-cp examples/codex.yaml ~/.clipal/codex.yaml
-cp examples/gemini.yaml ~/.clipal/gemini.yaml
-```
-
-### 全局配置
+### Global config (`config.yaml`)
 
 ```yaml
-# ~/.clipal/config.yaml
-listen_addr: 127.0.0.1    # 监听地址，默认 127.0.0.1（仅本机访问）
-port: 3333              # 服务端口，默认 3333
-log_level: info         # debug | info | warn | error
-reactivate_after: 1h    # Provider 自动恢复间隔，默认 1h（解除临时禁用）
-max_request_body_bytes: 33554432 # 请求体大小上限（字节），默认 32 MiB
-log_dir: ""             # 日志目录（默认：<config-dir>/logs，例如 ~/.clipal/logs）
-log_retention_days: 7   # 日志保留天数（默认 7）
-log_stdout: true        # 是否同时输出到 stdout（后台静默运行可设为 false）
-ignore_count_tokens_failover: false # Claude Code: count_tokens 失败不影响主会话 provider（保持 context cache）
+listen_addr: "127.0.0.1"  # default: 127.0.0.1 (local only)
+port: 3333                # default: 3333
+log_level: "info"         # debug/info/warn/error
+reactivate_after: "1h"    # default: 1h; set to 0 to disable auto-deactivate
+max_request_body_bytes: 33554432  # default: 32 MiB (request body is buffered for retries)
+log_dir: ""               # default: <config-dir>/logs
+log_retention_days: 7     # default: 7
+log_stdout: true          # default: true
+ignore_count_tokens_failover: false # Claude Code: don't failover main chat on count_tokens failures
 ```
 
-### 客户端配置格式
+### Client configs (`claude-code.yaml` / `codex.yaml` / `gemini.yaml`)
 
 ```yaml
-# ~/.clipal/claude-code.yaml
 providers:
   - name: "anthropic-direct"
     base_url: "https://api.anthropic.com"
@@ -126,81 +103,39 @@ providers:
     api_key: "sk-or-xxx"
     priority: 2
     enabled: true
-
-  - name: "backup-provider"
-    base_url: "https://backup.example.com"
-    api_key: "sk-backup-xxx"
-    priority: 3
-    enabled: false  # 禁用此供应商
 ```
 
-### 配置字段说明
+## Provider selection & failover
 
-**全局配置 (config.yaml)**
+For each client (claude-code / codex / gemini), Clipal maintains an independent provider list and selects upstreams with these rules:
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `listen_addr` | string | 否 | 监听地址，默认 127.0.0.1（仅本机访问） |
-| `port` | int | 否 | 代理服务监听端口，默认 3333 |
-| `log_level` | string | 否 | 日志级别：debug/info/warn/error，默认 info |
-| `reactivate_after` | duration | 否 | Provider 自动恢复间隔（如 `1h`/`30m`），默认 `1h`；设为 `0` 表示不对鉴权/额度错误执行临时禁用 |
-| `max_request_body_bytes` | int | 否 | 请求体大小上限（字节）。clipal 会缓存请求体以支持重试，默认 `33554432`（32 MiB） |
-| `log_dir` | string | 否 | 日志目录（默认：`<config-dir>/logs`） |
-| `log_retention_days` | int | 否 | 日志保留天数（默认 7） |
-| `log_stdout` | bool | 否 | 是否同时输出到 stdout（默认 true） |
-| `ignore_count_tokens_failover` | bool | 否 | Claude Code：`/v1/messages/count_tokens` 的失败不影响主会话 provider 选择（默认 false） |
+- Only uses providers with `enabled != false`
+- Sorts by `priority` ascending (lower number = higher priority); ties keep YAML order
+- Sticky preference: a successful provider becomes the next preferred one
+- On request failure, tries the next available provider
+- Temporary deactivation:
+  - `401/403` auth and `402` billing/quota errors deactivate the provider and move on
+  - `429` is inspected; quota/auth-like cases deactivate, otherwise it failovers without deactivation (cooldown up to `1h`)
+- Auto-reactivation: deactivated providers are re-enabled after `reactivate_after`
+- Hot reload resets the provider set based on the updated config
 
-**客户端配置 (claude-code.yaml / codex.yaml / gemini.yaml)**
+## Docs
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `providers` | array | 是 | API 供应商列表 |
-| `providers[].name` | string | 是 | 供应商名称（用于日志标识） |
-| `providers[].base_url` | string | 是 | API 供应商 Base URL |
-| `providers[].api_key` | string | 是 | API Key |
-| `providers[].priority` | int | 是 | 优先级（数字越小优先级越高） |
-| `providers[].enabled` | bool | 否 | 是否启用，默认 true |
+- English: [docs/README.md](docs/README.md)
+- 中文: [docs/README.zh-CN.md](docs/README.zh-CN.md)
 
-## Provider 优先级与调度策略
+## Quick start
 
-clipal 对每个客户端（claude-code / codex / gemini）独立维护一组 providers，并按以下策略选择上游：
+1) Download a binary from [Releases](https://github.com/lansespirit/Clipal/releases).
 
-- **启用过滤**：只使用 `enabled != false` 的 providers。
-- **优先级排序**：按 `priority` 升序（数字越小优先级越高）；同优先级保持 YAML 文件中的顺序。
-- **粘性优先**：每个客户端维护一个 `currentIndex`，默认从优先级最高的 provider 开始；一旦某个 provider 成功响应，会把 `currentIndex` 更新为该 provider，使后续请求优先继续使用它（减少频繁切换）。
-- **失败切换**：请求失败时会按顺序切换到下一个可用 provider（直到尝试完所有未被禁用的 provider）。
-- **临时禁用（deactivate）**：
-  - 鉴权/权限问题（`401/403`）或计费/额度问题（`402`）会将该 provider 标记为临时禁用并切换到下一个。
-  - `429` 会进一步解析 OpenAI/Claude 的错误结构：若判断为配额/鉴权类则禁用；若是 rate limit/overload 则仅切换重试不禁用。
-- **自动恢复**：被临时禁用的 provider 会在 `reactivate_after` 到期后自动恢复（默认 `1h`）。
-- **配置热加载**：当 `claude-code.yaml` / `codex.yaml` / `gemini.yaml` 文件发生变更，会自动重新加载配置并重建 providers（等价于重新验证并清空上一轮的临时禁用状态）。
-
-### 合理性分析（当前定位：本地 CLI 反代）
-
-- **优点**：实现简单、行为可预测；严格优先级 + 失败切换满足“主用/备用”场景；粘性优先减少频繁切换；对鉴权/额度错误自动隔离可避免反复命中坏 key。
-- **注意点**：
-  - 该策略是“高可用优先”，不是负载均衡；默认会持续偏向当前可用的 provider。
-  - 对 `429` 的处理会按 `Retry-After` / `X-RateLimit-Reset-*` 进行冷却（cooldown）并切换到下一个；冷却期内该 provider 会被跳过，避免立刻重复触发限流（最大冷却上限 `1h`）。
-
-## 使用方法
-
-更多平台细节（下载/放置/权限/开机自启/静默运行）见：
-
-- [docs/README.md](docs/README.md)
-- [macOS](docs/macos.md) / [Linux](docs/linux.md) / [Windows](docs/windows.md)
-
-### 快速开始（通用）
-
-1) 从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制（例如 macOS M 系列：`clipal-darwin-arm64`）。
-
-2) 赋予可执行权限并放到 PATH：
+2) Make it executable and place it on your `PATH`:
 
 ```bash
 chmod +x clipal*
 ./clipal* --version
 ```
 
-3) 初始化配置（从模板拷贝）：
+3) Initialize config from templates:
 
 ```bash
 mkdir -p ~/.clipal
@@ -210,22 +145,22 @@ cp examples/codex.yaml ~/.clipal/codex.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
-4) 编辑 `~/.clipal/*.yaml`，填入你的 `api_key`（以及需要的话 `base_url`）。
+4) Edit `~/.clipal/*.yaml` and set `api_key` (and `base_url` if needed).
 
-5) 启动并检查健康：
+5) Start and verify health:
 
 ```bash
 clipal --log-level debug
 curl -fsS http://127.0.0.1:3333/health
 ```
 
-6) 配置你的客户端（Claude Code / Codex CLI / Gemini CLI），见下方“客户端配置”。
+6) Configure your client (Claude Code / Codex CLI / Gemini CLI) below.
 
-### 安装
+## Install
 
-**方式 A：下载预编译二进制（推荐）**
+### Option A: prebuilt binaries (recommended)
 
-从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制文件。
+Download from [Releases](https://github.com/lansespirit/Clipal/releases).
 
 ```bash
 # macOS / Linux
@@ -233,10 +168,10 @@ chmod +x clipal
 sudo mv clipal /usr/local/bin/
 
 # Windows
-# 将 clipal.exe 添加到 PATH
+# Put clipal.exe on PATH
 ```
 
-**方式 B：从源码构建（当没有 Release 或你想自己编译时）**
+### Option B: build from source
 
 ```bash
 git clone https://github.com/lansespirit/Clipal.git
@@ -245,44 +180,44 @@ go build -o clipal ./cmd/clipal
 sudo mv clipal /usr/local/bin/
 ```
 
-### 运行
+## Run
 
 ```bash
-# 使用默认配置目录 (~/.clipal/)
+# Use the default config dir (~/.clipal/)
 clipal
 
-# 指定配置目录
+# Custom config dir
 clipal --config-dir /path/to/config
 
-# 指定监听地址（覆盖配置文件）
+# Override listen address
 clipal --listen-addr 0.0.0.0
 
-# 指定端口（覆盖配置文件）
+# Override port
 clipal --port 8080
 
-# 指定日志级别（覆盖配置文件）
+# Override log level
 clipal --log-level debug
 ```
 
-### 后台运行
+## Run in background
 
 ```bash
-# Linux/macOS - 临时后台运行（推荐配合内置落盘日志）
-# 先在 ~/.clipal/config.yaml 设置 log_stdout: false，然后：
+# Linux/macOS - quick background run (prefer file logging)
+# Set log_stdout: false in ~/.clipal/config.yaml first, then:
 nohup clipal >/dev/null 2>&1 &
 ```
 
-长期后台运行与开机自启（systemd / launchd / 任务计划程序）请看：
+For proper startup on boot (systemd / launchd / Task Scheduler), see:
 
-- [macOS](docs/macos.md)
-- [Linux](docs/linux.md)
-- [Windows](docs/windows.md)
+- [macOS](docs/en/macos.md)
+- [Linux](docs/en/linux.md)
+- [Windows](docs/en/windows.md)
 
-### 客户端配置
+## Client setup
 
-#### Claude Code
+### Claude Code
 
-编辑 `~/.claude/settings.json`:
+Edit `~/.claude/settings.json`:
 
 ```json
 {
@@ -293,9 +228,9 @@ nohup clipal >/dev/null 2>&1 &
 }
 ```
 
-#### Codex CLI
+### Codex CLI
 
-编辑 `~/.codex/config.toml`:
+Edit `~/.codex/config.toml`:
 
 ```toml
 model_provider = "clipal"
@@ -305,167 +240,76 @@ name = "clipal"
 base_url = "http://localhost:3333/codex"
 ```
 
-#### Gemini CLI
+### Gemini CLI
 
 ```bash
 export GEMINI_API_BASE="http://localhost:3333/gemini"
 ```
 
-## 日志输出
+## Logging
 
-clipal 默认同时输出到 stdout 与日志目录（按天滚动，默认保留 7 天）。
+By default, Clipal logs to stdout and to a daily-rotated log file (retained for 7 days by default).
 
-- 默认日志目录：`<config-dir>/logs`（例如 `~/.clipal/logs`）
-- 日志文件：`clipal-YYYY-MM-DD.log`
+- Default log dir: `<config-dir>/logs` (e.g. `~/.clipal/logs`)
+- Log file: `clipal-YYYY-MM-DD.log`
 
-后台静默运行建议在 `~/.clipal/config.yaml` 设置：
+For quiet background operation, set in `~/.clipal/config.yaml`:
 
 ```yaml
 log_stdout: false
 log_retention_days: 7
-# log_dir: ""  # 留空则默认 ~/.clipal/logs
+# log_dir: ""  # empty means ~/.clipal/logs by default
 ```
 
-```
-[INFO]  2024-01-01 12:00:00 clipal starting on :3333
-[INFO]  2024-01-01 12:00:00 loaded 3 providers for claude-code
-[INFO]  2024-01-01 12:00:00 loaded 2 providers for codex
-[INFO]  2024-01-01 12:00:00 loaded 2 providers for gemini
-[DEBUG] 2024-01-01 12:00:05 [claudecode] request received: POST /v1/messages
-[DEBUG] 2024-01-01 12:00:05 [claudecode] forwarding to: anthropic-direct
-[WARN]  2024-01-01 12:00:06 [claudecode] anthropic-direct failed: 503, switching to openrouter
-[INFO]  2024-01-01 12:00:07 [claudecode] request completed via openrouter
-```
-
-## 项目结构
+## Project layout
 
 ```
 clipal/
 ├── cmd/
 │   └── clipal/
-│       └── main.go           # 程序入口
+│       └── main.go           # entrypoint
 ├── internal/
 │   ├── config/
-│   │   └── config.go         # YAML 配置加载
+│   │   └── config.go         # YAML config loading
 │   ├── proxy/
-│   │   ├── proxy.go          # 路由与代理请求构建
-│   │   └── failover.go       # 故障转移与 Provider 降级/禁用
+│   │   ├── proxy.go          # routing + request building
+│   │   └── failover.go       # failover + de/activation logic
 │   └── logger/
-│       └── logger.go         # 日志模块
-├── build/                    # 构建产物目录
-│   ├── darwin-amd64/
-│   │   └── clipal
-│   ├── darwin-arm64/
-│   │   └── clipal
-│   ├── linux-amd64/
-│   │   └── clipal
-│   ├── linux-arm64/
-│   │   └── clipal
-│   └── windows-amd64/
-│       └── clipal.exe
+│       └── logger.go         # logging
+├── build/                    # build outputs
 ├── scripts/
-│   └── build.sh              # 跨平台编译脚本
+│   └── build.sh              # cross-platform build script
 ├── go.mod
 ├── go.sum
 └── README.md
 ```
 
-## 设计决策
-
-### 为什么统一端口 + 路径前缀？
-
-- **减少端口占用**：只需一个端口即可服务所有 CLI 工具
-- **易于记忆**：无需记忆端口与 CLI 的对应关系
-- **便于管理**：防火墙规则、反向代理配置更简单
-- **统一入口**：所有请求通过同一入口，便于监控和调试
-
-### 为什么不转换消息格式？
-
-现代 API 供应商（如 OpenRouter、Together AI 等）已经提供了良好的格式兼容层。clipal 选择信任上游供应商的兼容能力，避免引入额外的复杂性和潜在的转换错误。
-
-### 为什么使用 YAML 而非 JSON？
-
-- YAML 支持注释，便于配置说明
-- 更易于人工编辑
-- 层级结构更清晰
-
-### 为什么分三个配置文件？
-
-不同的 CLI 工具可能需要不同的 API 供应商策略。例如：
-- Claude Code 可能优先使用 Anthropic 官方 API
-- Codex CLI 可能优先使用 OpenAI 兼容的供应商
-- Gemini CLI 可能优先使用 Google 官方 API
-
-分离配置让每个工具都能独立管理自己的供应商优先级。
-
-### 为什么不记录历史和 Token 消耗？
-
-保持极简。如需统计功能，建议：
-- 使用 API 供应商的控制台查看用量
-- 部署独立的监控服务
-- 使用日志分析工具处理 clipal 的输出日志
-
-## 与 ccNexus 的区别
-
-| 特性 | clipal | ccNexus |
-|------|--------|---------|
-| 配置方式 | YAML 文件 | SQLite + Web UI |
-| 消息格式转换 | 不支持 | 支持多种格式互转 |
-| 统计功能 | 无 | 请求数、Token 用量等 |
-| UI | 无 | Web UI + 桌面应用 |
-| 目标用户 | CLI 工具用户 | 全面功能需求用户 |
-| 复杂度 | 极简 | 功能丰富 |
-
-## 开发
+## Development
 
 ```bash
-# 克隆项目
-git clone https://github.com/lansespirit/clipal.git
-cd clipal
-
-# 构建当前平台
 go build -o clipal ./cmd/clipal
-
-# 运行测试
 go test ./...
 
-# 说明：Go 会在 GOCACHE 里写入编译缓存以加速后续构建/测试。
-# 在某些受限环境（例如沙箱）中，默认缓存目录可能不可写而导致 go test 失败。
-# 推荐用临时目录作为 GOCACHE，并在结束后清理：
+# Note: Go writes build/test caches under GOCACHE.
+# If you run in a restricted environment, use a temp dir for GOCACHE:
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/go-build-cache.XXXXXX)"
 GOCACHE="$tmp" go test ./...
 rm -rf "$tmp"
 
-# 交叉编译所有平台
 ./scripts/build.sh
-
-# 或手动交叉编译
-# macOS (Intel)
-GOOS=darwin GOARCH=amd64 go build -o build/darwin-amd64/clipal ./cmd/clipal
-
-# macOS (Apple Silicon)
-GOOS=darwin GOARCH=arm64 go build -o build/darwin-arm64/clipal ./cmd/clipal
-
-# Linux (x86_64)
-GOOS=linux GOARCH=amd64 go build -o build/linux-amd64/clipal ./cmd/clipal
-
-# Linux (ARM64)
-GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/clipal ./cmd/clipal
-
-# Windows (x86_64)
-GOOS=windows GOARCH=amd64 go build -o build/windows-amd64/clipal.exe ./cmd/clipal
 ```
 
-### 支持的平台
+### Supported platforms
 
-| 平台 | 架构 | 文件名 |
-|------|------|--------|
-| macOS | Intel (amd64) | `clipal-darwin-amd64` |
-| macOS | Apple Silicon (arm64) | `clipal-darwin-arm64` |
-| Linux | x86_64 (amd64) | `clipal-linux-amd64` |
-| Linux | ARM64 | `clipal-linux-arm64` |
-| Windows | x86_64 (amd64) | `clipal-windows-amd64.exe` |
+| OS | Arch | Artifact name |
+|----|------|----------------|
+| macOS | amd64 | `clipal-darwin-amd64` |
+| macOS | arm64 | `clipal-darwin-arm64` |
+| Linux | amd64 | `clipal-linux-amd64` |
+| Linux | arm64 | `clipal-linux-arm64` |
+| Windows | amd64 | `clipal-windows-amd64.exe` |
 
 ## License
 
 MIT
+
