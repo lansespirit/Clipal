@@ -16,3 +16,9 @@ log_stdout: true
 
 # Claude Code: if true, /v1/messages/count_tokens failures won't affect the main conversation provider.
 ignore_count_tokens_failover: false
+
+# Desktop notifications (best-effort, cross-platform via beeep)
+# notifications:
+#   enabled: false
+#   min_level: error   # warn|error (default: error)
+#   provider_switch: true

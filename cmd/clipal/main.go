@@ -14,6 +14,7 @@ import (
 
 	"github.com/lansespirit/Clipal/internal/config"
 	"github.com/lansespirit/Clipal/internal/logger"
+	"github.com/lansespirit/Clipal/internal/notify"
 	"github.com/lansespirit/Clipal/internal/proxy"
 )
 
@@ -75,6 +76,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Warning: log file setup failed: %v (logs will only go to stdout)\n", err)
 		logger.Warn("log file setup failed: %v", err)
 	}
+
+	notify.Configure(cfg.Global.Notifications)
+	defer notify.Shutdown()
+	logger.SetHook(notify.LogHook)
 
 	// Create and start the router
 	router := proxy.NewRouter(cfg)

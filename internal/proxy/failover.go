@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/logger"
+	"github.com/lansespirit/Clipal/internal/notify"
 )
 
 const maxRetryAfterCooldown = time.Hour
@@ -53,6 +54,9 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 	}
 
 	attempted := 0
+	originProvider := ""
+	lastSwitchReason := ""
+	lastSwitchStatus := 0
 
 	for offset := 0; offset < len(cp.providers) && attempted < active; offset++ {
 		index := (startIndex + offset) % len(cp.providers)
@@ -61,6 +65,9 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		}
 		attempted++
 		provider := cp.providers[index]
+		if originProvider == "" {
+			originProvider = provider.Name
+		}
 
 		logger.Debug("[%s] forwarding to: %s (attempt %d/%d)", cp.clientType, provider.Name, attempted, active)
 
@@ -80,6 +87,8 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		resp, err := cp.httpClient.Do(proxyReq)
 		if err != nil {
 			logger.Warn("[%s] %s failed: %v, switching to next provider", cp.clientType, provider.Name, err)
+			lastSwitchReason = "network"
+			lastSwitchStatus = 0
 			cp.setCurrentIndex(cp.nextActiveIndex(index))
 			continue
 		}
@@ -87,6 +96,8 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		action, reason, msg, cooldown := classifyUpstreamFailure(resp)
 		if action != failureReturnToClient {
 			resp.Body.Close()
+			lastSwitchReason = reason
+			lastSwitchStatus = resp.StatusCode
 			switch action {
 			case failureDeactivateAndRetryNext:
 				cp.deactivateFor(index, reason, resp.StatusCode, msg, cp.reactivateAfter)
@@ -107,6 +118,9 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 
 		// Update current index to this working provider
 		cp.setCurrentIndex(index)
+		if attempted > 1 && originProvider != "" && originProvider != provider.Name {
+			notify.ProviderSwitched(string(cp.clientType), originProvider, provider.Name, lastSwitchReason, lastSwitchStatus)
+		}
 
 		// Copy headers
 		copyHeaders(w.Header(), resp.Header)

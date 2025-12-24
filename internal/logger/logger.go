@@ -26,12 +26,17 @@ type Logger struct {
 	minLevel Level
 	outMu    sync.Mutex
 	out      io.Writer
+
+	hookMu sync.RWMutex
+	hook   Hook
 }
 
 var (
 	instance *Logger
 	once     sync.Once
 )
+
+type Hook func(levelStr string, message string)
 
 // GetLogger returns the singleton logger instance
 func GetLogger() *Logger {
@@ -42,6 +47,16 @@ func GetLogger() *Logger {
 		}
 	})
 	return instance
+}
+
+func (l *Logger) SetHook(h Hook) {
+	l.hookMu.Lock()
+	l.hook = h
+	l.hookMu.Unlock()
+}
+
+func SetHook(h Hook) {
+	GetLogger().SetHook(h)
 }
 
 // SetLevel sets the minimum log level
@@ -83,6 +98,13 @@ func (l *Logger) log(level Level, levelStr string, format string, args ...interf
 	l.outMu.Lock()
 	fmt.Fprintf(l.out, "[%-5s] %s %s\n", levelStr, timestamp, message)
 	l.outMu.Unlock()
+
+	l.hookMu.RLock()
+	h := l.hook
+	l.hookMu.RUnlock()
+	if h != nil {
+		h(levelStr, message)
+	}
 }
 
 func (l *Logger) SetOutput(w io.Writer) {

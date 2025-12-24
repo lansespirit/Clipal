@@ -24,16 +24,23 @@ const (
 	LogLevelError LogLevel = "error"
 )
 
+type NotificationsConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	MinLevel       LogLevel `yaml:"min_level"`
+	ProviderSwitch *bool    `yaml:"provider_switch"`
+}
+
 // GlobalConfig represents the global configuration
 type GlobalConfig struct {
-	ListenAddr       string   `yaml:"listen_addr"`
-	Port             int      `yaml:"port"`
-	LogLevel         LogLevel `yaml:"log_level"`
-	ReactivateAfter  string   `yaml:"reactivate_after"`
-	MaxRequestBody   int64    `yaml:"max_request_body_bytes"`
-	LogDir           string   `yaml:"log_dir"`
-	LogRetentionDays int      `yaml:"log_retention_days"`
-	LogStdout        *bool    `yaml:"log_stdout"`
+	ListenAddr       string              `yaml:"listen_addr"`
+	Port             int                 `yaml:"port"`
+	LogLevel         LogLevel            `yaml:"log_level"`
+	ReactivateAfter  string              `yaml:"reactivate_after"`
+	MaxRequestBody   int64               `yaml:"max_request_body_bytes"`
+	LogDir           string              `yaml:"log_dir"`
+	LogRetentionDays int                 `yaml:"log_retention_days"`
+	LogStdout        *bool               `yaml:"log_stdout"`
+	Notifications    NotificationsConfig `yaml:"notifications"`
 	// IgnoreCountTokensFailover disables provider switching for Claude Code
 	// /v1/messages/count_tokens requests, which helps keep context cache warm.
 	IgnoreCountTokensFailover bool `yaml:"ignore_count_tokens_failover"`
@@ -83,6 +90,11 @@ func DefaultGlobalConfig() GlobalConfig {
 		LogDir:           "",
 		LogRetentionDays: 7,
 		LogStdout:        ptr(true),
+		Notifications: NotificationsConfig{
+			Enabled:        false,
+			MinLevel:       LogLevelError,
+			ProviderSwitch: ptr(true),
+		},
 		// Keep existing behavior by default.
 		IgnoreCountTokensFailover: false,
 	}
@@ -119,6 +131,12 @@ func Load(configDir string) (*Config, error) {
 	}
 	if cfg.Global.LogStdout == nil {
 		cfg.Global.LogStdout = ptr(true)
+	}
+	if cfg.Global.Notifications.MinLevel == "" {
+		cfg.Global.Notifications.MinLevel = LogLevelError
+	}
+	if cfg.Global.Notifications.ProviderSwitch == nil {
+		cfg.Global.Notifications.ProviderSwitch = ptr(true)
 	}
 
 	// Load client configs
@@ -213,6 +231,15 @@ func (c *Config) Validate() error {
 		// valid
 	default:
 		return fmt.Errorf("invalid log level: %s", c.Global.LogLevel)
+	}
+
+	if c.Global.Notifications.MinLevel != "" {
+		switch c.Global.Notifications.MinLevel {
+		case LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError:
+			// valid
+		default:
+			return fmt.Errorf("invalid notifications.min_level: %s", c.Global.Notifications.MinLevel)
+		}
 	}
 
 	d, err := time.ParseDuration(c.Global.ReactivateAfter)
