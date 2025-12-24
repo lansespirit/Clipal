@@ -70,7 +70,10 @@ func main() {
 	// Set log level
 	logger.SetLevel(cfg.Global.LogLevel)
 	if err := configureFileLogging(cfgDir, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "log file setup failed: %v\n", err)
+		// Log to stderr since file logging failed, but also log via logger
+		// in case stdout logging is still working.
+		fmt.Fprintf(os.Stderr, "Warning: log file setup failed: %v (logs will only go to stdout)\n", err)
+		logger.Warn("log file setup failed: %v", err)
 	}
 
 	// Create and start the router

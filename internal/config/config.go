@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ type GlobalConfig struct {
 	Port             int      `yaml:"port"`
 	LogLevel         LogLevel `yaml:"log_level"`
 	ReactivateAfter  string   `yaml:"reactivate_after"`
+	MaxRequestBody   int64    `yaml:"max_request_body_bytes"`
 	LogDir           string   `yaml:"log_dir"`
 	LogRetentionDays int      `yaml:"log_retention_days"`
 	LogStdout        *bool    `yaml:"log_stdout"`
@@ -71,10 +73,13 @@ type Config struct {
 // DefaultGlobalConfig returns the default global configuration
 func DefaultGlobalConfig() GlobalConfig {
 	return GlobalConfig{
-		ListenAddr:       "127.0.0.1",
-		Port:             3333,
-		LogLevel:         LogLevelInfo,
-		ReactivateAfter:  "1h",
+		ListenAddr:      "127.0.0.1",
+		Port:            3333,
+		LogLevel:        LogLevelInfo,
+		ReactivateAfter: "1h",
+		// Default body limit: 32 MiB. clipal buffers request bodies to support retries,
+		// so a hard cap prevents unbounded memory usage.
+		MaxRequestBody:   32 * 1024 * 1024,
 		LogDir:           "",
 		LogRetentionDays: 7,
 		LogStdout:        ptr(true),
@@ -142,11 +147,23 @@ func Load(configDir string) (*Config, error) {
 
 // loadYAML loads a YAML file into the target struct
 func loadYAML(path string, target interface{}) error {
+	// Check file permissions - warn if too permissive (world-readable).
+	if fi, err := os.Stat(path); err == nil {
+		mode := fi.Mode().Perm()
+		// Warn if group or others have read permission (potential API key exposure).
+		if mode&0o044 != 0 {
+			// Using fmt.Fprintf since logger may not be initialized yet during config load.
+			fmt.Fprintf(os.Stderr, "Warning: config file %s has permissive permissions (%o), consider chmod 600\n", path, mode)
+		}
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	return yaml.Unmarshal(data, target)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	return dec.Decode(target)
 }
 
 // sortProviders sorts providers by priority (ascending)
@@ -186,6 +203,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Global.Port < 1 || c.Global.Port > 65535 {
 		return fmt.Errorf("invalid port: %d", c.Global.Port)
+	}
+	if c.Global.MaxRequestBody < 1 {
+		return fmt.Errorf("invalid max_request_body_bytes: %d", c.Global.MaxRequestBody)
 	}
 
 	switch c.Global.LogLevel {

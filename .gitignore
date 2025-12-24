@@ -25,3 +25,6 @@ Thumbs.db
 
 # Debug
 debug.log
+
+# Go build cache (used in restricted environments)
+.gocache/

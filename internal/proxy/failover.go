@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -30,28 +31,20 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	defer req.Body.Close()
 
-	active := cp.activeProviderCount()
+	// Atomically get active count and start index to avoid TOCTOU race.
+	active, startIndex := cp.getActiveCountAndStartIndex()
 	if active == 0 {
-		wait, reason, ok := cp.timeUntilNextAvailable()
-		if ok && wait > 0 {
-			secs := int(wait / time.Second)
-			if wait%time.Second != 0 {
-				secs++
-			}
-			if secs < 1 {
-				secs = 1
-			}
-			w.Header().Set("Retry-After", strconv.Itoa(secs))
-			if reason == "rate_limit" || reason == "overloaded" {
-				http.Error(w, "All providers are rate limited; retry later", http.StatusTooManyRequests)
-				return
-			}
-			http.Error(w, "All providers are temporarily unavailable; retry later", http.StatusServiceUnavailable)
+		if handled := cp.handleAllUnavailable(w); handled {
 			return
 		}
 		logger.Error("[%s] all providers unavailable", cp.clientType)
@@ -59,7 +52,6 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	startIndex := cp.ensureActiveStartIndex()
 	attempted := 0
 
 	for offset := 0; offset < len(cp.providers) && attempted < active; offset++ {
@@ -136,21 +128,10 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 	}
 
 	// If we've cooled down all providers during this request, surface a Retry-After to the client.
-	if wait, reason, ok := cp.timeUntilNextAvailable(); ok && wait > 0 && cp.activeProviderCount() == 0 {
-		secs := int(wait / time.Second)
-		if wait%time.Second != 0 {
-			secs++
-		}
-		if secs < 1 {
-			secs = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		if reason == "rate_limit" || reason == "overloaded" {
-			http.Error(w, "All providers are rate limited; retry later", http.StatusTooManyRequests)
+	if cp.activeProviderCount() == 0 {
+		if handled := cp.handleAllUnavailable(w); handled {
 			return
 		}
-		http.Error(w, "All providers are temporarily unavailable; retry later", http.StatusServiceUnavailable)
-		return
 	}
 
 	logger.Error("[%s] all providers failed", cp.clientType)
@@ -168,28 +149,20 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	defer req.Body.Close()
 
-	active := cp.activeProviderCount()
+	// Atomically get active count and start index to avoid TOCTOU race.
+	active, startIndex := cp.getActiveCountAndCountTokensStartIndex()
 	if active == 0 {
-		wait, reason, ok := cp.timeUntilNextAvailable()
-		if ok && wait > 0 {
-			secs := int(wait / time.Second)
-			if wait%time.Second != 0 {
-				secs++
-			}
-			if secs < 1 {
-				secs = 1
-			}
-			w.Header().Set("Retry-After", strconv.Itoa(secs))
-			if reason == "rate_limit" || reason == "overloaded" {
-				http.Error(w, "All providers are rate limited; retry later", http.StatusTooManyRequests)
-				return
-			}
-			http.Error(w, "All providers are temporarily unavailable; retry later", http.StatusServiceUnavailable)
+		if handled := cp.handleAllUnavailable(w); handled {
 			return
 		}
 		logger.Error("[%s] all providers unavailable", cp.clientType)
@@ -197,7 +170,6 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 		return
 	}
 
-	startIndex := cp.ensureActiveCountTokensStartIndex()
 	attempted := 0
 
 	for offset := 0; offset < len(cp.providers) && attempted < active; offset++ {
@@ -278,6 +250,9 @@ func (cp *ClientProxy) reactivateExpired() {
 	defer cp.mu.Unlock()
 
 	if len(cp.deactivated) != len(cp.providers) {
+		// This indicates a bug in initialization; log it for debugging.
+		logger.Error("[%s] deactivated slice length mismatch: %d != %d (providers)",
+			cp.clientType, len(cp.deactivated), len(cp.providers))
 		return
 	}
 	for i, d := range cp.deactivated {
@@ -375,6 +350,82 @@ func (cp *ClientProxy) activeProviderCount() int {
 		}
 	}
 	return count
+}
+
+// getActiveCountAndStartIndex atomically returns the active provider count and
+// the start index for iteration, avoiding TOCTOU race conditions.
+func (cp *ClientProxy) getActiveCountAndStartIndex() (active int, startIndex int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	now := time.Now()
+
+	// Count active providers.
+	for i := range cp.providers {
+		if cp.deactivated[i].until.IsZero() || !now.Before(cp.deactivated[i].until) {
+			active++
+		}
+	}
+	if active == 0 || len(cp.providers) == 0 {
+		return active, 0
+	}
+
+	// Ensure currentIndex is valid and points to an active provider.
+	if cp.currentIndex < 0 || cp.currentIndex >= len(cp.providers) {
+		cp.currentIndex = 0
+	}
+	if cp.deactivated[cp.currentIndex].until.IsZero() || !now.Before(cp.deactivated[cp.currentIndex].until) {
+		return active, cp.currentIndex
+	}
+	cp.currentIndex = cp.nextActiveIndexLocked(cp.currentIndex)
+	return active, cp.currentIndex
+}
+
+// getActiveCountAndCountTokensStartIndex atomically returns the active provider count and
+// the start index for count_tokens iteration.
+func (cp *ClientProxy) getActiveCountAndCountTokensStartIndex() (active int, startIndex int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	now := time.Now()
+
+	// Count active providers.
+	for i := range cp.providers {
+		if cp.deactivated[i].until.IsZero() || !now.Before(cp.deactivated[i].until) {
+			active++
+		}
+	}
+	if active == 0 || len(cp.providers) == 0 {
+		return active, 0
+	}
+
+	// Ensure countTokensIndex is valid and points to an active provider.
+	if cp.countTokensIndex < 0 || cp.countTokensIndex >= len(cp.providers) {
+		cp.countTokensIndex = 0
+	}
+	if cp.deactivated[cp.countTokensIndex].until.IsZero() || !now.Before(cp.deactivated[cp.countTokensIndex].until) {
+		return active, cp.countTokensIndex
+	}
+	cp.countTokensIndex = cp.nextActiveIndexLocked(cp.countTokensIndex)
+	return active, cp.countTokensIndex
+}
+
+// handleAllUnavailable writes a Retry-After response if all providers are temporarily unavailable.
+// Returns true if a response was written, false otherwise.
+func (cp *ClientProxy) handleAllUnavailable(w http.ResponseWriter) bool {
+	wait, reason, ok := cp.timeUntilNextAvailable()
+	if !ok || wait <= 0 {
+		return false
+	}
+	secs := int(wait/time.Second) + 1
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	if reason == "rate_limit" || reason == "overloaded" {
+		http.Error(w, "All providers are rate limited; retry later", http.StatusTooManyRequests)
+	} else {
+		http.Error(w, "All providers are temporarily unavailable; retry later", http.StatusServiceUnavailable)
+	}
+	return true
 }
 
 func (cp *ClientProxy) ensureActiveStartIndex() int {

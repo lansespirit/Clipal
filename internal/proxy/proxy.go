@@ -52,9 +52,20 @@ type ClientProxy struct {
 	reactivateAfter  time.Duration
 }
 
+// Close releases resources held by the ClientProxy.
+func (cp *ClientProxy) Close() {
+	if cp.httpClient != nil {
+		cp.httpClient.CloseIdleConnections()
+	}
+}
+
 // NewRouter creates a new Router instance
 func NewRouter(cfg *config.Config) *Router {
-	reactivateAfter, _ := time.ParseDuration(cfg.Global.ReactivateAfter)
+	reactivateAfter, err := time.ParseDuration(cfg.Global.ReactivateAfter)
+	if err != nil || reactivateAfter < 0 {
+		reactivateAfter = time.Hour // Default to 1 hour if invalid.
+		logger.Warn("invalid reactivate_after %q, defaulting to 1h", cfg.Global.ReactivateAfter)
+	}
 	r := &Router{
 		cfg:        cfg,
 		configDir:  cfg.ConfigDir(),
@@ -83,6 +94,10 @@ func NewRouter(cfg *config.Config) *Router {
 }
 
 func newClientProxy(clientType ClientType, providers []config.Provider, reactivateAfter time.Duration) *ClientProxy {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	return &ClientProxy{
 		clientType:       clientType,
 		providers:        providers,
@@ -91,14 +106,16 @@ func newClientProxy(clientType ClientType, providers []config.Provider, reactiva
 		deactivated:      make([]providerDeactivation, len(providers)),
 		reactivateAfter:  reactivateAfter,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
 			Transport: &http.Transport{
-				Proxy:               http.ProxyFromEnvironment,
-				ForceAttemptHTTP2:   true,
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-				TLSHandshakeTimeout: 10 * time.Second,
+				Proxy:                 http.ProxyFromEnvironment,
+				DialContext:           dialer.DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   10,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 2 * time.Minute,
+				ExpectContinueTimeout: 1 * time.Second,
 				// Keep response bytes unchanged unless the client explicitly asks for compression.
 				DisableCompression: true,
 			},
@@ -243,7 +260,11 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 	}
 
 	logger.SetLevel(newCfg.Global.LogLevel)
-	reactivateAfter, _ := time.ParseDuration(newCfg.Global.ReactivateAfter)
+	reactivateAfter, err := time.ParseDuration(newCfg.Global.ReactivateAfter)
+	if err != nil || reactivateAfter < 0 {
+		reactivateAfter = time.Hour
+		logger.Warn("invalid reactivate_after %q, defaulting to 1h", newCfg.Global.ReactivateAfter)
+	}
 
 	newProxies := make(map[ClientType]*ClientProxy)
 	if ps := config.GetEnabledProviders(newCfg.ClaudeCode); len(ps) > 0 {
@@ -257,9 +278,15 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 	}
 
 	r.mu.Lock()
+	oldProxies := r.proxies
 	r.cfg = newCfg
 	r.proxies = newProxies
 	r.mu.Unlock()
+
+	// Close old proxies to release idle connections.
+	for _, p := range oldProxies {
+		p.Close()
+	}
 
 	logger.Info("provider configs reloaded from %s", r.configDir)
 	for ct, p := range newProxies {
@@ -314,12 +341,17 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 	r.mu.RLock()
 	proxy, exists := r.proxies[clientType]
 	ignoreCountTokensFailover := r.cfg.Global.IgnoreCountTokensFailover
+	maxBody := r.cfg.Global.MaxRequestBody
 	r.mu.RUnlock()
 
 	if !exists || len(proxy.providers) == 0 {
 		logger.Warn("[%s] no providers configured", clientType)
 		http.Error(w, fmt.Sprintf("No providers configured for %s", clientType), http.StatusServiceUnavailable)
 		return
+	}
+
+	if maxBody > 0 {
+		req.Body = http.MaxBytesReader(w, req.Body, maxBody)
 	}
 
 	// Strip the prefix from the path
@@ -403,18 +435,20 @@ func (cp *ClientProxy) setCurrentIndex(index int) {
 	cp.currentIndex = index
 }
 
+// hopByHopHeaders is a set of hop-by-hop headers that should not be forwarded.
+var hopByHopHeaders = map[string]bool{
+	"Connection":          true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Te":                  true,
+	"Trailer":             true,
+	"Transfer-Encoding":   true,
+	"Upgrade":             true,
+}
+
 // isHopByHopHeader checks if a header is hop-by-hop
 func isHopByHopHeader(header string) bool {
-	hopByHopHeaders := map[string]bool{
-		"Connection":          true,
-		"Keep-Alive":          true,
-		"Proxy-Authenticate":  true,
-		"Proxy-Authorization": true,
-		"Te":                  true,
-		"Trailer":             true,
-		"Transfer-Encoding":   true,
-		"Upgrade":             true,
-	}
 	return hopByHopHeaders[http.CanonicalHeaderKey(header)]
 }
 

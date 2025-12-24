@@ -3,13 +3,33 @@ package proxy
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
 )
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func newResponse(status int, hdr http.Header, body string) *http.Response {
+	if hdr == nil {
+		hdr = make(http.Header)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     hdr,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
 
 func TestPathPrefixMatchAndStrip(t *testing.T) {
 	t.Parallel()
@@ -134,34 +154,56 @@ func TestAddForwardedHeaders(t *testing.T) {
 	}
 }
 
+func TestHandleRequest_MaxRequestBodyBytes(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			ListenAddr:      "127.0.0.1",
+			Port:            3333,
+			LogLevel:        config.LogLevelDebug,
+			ReactivateAfter: "1h",
+			MaxRequestBody:  8,
+		},
+		Codex: config.ClientConfig{
+			Providers: []config.Provider{
+				{Name: "p1", BaseURL: "http://example.com", APIKey: "k1", Priority: 1},
+			},
+		},
+	}
+
+	router := NewRouter(cfg)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte("123456789")))
+	router.handleRequest(rr, req)
+
+	if rr.Result().StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status: got %d want %d", rr.Result().StatusCode, http.StatusRequestEntityTooLarge)
+	}
+}
+
 func TestForwardWithFailover_DeactivateOn401(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/test" {
-			http.NotFound(w, r)
-			return
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			return newResponse(http.StatusUnauthorized, h, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/test" {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -185,22 +227,22 @@ func TestForwardWithFailover_DeactivateOn401(t *testing.T) {
 func TestForwardWithFailover_RetryOn503DoesNotDeactivate(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("down"))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			return newResponse(http.StatusServiceUnavailable, nil, "down"), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -224,27 +266,18 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 	var srv1Count int
 	var srv2Count int
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages/count_tokens" {
-			http.NotFound(w, r)
-			return
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			srv1Count++
+			return newResponse(http.StatusServiceUnavailable, nil, "down"), nil
+		case "p2":
+			srv2Count++
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
 		}
-		srv1Count++
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("down"))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages/count_tokens" {
-			http.NotFound(w, r)
-			return
-		}
-		srv2Count++
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	})
 
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
@@ -256,8 +289,8 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 		},
 		ClaudeCode: config.ClientConfig{
 			Providers: []config.Provider{
-				{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-				{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 			},
 		},
 	}
@@ -270,6 +303,7 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 	if got := cp.getCurrentIndex(); got != 0 {
 		t.Fatalf("currentIndex: got %d want %d", got, 0)
 	}
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages/count_tokens", bytes.NewReader([]byte(`{"x":1}`)))
@@ -311,23 +345,24 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 func TestForwardWithFailover_DeactivateOn429Quota(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"quota","type":"insufficient_quota","code":"insufficient_quota"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"quota","type":"insufficient_quota","code":"insufficient_quota"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -345,23 +380,24 @@ func TestForwardWithFailover_DeactivateOn429Quota(t *testing.T) {
 func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -379,15 +415,14 @@ func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 func TestForwardWithFailover_ReactivateAfterTTL(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return newResponse(http.StatusOK, nil, "ok"), nil
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv.URL, APIKey: "k1", Priority: 1},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	// Simulate a prior deactivation older than the TTL.
 	cp.deactivated[0] = providerDeactivation{until: time.Now().Add(-2 * time.Hour)}
@@ -407,23 +442,24 @@ func TestForwardWithFailover_ReactivateAfterTTL(t *testing.T) {
 func TestForwardWithFailover_429AnthropicRateLimitDoesNotDeactivate(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"rate limit"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			return newResponse(http.StatusTooManyRequests, h, `{"type":"error","error":{"type":"rate_limit_error","message":"rate limit"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientClaudeCode, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -440,24 +476,25 @@ func TestForwardWithFailover_429AnthropicRateLimitDoesNotDeactivate(t *testing.T
 func TestForwardWithFailover_429RetryAfterCooldown(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "120")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Retry-After", "120")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -481,24 +518,25 @@ func TestForwardWithFailover_429RetryAfterCooldown(t *testing.T) {
 func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "7200")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Retry-After", "7200")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
@@ -523,26 +561,28 @@ func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 func TestForwardWithFailover_AllProvidersCooldownReturnsRetryAfter(t *testing.T) {
 	t.Parallel()
 
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`))
-	}))
-	t.Cleanup(srv1.Close)
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "45")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"rate limit"}}`))
-	}))
-	t.Cleanup(srv2.Close)
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Retry-After", "30")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+		case "p2":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Retry-After", "45")
+			return newResponse(http.StatusTooManyRequests, h, `{"type":"error","error":{"type":"rate_limit_error","message":"rate limit"}}`), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
-		{Name: "p1", BaseURL: srv1.URL, APIKey: "k1", Priority: 1},
-		{Name: "p2", BaseURL: srv2.URL, APIKey: "k2", Priority: 2},
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour)
+	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
