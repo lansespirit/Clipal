@@ -67,7 +67,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/bin/clipal --config-dir %h/.clipal
+ExecStart=/usr/local/bin/clipal --config-dir %h/.clipal
 Restart=always
 RestartSec=2
 
@@ -77,7 +77,7 @@ WantedBy=default.target
 
 说明：
 
-- 如果你把二进制放在 `/usr/local/bin/clipal`，把 `ExecStart` 改为 `/usr/local/bin/clipal --config-dir %h/.clipal`
+- 如果你把二进制放在 `$HOME/bin/clipal`，把 `ExecStart` 改为 `%h/bin/clipal --config-dir %h/.clipal`
 
 启动并设置开机自启（登录后）：
 
