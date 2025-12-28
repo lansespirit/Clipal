@@ -1,5 +1,7 @@
 # Clipal
 
+![Clipal](assets/clipal.png)
+
 English: [README.md](README.md) | 中文: [README.zh-CN.md](README.zh-CN.md)
 
 极简 CLI LLM API 反向代理服务

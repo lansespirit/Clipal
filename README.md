@@ -1,5 +1,7 @@
 # Clipal
 
+![Clipal](assets/clipal.png)
+
 English: [README.md](README.md) | 中文: [README.zh-CN.md](README.zh-CN.md)
 
 A minimal CLI-first LLM API reverse proxy for tools like Claude Code, Codex CLI, and Gemini CLI.
