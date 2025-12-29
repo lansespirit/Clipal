@@ -202,6 +202,16 @@ clipal --port 8080
 clipal --log-level debug
 ```
 
+## Update
+
+`clipal update` downloads the latest release binary from `lansespirit/Clipal`, verifies it via `checksums.txt`, and replaces the current executable.
+
+```bash
+clipal update
+clipal update --check
+clipal update --dry-run
+```
+
 ## Run in background
 
 ```bash

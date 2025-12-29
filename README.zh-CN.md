@@ -270,6 +270,16 @@ clipal --port 8080
 clipal --log-level debug
 ```
 
+### 更新
+
+`clipal update` 会从 `lansespirit/Clipal` 下载最新 Release 的二进制，使用 `checksums.txt` 做 SHA256 校验，并替换当前可执行文件。
+
+```bash
+clipal update
+clipal update --check
+clipal update --dry-run
+```
+
 ### 后台运行
 
 ```bash
