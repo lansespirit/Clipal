@@ -1,0 +1,62 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="${GITHUB_SHA}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}"
+
+          export CGO_ENABLED=0
+
+          GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/clipal-darwin-amd64   ./cmd/clipal
+          GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/clipal-darwin-arm64   ./cmd/clipal
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/clipal-linux-amd64    ./cmd/clipal
+          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/clipal-linux-arm64    ./cmd/clipal
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/clipal-windows-amd64.exe ./cmd/clipal
+          GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/clipal-windows-arm64.exe ./cmd/clipal
+
+          chmod +x dist/clipal-darwin-amd64 dist/clipal-darwin-arm64 dist/clipal-linux-amd64 dist/clipal-linux-arm64
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/gen_checksums.sh dist > dist/checksums.txt
+          cat dist/checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/*
+
