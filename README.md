@@ -83,6 +83,7 @@ listen_addr: "127.0.0.1"  # default: 127.0.0.1 (local only)
 port: 3333                # default: 3333
 log_level: "info"         # debug/info/warn/error
 reactivate_after: "1h"    # default: 1h; set to 0 to disable auto-deactivate
+upstream_idle_timeout: "3m" # default: 3m; set to 0 to disable (no body bytes received)
 max_request_body_bytes: 33554432  # default: 32 MiB (request body is buffered for retries)
 log_dir: ""               # default: <config-dir>/logs
 log_retention_days: 7     # default: 7
@@ -314,4 +315,3 @@ rm -rf "$tmp"
 ## License
 
 MIT
-

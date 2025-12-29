@@ -5,6 +5,9 @@ listen_addr: 127.0.0.1
 port: 3333
 log_level: info # debug | info | warn | error
 reactivate_after: 1h # set to 0 to disable temporary deactivation
+# Cancel an upstream attempt if no response body bytes are received for this long.
+# Useful for SSE streams that can hang after headers. Set to 0 to disable.
+upstream_idle_timeout: 3m
 # Max request body size in bytes (clipal buffers request bodies for retries).
 # Default: 33554432 (32 MiB)
 # max_request_body_bytes: 33554432

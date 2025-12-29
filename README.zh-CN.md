@@ -107,6 +107,7 @@ listen_addr: 127.0.0.1    # 监听地址，默认 127.0.0.1（仅本机访问）
 port: 3333              # 服务端口，默认 3333
 log_level: info         # debug | info | warn | error
 reactivate_after: 1h    # Provider 自动恢复间隔，默认 1h（解除临时禁用）
+upstream_idle_timeout: 3m # 上游响应 body 长时间无字节则中断该尝试并切换（默认 3m；设为 0 可禁用）
 max_request_body_bytes: 33554432 # 请求体大小上限（字节），默认 32 MiB
 log_dir: ""             # 日志目录（默认：<config-dir>/logs，例如 ~/.clipal/logs）
 log_retention_days: 7   # 日志保留天数（默认 7）
@@ -148,6 +149,7 @@ providers:
 | `port` | int | 否 | 代理服务监听端口，默认 3333 |
 | `log_level` | string | 否 | 日志级别：debug/info/warn/error，默认 info |
 | `reactivate_after` | duration | 否 | Provider 自动恢复间隔（如 `1h`/`30m`），默认 `1h`；设为 `0` 表示不对鉴权/额度错误执行临时禁用 |
+| `upstream_idle_timeout` | duration | 否 | 上游响应 body 长时间无字节则中断该尝试并切换到下一个 provider，默认 `3m`；设为 `0` 可禁用 |
 | `max_request_body_bytes` | int | 否 | 请求体大小上限（字节）。clipal 会缓存请求体以支持重试，默认 `33554432`（32 MiB） |
 | `log_dir` | string | 否 | 日志目录（默认：`<config-dir>/logs`） |
 | `log_retention_days` | int | 否 | 日志保留天数（默认 7） |

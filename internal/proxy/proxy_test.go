@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"crypto/tls"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -19,6 +20,10 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
 func newResponse(status int, hdr http.Header, body string) *http.Response {
 	if hdr == nil {
@@ -202,7 +207,7 @@ func TestForwardWithFailover_DeactivateOn401(t *testing.T) {
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -241,7 +246,7 @@ func TestForwardWithFailover_RetryOn503DoesNotDeactivate(t *testing.T) {
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -257,6 +262,85 @@ func TestForwardWithFailover_RetryOn503DoesNotDeactivate(t *testing.T) {
 	}
 	if cp.isDeactivated(0) {
 		t.Fatalf("expected provider 0 NOT to be deactivated")
+	}
+}
+
+func TestForwardWithFailover_ContextCanceledDoesNotRetryOtherProviders(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+
+	cp := newClientProxy(ClientCodex, []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+		{Name: "p3", BaseURL: "http://p3", APIKey: "k3", Priority: 3},
+	}, time.Hour, 0)
+	cp.httpClient.Transport = rt
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`))).WithContext(ctx)
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	if calls != 1 {
+		t.Fatalf("expected only 1 upstream attempt after context canceled, got %d", calls)
+	}
+}
+
+func TestForwardWithFailover_IdleTimeoutBeforeFirstByteRetriesNextProvider(t *testing.T) {
+	t.Parallel()
+
+	var callsP1 int
+	var callsP2 int
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			callsP1++
+			body := io.NopCloser(readerFunc(func(p []byte) (int, error) {
+				<-r.Context().Done()
+				return 0, r.Context().Err()
+			}))
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
+		case "p2":
+			callsP2++
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
+
+	cp := newClientProxy(ClientCodex, []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+	}, time.Hour, 10*time.Millisecond)
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	if rr.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rr.Result().StatusCode, http.StatusOK)
+	}
+	if got := rr.Body.String(); got != "ok" {
+		t.Fatalf("body: got %q want %q", got, "ok")
+	}
+	if callsP1 != 1 || callsP2 != 1 {
+		t.Fatalf("unexpected upstream call counts: p1=%d p2=%d", callsP1, callsP2)
+	}
+	if got := cp.getCurrentIndex(); got != 1 {
+		t.Fatalf("currentIndex: got %d want %d", got, 1)
 	}
 }
 
@@ -361,7 +445,7 @@ func TestForwardWithFailover_DeactivateOn429Quota(t *testing.T) {
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -396,7 +480,7 @@ func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -421,7 +505,7 @@ func TestForwardWithFailover_ReactivateAfterTTL(t *testing.T) {
 
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	// Simulate a prior deactivation older than the TTL.
@@ -458,7 +542,7 @@ func TestForwardWithFailover_429AnthropicRateLimitDoesNotDeactivate(t *testing.T
 	cp := newClientProxy(ClientClaudeCode, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -493,7 +577,7 @@ func TestForwardWithFailover_429RetryAfterCooldown(t *testing.T) {
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -535,7 +619,7 @@ func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -581,7 +665,7 @@ func TestForwardWithFailover_AllProvidersCooldownReturnsRetryAfter(t *testing.T)
 	cp := newClientProxy(ClientCodex, []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()

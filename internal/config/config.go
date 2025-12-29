@@ -36,6 +36,10 @@ type GlobalConfig struct {
 	Port             int                 `yaml:"port"`
 	LogLevel         LogLevel            `yaml:"log_level"`
 	ReactivateAfter  string              `yaml:"reactivate_after"`
+	// UpstreamIdleTimeout cancels an upstream attempt if no response body bytes are received
+	// for the duration (useful for SSE streams that may hang after headers).
+	// Set to "0" to disable.
+	UpstreamIdleTimeout string `yaml:"upstream_idle_timeout"`
 	MaxRequestBody   int64               `yaml:"max_request_body_bytes"`
 	LogDir           string              `yaml:"log_dir"`
 	LogRetentionDays int                 `yaml:"log_retention_days"`
@@ -84,6 +88,7 @@ func DefaultGlobalConfig() GlobalConfig {
 		Port:            3333,
 		LogLevel:        LogLevelInfo,
 		ReactivateAfter: "1h",
+		UpstreamIdleTimeout: "3m",
 		// Default body limit: 32 MiB. clipal buffers request bodies to support retries,
 		// so a hard cap prevents unbounded memory usage.
 		MaxRequestBody:   32 * 1024 * 1024,
@@ -125,6 +130,9 @@ func Load(configDir string) (*Config, error) {
 	}
 	if cfg.Global.ReactivateAfter == "" {
 		cfg.Global.ReactivateAfter = "1h"
+	}
+	if cfg.Global.UpstreamIdleTimeout == "" {
+		cfg.Global.UpstreamIdleTimeout = "3m"
 	}
 	if cfg.Global.LogRetentionDays == 0 {
 		cfg.Global.LogRetentionDays = 7
@@ -245,6 +253,10 @@ func (c *Config) Validate() error {
 	d, err := time.ParseDuration(c.Global.ReactivateAfter)
 	if err != nil || d < 0 {
 		return fmt.Errorf("invalid reactivate_after: %s", c.Global.ReactivateAfter)
+	}
+	idle, err := time.ParseDuration(c.Global.UpstreamIdleTimeout)
+	if err != nil || idle < 0 {
+		return fmt.Errorf("invalid upstream_idle_timeout: %s", c.Global.UpstreamIdleTimeout)
 	}
 	if c.Global.LogRetentionDays < 0 {
 		return fmt.Errorf("invalid log_retention_days: %d", c.Global.LogRetentionDays)

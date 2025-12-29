@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,8 @@ import (
 
 const maxRetryAfterCooldown = time.Hour
 
+var errUpstreamIdleTimeout = errors.New("upstream idle timeout")
+
 type providerDeactivation struct {
 	at      time.Time
 	until   time.Time
@@ -24,9 +27,34 @@ type providerDeactivation struct {
 	message string
 }
 
+func isUpstreamIdleTimeout(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errUpstreamIdleTimeout) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) && context.Cause(ctx) == errUpstreamIdleTimeout {
+		return true
+	}
+	return false
+}
+
+func stopTimer(t *time.Timer) {
+	if t == nil {
+		return
+	}
+	t.Stop()
+}
+
 // forwardWithFailover forwards the request with automatic failover.
 func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Request, path string) {
 	cp.reactivateExpired()
+
+	// If the client has already gone away (or the server is shutting down), don't do any work.
+	if err := req.Context().Err(); err != nil {
+		return
+	}
 
 	// Read the request body once for potential retries
 	bodyBytes, err := io.ReadAll(req.Body)
@@ -59,6 +87,10 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 	lastSwitchStatus := 0
 
 	for offset := 0; offset < len(cp.providers) && attempted < active; offset++ {
+		if err := req.Context().Err(); err != nil {
+			return
+		}
+
 		index := (startIndex + offset) % len(cp.providers)
 		if cp.isDeactivated(index) {
 			continue
@@ -71,10 +103,14 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 
 		logger.Debug("[%s] forwarding to: %s (attempt %d/%d)", cp.clientType, provider.Name, attempted, active)
 
+		attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
+
 		// Create the proxy request
-		proxyReq, err := cp.createProxyRequest(req, provider, path, bodyBytes)
+		reqWithAttemptCtx := req.WithContext(attemptCtx)
+		proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, path, bodyBytes)
 		if err != nil {
 			logger.Error("[%s] failed to create request for %s: %v", cp.clientType, provider.Name, err)
+			cancelAttempt(nil)
 			continue
 		}
 
@@ -86,6 +122,13 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		// Send the request
 		resp, err := cp.httpClient.Do(proxyReq)
 		if err != nil {
+			// Don't retry across providers when the request context is already canceled;
+			// this otherwise produces misleading "all providers failed" logs.
+			if req.Context().Err() != nil {
+				cancelAttempt(nil)
+				return
+			}
+			cancelAttempt(nil)
 			logger.Warn("[%s] %s failed: %v, switching to next provider", cp.clientType, provider.Name, err)
 			lastSwitchReason = "network"
 			lastSwitchStatus = 0
@@ -96,6 +139,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		action, reason, msg, cooldown := classifyUpstreamFailure(resp)
 		if action != failureReturnToClient {
 			resp.Body.Close()
+			cancelAttempt(nil)
 			lastSwitchReason = reason
 			lastSwitchStatus = resp.StatusCode
 			switch action {
@@ -113,27 +157,109 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 			continue
 		}
 
-		// Success - copy response to client
-		logger.Debug("[%s] request completed via %s", cp.clientType, provider.Name)
+		// Success (or pass-through response) - copy response to client. For streaming endpoints
+		// (SSE), wait for the first body bytes before sending headers so we can fail over cleanly
+		// if the upstream hangs after headers.
+		var idleTimer *time.Timer
+		if cp.upstreamIdle > 0 {
+			idleTimer = time.AfterFunc(cp.upstreamIdle, func() { cancelAttempt(errUpstreamIdleTimeout) })
+		}
 
-		// Update current index to this working provider
+		buf := make([]byte, 32*1024)
+		total := 0
+		firstN, firstErr := resp.Body.Read(buf)
+		if firstN > 0 && idleTimer != nil {
+			idleTimer.Reset(cp.upstreamIdle)
+		}
+		total += firstN
+		if firstN == 0 && firstErr != nil {
+			if errors.Is(firstErr, io.EOF) {
+				// Legitimately empty body; pass through as-is.
+				cp.setCurrentIndex(index)
+				if attempted > 1 && originProvider != "" && originProvider != provider.Name {
+					notify.ProviderSwitched(string(cp.clientType), originProvider, provider.Name, lastSwitchReason, lastSwitchStatus)
+				}
+				copyHeaders(w.Header(), resp.Header)
+				w.WriteHeader(resp.StatusCode)
+				resp.Body.Close()
+				stopTimer(idleTimer)
+				cancelAttempt(nil)
+				if resp.StatusCode == http.StatusOK {
+					logger.Info("[%s] request completed via %s", cp.clientType, provider.Name)
+				}
+				return
+			}
+			resp.Body.Close()
+			stopTimer(idleTimer)
+			if req.Context().Err() != nil {
+				cancelAttempt(nil)
+				return
+			}
+			if isUpstreamIdleTimeout(attemptCtx, firstErr) {
+				logger.Warn("[%s] %s no body bytes for %s, switching to next provider", cp.clientType, provider.Name, cp.upstreamIdle)
+				lastSwitchReason = "idle_timeout"
+				lastSwitchStatus = 0
+			} else {
+				logger.Warn("[%s] %s response read failed before body: %v, switching to next provider", cp.clientType, provider.Name, firstErr)
+				lastSwitchReason = "network"
+				lastSwitchStatus = 0
+			}
+			cancelAttempt(nil)
+			cp.setCurrentIndex(cp.nextActiveIndex(index))
+			continue
+		}
+
+		// Update current index to this working provider (we've got a response body).
 		cp.setCurrentIndex(index)
 		if attempted > 1 && originProvider != "" && originProvider != provider.Name {
 			notify.ProviderSwitched(string(cp.clientType), originProvider, provider.Name, lastSwitchReason, lastSwitchStatus)
 		}
 
-		// Copy headers
 		copyHeaders(w.Header(), resp.Header)
-
 		w.WriteHeader(resp.StatusCode)
 
-		// Stream the response body
-		if resp.Body != nil {
-			if _, err := io.Copy(newFlushWriter(w), resp.Body); err != nil {
-				logger.Warn("[%s] response copy failed via %s: %v", cp.clientType, provider.Name, err)
+		fw := newFlushWriter(w)
+		if firstN > 0 {
+			if _, err := fw.Write(buf[:firstN]); err != nil {
+				resp.Body.Close()
+				stopTimer(idleTimer)
+				cancelAttempt(nil)
+				return
 			}
-			resp.Body.Close()
 		}
+
+		for {
+			nr, er := resp.Body.Read(buf)
+			if nr > 0 {
+				if idleTimer != nil {
+					idleTimer.Reset(cp.upstreamIdle)
+				}
+				total += nr
+				if _, ew := fw.Write(buf[:nr]); ew != nil {
+					resp.Body.Close()
+					stopTimer(idleTimer)
+					cancelAttempt(nil)
+					return
+				}
+			}
+			if er != nil {
+				if errors.Is(er, io.EOF) {
+					break
+				}
+				if req.Context().Err() == nil {
+					if isUpstreamIdleTimeout(attemptCtx, er) {
+						logger.Warn("[%s] upstream %s stalled for %s (after %d bytes)", cp.clientType, provider.Name, cp.upstreamIdle, total)
+					} else {
+						logger.Warn("[%s] response copy failed via %s: %v", cp.clientType, provider.Name, er)
+					}
+				}
+				break
+			}
+		}
+
+		resp.Body.Close()
+		stopTimer(idleTimer)
+		cancelAttempt(nil)
 
 		if resp.StatusCode == http.StatusOK {
 			logger.Info("[%s] request completed via %s", cp.clientType, provider.Name)
@@ -159,6 +285,10 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 // provider can reduce context-cache effectiveness and increase token usage.
 func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req *http.Request, path string) {
 	cp.reactivateExpired()
+
+	if err := req.Context().Err(); err != nil {
+		return
+	}
 
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -187,6 +317,10 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 	attempted := 0
 
 	for offset := 0; offset < len(cp.providers) && attempted < active; offset++ {
+		if err := req.Context().Err(); err != nil {
+			return
+		}
+
 		index := (startIndex + offset) % len(cp.providers)
 		if cp.isDeactivated(index) {
 			continue
@@ -196,10 +330,14 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 
 		logger.Debug("[%s] forwarding to: %s (count_tokens attempt %d/%d)", cp.clientType, provider.Name, attempted, active)
 
-		proxyReq, err := cp.createProxyRequest(req, provider, path, bodyBytes)
+		attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
+		reqWithAttemptCtx := req.WithContext(attemptCtx)
+
+		proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, path, bodyBytes)
 		if err != nil {
 			logger.Error("[%s] failed to create request for %s: %v", cp.clientType, provider.Name, err)
 			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			cancelAttempt(nil)
 			continue
 		}
 
@@ -209,6 +347,11 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 
 		resp, err := cp.httpClient.Do(proxyReq)
 		if err != nil {
+			if req.Context().Err() != nil {
+				cancelAttempt(nil)
+				return
+			}
+			cancelAttempt(nil)
 			logger.Warn("[%s] %s failed (count_tokens): %v, trying next provider", cp.clientType, provider.Name, err)
 			cp.setCountTokensIndex(cp.nextActiveIndex(index))
 			continue
@@ -222,6 +365,7 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 			cp.deactivateFor(index, "auth", resp.StatusCode, msg, cp.reactivateAfter)
 			cp.setCountTokensIndex(cp.nextActiveIndex(index))
 			logger.Error("[%s] %s deactivated (count_tokens auth): %d %s", cp.clientType, provider.Name, resp.StatusCode, msg)
+			cancelAttempt(nil)
 			continue
 		}
 		if resp.StatusCode == http.StatusPaymentRequired {
@@ -230,6 +374,7 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 			cp.deactivateFor(index, "billing", resp.StatusCode, msg, cp.reactivateAfter)
 			cp.setCountTokensIndex(cp.nextActiveIndex(index))
 			logger.Error("[%s] %s deactivated (count_tokens billing): %d %s", cp.clientType, provider.Name, resp.StatusCode, msg)
+			cancelAttempt(nil)
 			continue
 		}
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
@@ -237,19 +382,76 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 			resp.Body.Close()
 			cp.setCountTokensIndex(cp.nextActiveIndex(index))
 			logger.Warn("[%s] %s failed (count_tokens): %d %s, trying next provider", cp.clientType, provider.Name, resp.StatusCode, msg)
+			cancelAttempt(nil)
 			continue
 		}
 
-		// Success (or any non-retriable response) - return to client and make count_tokens sticky to this provider.
+		// Success (or any non-retriable response) - return to client and make count_tokens sticky.
+		var idleTimer *time.Timer
+		if cp.upstreamIdle > 0 {
+			idleTimer = time.AfterFunc(cp.upstreamIdle, func() { cancelAttempt(errUpstreamIdleTimeout) })
+		}
+
+		buf := make([]byte, 32*1024)
+		firstN, firstErr := resp.Body.Read(buf)
+		if firstN > 0 && idleTimer != nil {
+			idleTimer.Reset(cp.upstreamIdle)
+		}
+		if firstN == 0 && firstErr != nil {
+			if errors.Is(firstErr, io.EOF) {
+				cp.setCountTokensIndex(index)
+				copyHeaders(w.Header(), resp.Header)
+				w.WriteHeader(resp.StatusCode)
+				resp.Body.Close()
+				stopTimer(idleTimer)
+				cancelAttempt(nil)
+				return
+			}
+			resp.Body.Close()
+			stopTimer(idleTimer)
+			cancelAttempt(nil)
+			if req.Context().Err() != nil {
+				return
+			}
+			logger.Warn("[%s] %s response read failed before body (count_tokens): %v, trying next provider", cp.clientType, provider.Name, firstErr)
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			continue
+		}
+
 		cp.setCountTokensIndex(index)
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		if resp.Body != nil {
-			if _, err := io.Copy(newFlushWriter(w), resp.Body); err != nil {
-				logger.Warn("[%s] response copy failed via %s (count_tokens): %v", cp.clientType, provider.Name, err)
+
+		fw := newFlushWriter(w)
+		if firstN > 0 {
+			if _, err := fw.Write(buf[:firstN]); err != nil {
+				resp.Body.Close()
+				stopTimer(idleTimer)
+				cancelAttempt(nil)
+				return
 			}
 		}
+		for {
+			nr, er := resp.Body.Read(buf)
+			if nr > 0 {
+				if idleTimer != nil {
+					idleTimer.Reset(cp.upstreamIdle)
+				}
+				if _, ew := fw.Write(buf[:nr]); ew != nil {
+					resp.Body.Close()
+					stopTimer(idleTimer)
+					cancelAttempt(nil)
+					return
+				}
+			}
+			if er != nil {
+				break
+			}
+		}
+
 		resp.Body.Close()
+		stopTimer(idleTimer)
+		cancelAttempt(nil)
 		return
 	}
 

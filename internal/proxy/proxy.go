@@ -34,6 +34,7 @@ type Router struct {
 	proxies    map[ClientType]*ClientProxy
 	server     *http.Server
 	mu         sync.RWMutex
+	watchMu    sync.Mutex
 	watchStop  chan struct{}
 	watchDone  chan struct{}
 	lastMod    map[string]time.Time
@@ -50,6 +51,7 @@ type ClientProxy struct {
 	httpClient       *http.Client
 	deactivated      []providerDeactivation
 	reactivateAfter  time.Duration
+	upstreamIdle     time.Duration
 }
 
 // Close releases resources held by the ClientProxy.
@@ -66,6 +68,11 @@ func NewRouter(cfg *config.Config) *Router {
 		reactivateAfter = time.Hour // Default to 1 hour if invalid.
 		logger.Warn("invalid reactivate_after %q, defaulting to 1h", cfg.Global.ReactivateAfter)
 	}
+	upstreamIdle, err := time.ParseDuration(cfg.Global.UpstreamIdleTimeout)
+	if err != nil || upstreamIdle < 0 {
+		upstreamIdle = 3 * time.Minute
+		logger.Warn("invalid upstream_idle_timeout %q, defaulting to 3m", cfg.Global.UpstreamIdleTimeout)
+	}
 	r := &Router{
 		cfg:        cfg,
 		configDir:  cfg.ConfigDir(),
@@ -77,23 +84,23 @@ func NewRouter(cfg *config.Config) *Router {
 	// Initialize client proxies
 	claudeProviders := config.GetEnabledProviders(cfg.ClaudeCode)
 	if len(claudeProviders) > 0 {
-		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, claudeProviders, reactivateAfter)
+		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, claudeProviders, reactivateAfter, upstreamIdle)
 	}
 
 	codexProviders := config.GetEnabledProviders(cfg.Codex)
 	if len(codexProviders) > 0 {
-		r.proxies[ClientCodex] = newClientProxy(ClientCodex, codexProviders, reactivateAfter)
+		r.proxies[ClientCodex] = newClientProxy(ClientCodex, codexProviders, reactivateAfter, upstreamIdle)
 	}
 
 	geminiProviders := config.GetEnabledProviders(cfg.Gemini)
 	if len(geminiProviders) > 0 {
-		r.proxies[ClientGemini] = newClientProxy(ClientGemini, geminiProviders, reactivateAfter)
+		r.proxies[ClientGemini] = newClientProxy(ClientGemini, geminiProviders, reactivateAfter, upstreamIdle)
 	}
 
 	return r
 }
 
-func newClientProxy(clientType ClientType, providers []config.Provider, reactivateAfter time.Duration) *ClientProxy {
+func newClientProxy(clientType ClientType, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration) *ClientProxy {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -105,6 +112,7 @@ func newClientProxy(clientType ClientType, providers []config.Provider, reactiva
 		countTokensIndex: 0,
 		deactivated:      make([]providerDeactivation, len(providers)),
 		reactivateAfter:  reactivateAfter,
+		upstreamIdle:     upstreamIdle,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -132,11 +140,14 @@ func (r *Router) Start() error {
 	mux.HandleFunc("/health", r.handleHealth)
 
 	addr := net.JoinHostPort(r.cfg.Global.ListenAddr, strconv.Itoa(port))
-	r.server = &http.Server{
+	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	r.mu.Lock()
+	r.server = srv
+	r.mu.Unlock()
 
 	logger.Info("clipal starting on %s", addr)
 
@@ -147,21 +158,27 @@ func (r *Router) Start() error {
 
 	r.startProviderConfigWatcher()
 
-	return r.server.ListenAndServe()
+	return srv.ListenAndServe()
 }
 
 // Stop gracefully stops the proxy server
 func (r *Router) Stop() error {
 	r.stopProviderConfigWatcher()
-	if r.server != nil {
+	r.mu.RLock()
+	srv := r.server
+	r.mu.RUnlock()
+	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return r.server.Shutdown(ctx)
+		return srv.Shutdown(ctx)
 	}
 	return nil
 }
 
 func (r *Router) startProviderConfigWatcher() {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+
 	if r.configDir == "" || r.watchEvery <= 0 {
 		return
 	}
@@ -169,14 +186,16 @@ func (r *Router) startProviderConfigWatcher() {
 		return
 	}
 
-	r.watchStop = make(chan struct{})
-	r.watchDone = make(chan struct{})
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	r.watchStop = stopCh
+	r.watchDone = doneCh
 
 	// Initialize snapshot so we don't reload immediately on start.
 	r.snapshotProviderConfigModTimes()
 
-	go func() {
-		defer close(r.watchDone)
+	go func(stopCh <-chan struct{}, doneCh chan struct{}) {
+		defer close(doneCh)
 		ticker := time.NewTicker(r.watchEvery)
 		defer ticker.Stop()
 		for {
@@ -184,23 +203,39 @@ func (r *Router) startProviderConfigWatcher() {
 			case <-ticker.C:
 				r.reloadIfProviderConfigsChanged()
 				r.sweepReactivations()
-			case <-r.watchStop:
+			case <-stopCh:
 				return
 			}
 		}
-	}()
+	}(stopCh, doneCh)
 }
 
 func (r *Router) stopProviderConfigWatcher() {
-	if r.watchStop == nil {
+	r.watchMu.Lock()
+	stopCh := r.watchStop
+	doneCh := r.watchDone
+	r.watchMu.Unlock()
+
+	if stopCh == nil {
 		return
 	}
-	close(r.watchStop)
-	r.watchStop = nil
-	if r.watchDone != nil {
-		<-r.watchDone
+
+	select {
+	case <-stopCh:
+		// already closed
+	default:
+		close(stopCh)
+	}
+	if doneCh != nil {
+		<-doneCh
+	}
+
+	r.watchMu.Lock()
+	if r.watchStop == stopCh {
+		r.watchStop = nil
 		r.watchDone = nil
 	}
+	r.watchMu.Unlock()
 }
 
 func (r *Router) providerConfigFiles() []string {
@@ -265,16 +300,21 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 		reactivateAfter = time.Hour
 		logger.Warn("invalid reactivate_after %q, defaulting to 1h", newCfg.Global.ReactivateAfter)
 	}
+	upstreamIdle, err := time.ParseDuration(newCfg.Global.UpstreamIdleTimeout)
+	if err != nil || upstreamIdle < 0 {
+		upstreamIdle = 3 * time.Minute
+		logger.Warn("invalid upstream_idle_timeout %q, defaulting to 3m", newCfg.Global.UpstreamIdleTimeout)
+	}
 
 	newProxies := make(map[ClientType]*ClientProxy)
 	if ps := config.GetEnabledProviders(newCfg.ClaudeCode); len(ps) > 0 {
-		newProxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, ps, reactivateAfter)
+		newProxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, ps, reactivateAfter, upstreamIdle)
 	}
 	if ps := config.GetEnabledProviders(newCfg.Codex); len(ps) > 0 {
-		newProxies[ClientCodex] = newClientProxy(ClientCodex, ps, reactivateAfter)
+		newProxies[ClientCodex] = newClientProxy(ClientCodex, ps, reactivateAfter, upstreamIdle)
 	}
 	if ps := config.GetEnabledProviders(newCfg.Gemini); len(ps) > 0 {
-		newProxies[ClientGemini] = newClientProxy(ClientGemini, ps, reactivateAfter)
+		newProxies[ClientGemini] = newClientProxy(ClientGemini, ps, reactivateAfter, upstreamIdle)
 	}
 
 	r.mu.Lock()
