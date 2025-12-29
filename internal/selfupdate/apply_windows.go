@@ -123,13 +123,13 @@ func waitForPID(pid int, timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	switch s {
-	case windows.WAIT_OBJECT_0:
+	switch uint32(s) {
+	case uint32(windows.WAIT_OBJECT_0):
 		return nil
-	case windows.WAIT_TIMEOUT:
+	case uint32(windows.WAIT_TIMEOUT):
 		return errors.New("timed out waiting for clipal to exit")
 	default:
-		return fmt.Errorf("wait status %d", s)
+		return fmt.Errorf("wait status %d", uint32(s))
 	}
 }
 
