@@ -95,3 +95,11 @@ Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 
 - 端口被占用：改 `config.yaml` 的 `port` 或运行时加 `--port 3334`
 - 安全建议：保持 `listen_addr: 127.0.0.1`
+- 看到 `Warning: config file ... permissive permissions (666), consider chmod 600`：
+  - 这是类 Unix 的权限提示；Windows 上 `os.Stat().Mode().Perm()` 不等同于 NTFS ACL，常会显示为 `0666`，属于误报。
+  - 新版本会在 Windows 禁用该检查；旧版本可忽略该 Warning。
+  - 如需收紧配置文件权限，可用 `icacls` 只允许当前用户访问（按你的实际目录调整）：
+    - `icacls "$env:USERPROFILE\\.clipal" /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F"`
+- 任务计划程序提示“权限/找不到配置”：
+  - 确保任务的“运行用户”与配置目录（通常是 `%USERPROFILE%\\.clipal\\`）所属用户一致。
+  - 在“添加参数”里显式传 `--config-dir C:\\Users\\<YOU>\\.clipal`，避免拿到错误的用户目录。

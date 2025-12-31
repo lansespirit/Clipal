@@ -32,19 +32,19 @@ type NotificationsConfig struct {
 
 // GlobalConfig represents the global configuration
 type GlobalConfig struct {
-	ListenAddr       string              `yaml:"listen_addr"`
-	Port             int                 `yaml:"port"`
-	LogLevel         LogLevel            `yaml:"log_level"`
-	ReactivateAfter  string              `yaml:"reactivate_after"`
+	ListenAddr      string   `yaml:"listen_addr"`
+	Port            int      `yaml:"port"`
+	LogLevel        LogLevel `yaml:"log_level"`
+	ReactivateAfter string   `yaml:"reactivate_after"`
 	// UpstreamIdleTimeout cancels an upstream attempt if no response body bytes are received
 	// for the duration (useful for SSE streams that may hang after headers).
 	// Set to "0" to disable.
-	UpstreamIdleTimeout string `yaml:"upstream_idle_timeout"`
-	MaxRequestBody   int64               `yaml:"max_request_body_bytes"`
-	LogDir           string              `yaml:"log_dir"`
-	LogRetentionDays int                 `yaml:"log_retention_days"`
-	LogStdout        *bool               `yaml:"log_stdout"`
-	Notifications    NotificationsConfig `yaml:"notifications"`
+	UpstreamIdleTimeout string              `yaml:"upstream_idle_timeout"`
+	MaxRequestBody      int64               `yaml:"max_request_body_bytes"`
+	LogDir              string              `yaml:"log_dir"`
+	LogRetentionDays    int                 `yaml:"log_retention_days"`
+	LogStdout           *bool               `yaml:"log_stdout"`
+	Notifications       NotificationsConfig `yaml:"notifications"`
 	// IgnoreCountTokensFailover disables provider switching for Claude Code
 	// /v1/messages/count_tokens requests, which helps keep context cache warm.
 	IgnoreCountTokensFailover bool `yaml:"ignore_count_tokens_failover"`
@@ -84,10 +84,10 @@ type Config struct {
 // DefaultGlobalConfig returns the default global configuration
 func DefaultGlobalConfig() GlobalConfig {
 	return GlobalConfig{
-		ListenAddr:      "127.0.0.1",
-		Port:            3333,
-		LogLevel:        LogLevelInfo,
-		ReactivateAfter: "1h",
+		ListenAddr:          "127.0.0.1",
+		Port:                3333,
+		LogLevel:            LogLevelInfo,
+		ReactivateAfter:     "1h",
 		UpstreamIdleTimeout: "3m",
 		// Default body limit: 32 MiB. clipal buffers request bodies to support retries,
 		// so a hard cap prevents unbounded memory usage.
@@ -173,15 +173,7 @@ func Load(configDir string) (*Config, error) {
 
 // loadYAML loads a YAML file into the target struct
 func loadYAML(path string, target interface{}) error {
-	// Check file permissions - warn if too permissive (world-readable).
-	if fi, err := os.Stat(path); err == nil {
-		mode := fi.Mode().Perm()
-		// Warn if group or others have read permission (potential API key exposure).
-		if mode&0o044 != 0 {
-			// Using fmt.Fprintf since logger may not be initialized yet during config load.
-			fmt.Fprintf(os.Stderr, "Warning: config file %s has permissive permissions (%o), consider chmod 600\n", path, mode)
-		}
-	}
+	warnIfPermissiveConfig(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {

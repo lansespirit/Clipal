@@ -92,4 +92,11 @@ If you need it to run without logging in, you can use NSSM (Non-Sucking Service 
 
 - Port in use: change `port` in `config.yaml` or run with `--port 3334`
 - Security: keep `listen_addr: 127.0.0.1`
-
+- Seeing `Warning: config file ... permissive permissions (666), consider chmod 600`:
+  - This is a Unix-style permission check; on Windows, `os.Stat().Mode().Perm()` does not represent NTFS ACLs and often shows `0666`, so it can be a false positive.
+  - Newer versions disable this check on Windows; on older versions you can ignore the warning.
+  - If you want to restrict access to the config dir, you can use `icacls` to allow only the current user (adjust the path as needed):
+    - `icacls "$env:USERPROFILE\\.clipal" /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F"`
+- Task Scheduler says “permission denied” / “config not found”:
+  - Make sure the task “User account” matches the owner of the config dir (usually `%USERPROFILE%\\.clipal\\`).
+  - Pass `--config-dir C:\\Users\\<YOU>\\.clipal` explicitly to avoid resolving a different profile directory.
