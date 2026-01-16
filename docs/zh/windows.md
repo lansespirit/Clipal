@@ -49,6 +49,7 @@ clipal.exe --log-level debug
 另开一个 PowerShell 测健康检查：
 
 ```powershell
+# 默认端口是 3333；如果你在 config.yaml 里改了 port，这里也要改成对应端口。
 Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 ```
 
@@ -78,6 +79,11 @@ log_retention_days: 7
 # 安装并立即运行（任务名：Clipal）
 clipal.exe service install
 
+# 只打印将执行的动作（不实际执行）：
+clipal.exe service install --dry-run
+#（flags 也可以放在 action 前面）
+clipal.exe service --dry-run install
+
 # 查看状态
 clipal.exe service status
 
@@ -86,6 +92,8 @@ clipal.exe service restart
 clipal.exe service stop
 clipal.exe service uninstall
 ```
+
+安装后的任务会用 `--detach-console` 启动 clipal，使其在后台持续运行（关闭控制台窗口不会把它杀掉）。
 
 如果你之前已经安装过、需要覆盖更新任务，用：
 
@@ -107,12 +115,13 @@ clipal.exe service install --config-dir C:\\path\\to\\config
 - 触发器：登录时
 - 操作：启动程序
   - 程序或脚本：`C:\\Users\\<YOU>\\bin\\clipal.exe`
-  - 添加参数：`--config-dir C:\\Users\\<YOU>\\.clipal`
+  - 添加参数：`--detach-console --config-dir C:\\Users\\<YOU>\\.clipal`
 - 条件/设置：按需
 
 验证：
 
 ```powershell
+# 默认端口是 3333；如果你在 config.yaml 里改了 port，这里也要改成对应端口。
 Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 ```
 
@@ -128,6 +137,7 @@ Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 ## 7. 常见问题
 
 - 端口被占用：改 `config.yaml` 的 `port` 或运行时加 `--port 3334`
+- 已安装但健康检查失败：确认你测试的端口号与 `config.yaml` 里的 `port` 一致
 - 安全建议：保持 `listen_addr: 127.0.0.1`
 - 看到 `Warning: config file ... permissive permissions (666), consider chmod 600`：
   - 这是类 Unix 的权限提示；Windows 上 `os.Stat().Mode().Perm()` 不等同于 NTFS ACL，常会显示为 `0666`，属于误报。
@@ -137,3 +147,4 @@ Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 - 任务计划程序提示“权限/找不到配置”：
   - 确保任务的“运行用户”与配置目录（通常是 `%USERPROFILE%\\.clipal\\`）所属用户一致。
   - 在“添加参数”里显式传 `--config-dir C:\\Users\\<YOU>\\.clipal`，避免拿到错误的用户目录。
+  - 如果执行 `clipal.exe service install` 提示 `Access is denied.`，请尝试用管理员身份运行 PowerShell（或先卸载掉由其他账号创建的同名任务）。

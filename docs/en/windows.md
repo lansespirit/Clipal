@@ -49,6 +49,7 @@ clipal.exe --log-level debug
 In another PowerShell, check health:
 
 ```powershell
+# Default port is 3333. If you changed `port` in config.yaml, use that port here.
 Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 ```
 
@@ -76,11 +77,19 @@ You can pick one of the following:
 
 ```powershell
 clipal.exe service install
+
+# Show the underlying actions without executing:
+clipal.exe service install --dry-run
+# (flags can also appear before the action)
+clipal.exe service --dry-run install
+
 clipal.exe service status
 clipal.exe service restart
 clipal.exe service stop
 clipal.exe service uninstall
 ```
+
+The installed task runs clipal with `--detach-console` so it keeps running in the background (closing a console window won't kill it).
 
 If you already installed it and want to overwrite/update the task:
 
@@ -102,11 +111,12 @@ Task Scheduler → Create Task:
 - Triggers: At log on
 - Actions: Start a program
   - Program/script: `C:\\Users\\<YOU>\\bin\\clipal.exe`
-  - Arguments: `--config-dir C:\\Users\\<YOU>\\.clipal`
+  - Arguments: `--detach-console --config-dir C:\\Users\\<YOU>\\.clipal`
 
 Verify:
 
 ```powershell
+# Default port is 3333. If you changed `port` in config.yaml, use that port here.
 Invoke-WebRequest http://127.0.0.1:3333/health | Select-Object -Expand Content
 ```
 
@@ -120,6 +130,7 @@ If you need it to run without logging in, you can use NSSM (Non-Sucking Service 
 ## 7. FAQ
 
 - Port in use: change `port` in `config.yaml` or run with `--port 3334`
+- Installed but health check fails: make sure you are checking the correct port (the one in your `config.yaml`)
 - Security: keep `listen_addr: 127.0.0.1`
 - Seeing `Warning: config file ... permissive permissions (666), consider chmod 600`:
   - This is a Unix-style permission check; on Windows, `os.Stat().Mode().Perm()` does not represent NTFS ACLs and often shows `0666`, so it can be a false positive.
@@ -129,3 +140,4 @@ If you need it to run without logging in, you can use NSSM (Non-Sucking Service 
 - Task Scheduler says “permission denied” / “config not found”:
   - Make sure the task “User account” matches the owner of the config dir (usually `%USERPROFILE%\\.clipal\\`).
   - Pass `--config-dir C:\\Users\\<YOU>\\.clipal` explicitly to avoid resolving a different profile directory.
+  - If you see `Access is denied.` during `clipal.exe service install`, try running PowerShell as Administrator (or uninstall the existing task first if it was created under a different account).
