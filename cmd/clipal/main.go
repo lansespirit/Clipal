@@ -48,6 +48,7 @@ func main() {
 	listenAddr := flag.String("listen-addr", "", "Override listen address from config (default: 127.0.0.1)")
 	port := flag.Int("port", 0, "Override port from config")
 	logLevel := flag.String("log-level", "", "Override log level (debug/info/warn/error)")
+	detachConsole := flag.Bool("detach-console", false, "Windows: detach console window (used by Task Scheduler)")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -55,6 +56,8 @@ func main() {
 		fmt.Printf("clipal %s (commit: %s, built: %s)\n", version, commit, date)
 		os.Exit(0)
 	}
+
+	maybeDetachConsole(*detachConsole)
 
 	// Determine config directory
 	cfgDir := *configDir
@@ -227,7 +230,9 @@ func configureFileLogging(cfgDir string, cfg *config.Config) error {
 	// Keep the file writer alive for the duration of the process.
 	// Closing on exit is optional; the OS will release the fd.
 	if cfg.Global.LogStdout == nil || *cfg.Global.LogStdout {
-		logger.SetOutput(io.MultiWriter(os.Stdout, w))
+		// Write to the file first so background runs without a valid stdout handle
+		// still keep the persistent logs.
+		logger.SetOutput(io.MultiWriter(w, os.Stdout))
 	} else {
 		logger.SetOutput(w)
 	}

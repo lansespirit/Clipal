@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -84,6 +85,20 @@ func ExecutePlan(ctx context.Context, plan *Plan, dryRun bool) (string, error) {
 			continue
 		}
 		cmd := exec.CommandContext(ctx, c.Path, c.Args...)
+
+		// On Windows, prefer inheriting the parent console handles so tools like
+		// schtasks.exe can render localized output correctly (avoids mojibake
+		// caused by capturing + re-printing bytes in a different code page).
+		if runtime.GOOS == "windows" {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Stdin = os.Stdin
+			if err := cmd.Run(); err != nil && !c.IgnoreError {
+				return out.String(), err
+			}
+			continue
+		}
+
 		b, err := cmd.CombinedOutput()
 		if len(b) > 0 {
 			out.Write(b)

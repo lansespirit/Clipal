@@ -4,6 +4,8 @@ package service
 
 import (
 	"fmt"
+	"os"
+	"os/user"
 	"strings"
 )
 
@@ -28,7 +30,16 @@ func (windowsManager) Plan(action Action, opts Options) (*Plan, error) {
 	plan := &Plan{}
 	switch action {
 	case ActionInstall:
+		runAs := currentWindowsUser()
 		createArgs := []string{"/Create", "/TN", windowsTaskName, "/TR", runLine, "/SC", "ONLOGON"}
+		if runAs != "" {
+			createArgs = append(createArgs, "/RU", runAs)
+			// Run in the interactive session so clipal can access network normally.
+			// The clipal binary detaches its console window when started by a task.
+			createArgs = append(createArgs, "/IT")
+		}
+		// Be explicit about privilege level; default is LIMITED but we want to keep it stable.
+		createArgs = append(createArgs, "/RL", "LIMITED")
 		if opts.Force {
 			createArgs = append(createArgs, "/F")
 		}
@@ -59,10 +70,31 @@ func (windowsManager) Plan(action Action, opts Options) (*Plan, error) {
 	return plan, nil
 }
 
+func currentWindowsUser() string {
+	// Prefer a fully qualified account name (DOMAIN\User) when available.
+	if u, err := user.Current(); err == nil {
+		if name := strings.TrimSpace(u.Username); name != "" {
+			return name
+		}
+	}
+	// Fall back to environment variables.
+	userName := strings.TrimSpace(os.Getenv("USERNAME"))
+	if userName == "" {
+		return ""
+	}
+	domain := strings.TrimSpace(os.Getenv("USERDOMAIN"))
+	if domain != "" {
+		return domain + `\` + userName
+	}
+	return userName
+}
+
 func buildWindowsTaskRunLine(binaryPath, configDir string) string {
 	bin := quoteWindowsCmd(binaryPath)
 	cfg := quoteWindowsCmd(configDir)
-	return fmt.Sprintf("%s --config-dir %s", bin, cfg)
+	// Detach the console so users don't accidentally close the task window and
+	// kill clipal. This also makes Task Scheduler runs effectively "background".
+	return fmt.Sprintf("%s --detach-console --config-dir %s", bin, cfg)
 }
 
 // quoteWindowsCmd quotes a value for a Windows command line fragment.

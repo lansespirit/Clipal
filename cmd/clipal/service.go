@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
@@ -26,16 +27,18 @@ func runService(args []string) {
 	stdoutPath := fs.String("stdout", "", "macOS: launchd StandardOutPath (optional)")
 	stderrPath := fs.String("stderr", "", "macOS: launchd StandardErrorPath (optional)")
 
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
-	rest := fs.Args()
-	if len(rest) < 1 {
+	actionArg, flagArgs, err := splitServiceArgs(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clipal service: %v\n", err)
 		printServiceUsage()
 		os.Exit(2)
 	}
 
-	action, err := service.ParseAction(rest[0])
+	if err := fs.Parse(flagArgs); err != nil {
+		os.Exit(2)
+	}
+
+	action, err := service.ParseAction(actionArg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "clipal service: %v\n", err)
 		printServiceUsage()
@@ -100,4 +103,78 @@ func printServiceUsage() {
 	fmt.Fprintln(os.Stderr, "  clipal service install --config-dir ~/.clipal")
 	fmt.Fprintln(os.Stderr, "  clipal service restart")
 	fmt.Fprintln(os.Stderr, "  clipal service status")
+}
+
+// splitServiceArgs accepts both:
+//
+//	clipal service [flags] <action>
+//	clipal service <action> [flags]
+//
+// It extracts the action token and returns a reordered slice containing only
+// flag arguments (so flag.FlagSet can parse them reliably).
+func splitServiceArgs(args []string) (action string, flagArgs []string, err error) {
+	// Flags that require a following value (unless provided via -flag=value).
+	needsValue := map[string]bool{
+		"config-dir": true,
+		"bin":        true,
+		"timeout":    true,
+		"stdout":     true,
+		"stderr":     true,
+	}
+
+	var haveAction bool
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+
+		// Standard "--" terminator: everything after is treated as positional.
+		if a == "--" {
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("missing action")
+			}
+			if haveAction {
+				return "", nil, fmt.Errorf("unexpected argument %q", args[i+1])
+			}
+			action = args[i+1]
+			haveAction = true
+			// Any further positional args are not supported.
+			if i+2 < len(args) {
+				return "", nil, fmt.Errorf("unexpected argument %q", args[i+2])
+			}
+			break
+		}
+
+		if strings.HasPrefix(a, "-") {
+			flagArgs = append(flagArgs, a)
+
+			name := strings.TrimLeft(a, "-")
+			if name == "" {
+				continue
+			}
+			// Handle -flag=value / --flag=value.
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name = name[:eq]
+			} else if needsValue[name] {
+				// For value flags, consume the next arg as the value even if it begins with "-".
+				if i+1 >= len(args) {
+					return "", nil, fmt.Errorf("flag %s requires a value", a)
+				}
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+			continue
+		}
+
+		// Non-flag token -> action.
+		if !haveAction {
+			action = a
+			haveAction = true
+			continue
+		}
+		return "", nil, fmt.Errorf("unexpected argument %q", a)
+	}
+
+	if !haveAction {
+		return "", nil, fmt.Errorf("missing action")
+	}
+	return action, flagArgs, nil
 }
