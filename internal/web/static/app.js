@@ -1,6 +1,8 @@
 function app() {
     return {
         // State
+        isLoading: false,
+        theme: localStorage.getItem('theme') || 'system',
         activeTab: 'providers',
         selectedClient: 'claude-code',
         clientOptions: [
@@ -34,14 +36,68 @@ function app() {
 
         // Initialization
         async init() {
-            await this.refreshStatus();
-            await this.loadProviders();
-            await this.loadGlobalConfig();
+            this.initTheme();
+            
+            // Initial data load
+            this.isLoading = true;
+            try {
+                await Promise.all([
+                    this.refreshStatus(),
+                    this.loadProviders(),
+                    this.loadGlobalConfig()
+                ]);
+            } finally {
+                this.isLoading = false;
+            }
+        },
+
+        // Theme Management
+        initTheme() {
+            this.applyTheme(this.theme);
+            
+            // Listen for system preference changes if in system mode
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+                if (this.theme === 'system') {
+                    this.applyTheme('system');
+                }
+            });
+        },
+
+        toggleTheme() {
+            const modes = ['system', 'light', 'dark'];
+            const nextIndex = (modes.indexOf(this.theme) + 1) % modes.length;
+            this.theme = modes[nextIndex];
+            localStorage.setItem('theme', this.theme);
+            this.applyTheme(this.theme);
+        },
+
+        applyTheme(theme) {
+            const isDark = theme === 'dark' || 
+                (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        },
+
+        get themeIcon() {
+            if (this.theme === 'system') return '💻';
+            return this.theme === 'dark' ? '🌙' : '☀️';
+        },
+
+        get themeLabel() {
+            return this.theme.charAt(0).toUpperCase() + this.theme.slice(1);
         },
 
         // API Calls
-        async apiCall(url, options = {}) {
+        async apiCall(url, options = {}, background = false) {
+            if (!background) this.isLoading = true;
             try {
+                // Minimum loading time to prevent flickering for fast requests
+                const start = Date.now();
+                
                 const response = await fetch(url, {
                     ...options,
                     headers: {
@@ -55,17 +111,27 @@ function app() {
                     throw new Error(error.error || 'Request failed');
                 }
 
-                return await response.json();
+                const data = await response.json();
+
+                // Artificial delay for smoother UX if request was too fast
+                if (!background) {
+                    const elapsed = Date.now() - start;
+                    if (elapsed < 300) await new Promise(r => setTimeout(r, 300 - elapsed));
+                }
+
+                return data;
             } catch (error) {
                 this.showAlert('error', error.message);
                 throw error;
+            } finally {
+                if (!background) this.isLoading = false;
             }
         },
 
         // Status
         async refreshStatus() {
             try {
-                this.status = await this.apiCall('/api/status');
+                this.status = await this.apiCall('/api/status', {}, true); // Background update
             } catch (error) {
                 console.error('Failed to refresh status:', error);
             }
@@ -105,10 +171,10 @@ function app() {
                     {
                         method: 'PUT',
                         body: JSON.stringify({ enabled: newEnabled })
-                    }
+                    },
+                    true // Background op for toggles to feel instant
                 );
                 this.showAlert('success', newEnabled ? 'Provider enabled' : 'Provider disabled');
-                await this.loadProviders();
                 await this.refreshStatus();
             } catch (error) {
                 provider.enabled = oldEnabled;
@@ -210,7 +276,7 @@ function app() {
                     method: 'PUT',
                     body: JSON.stringify(this.globalConfig)
                 });
-                this.showAlert('success', 'Configuration saved successfully. Restart may be required for some changes.');
+                this.showAlert('success', 'Configuration saved. Some changes may require restart.');
                 await this.refreshStatus();
             } catch (error) {
                 console.error('Failed to save global config:', error);

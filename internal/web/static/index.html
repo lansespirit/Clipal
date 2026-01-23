@@ -1,113 +1,118 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clipal Management Interface</title>
+    <title>Clipal Management</title>
     <link rel="stylesheet" href="/static/styles.css">
     <script defer src="/static/alpine.min.js"></script>
 </head>
+
 <body x-data="app()" x-init="init()">
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" :class="{'active': isLoading}">
+        <div class="spinner"></div>
+    </div>
+
     <div class="container">
         <!-- Header -->
         <header class="header">
-            <h1>Clipal Management</h1>
+            <div class="flex items-center gap-3">
+                <h1>Clipal</h1>
+                <span class="version-pill" x-text="'v' + status.version"></span>
+            </div>
             <div class="header-info">
-                <span class="version" x-text="'v' + status.version"></span>
-                <span class="uptime" x-text="'Uptime: ' + status.uptime"></span>
-                <button @click="refreshStatus()" class="btn btn-sm">Refresh</button>
+                <span class="version-pill" x-text="'Uptime: ' + status.uptime"></span>
+                <button @click="toggleTheme()" class="theme-toggle" :title="'Current theme: ' + themeLabel">
+                    <span x-text="themeIcon"></span>
+                </button>
             </div>
         </header>
 
         <!-- Navigation Tabs -->
         <nav class="tabs">
-            <button
-                @click="activeTab = 'providers'"
-                :class="{'active': activeTab === 'providers'}"
-                class="tab">
+            <button @click="activeTab = 'providers'" :class="{'active': activeTab === 'providers'}" class="tab">
                 Providers
             </button>
-            <button
-                @click="activeTab = 'settings'"
-                :class="{'active': activeTab === 'settings'}"
-                class="tab">
+            <button @click="activeTab = 'settings'" :class="{'active': activeTab === 'settings'}" class="tab">
                 Global Settings
             </button>
-            <button
-                @click="activeTab = 'status'"
-                :class="{'active': activeTab === 'status'}"
-                class="tab">
-                Status
+            <button @click="activeTab = 'status'" :class="{'active': activeTab === 'status'}" class="tab">
+                System Status
             </button>
         </nav>
 
         <!-- Alert Messages -->
-        <div x-show="alert.show"
-             :class="'alert alert-' + alert.type"
-             x-transition>
+        <div x-show="alert.show" :class="'alert alert-' + alert.type"
+            style="margin-bottom: 20px; padding: 12px; border-radius: 8px; background: var(--bg-surface); border: 1px solid var(--border);"
+            x-transition>
             <span x-text="alert.message"></span>
-            <button @click="alert.show = false" class="alert-close">&times;</button>
         </div>
 
         <!-- Providers Tab -->
-        <div x-show="activeTab === 'providers'" class="tab-content">
-            <!-- Client Switcher (centered) -->
-            <div class="client-switcher">
-                <div class="client-switcher-card">
-                    <div class="segmented" role="tablist" aria-label="Client Type">
+        <div x-show="activeTab === 'providers'" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            <!-- Client Switcher -->
+            <div class="client-switcher-container">
+                <div class="client-switcher">
+                    <div class="segmented-group" role="tablist" aria-label="Client Type">
                         <template x-for="client in clientOptions" :key="client.value">
-                            <button
-                                type="button"
-                                @click="selectClient(client.value)"
-                                :class="{'active': selectedClient === client.value}"
-                                class="segment"
+                            <button type="button" @click="selectClient(client.value)"
+                                :class="{'active': selectedClient === client.value}" class="segment-btn"
                                 x-text="client.label">
                             </button>
                         </template>
                     </div>
 
-                    <button @click="openAddProviderModal()" class="btn btn-primary btn-block">
+                    <button @click="openAddProviderModal()" class="btn btn-primary btn-full">
                         <span x-text="'Add Provider to ' + clientLabel(selectedClient)"></span>
                     </button>
                 </div>
             </div>
 
             <!-- Providers List -->
-            <div class="providers-list">
+            <div class="card-grid">
                 <template x-if="providers.length === 0">
-                    <div class="empty-state">
-                        <p>No providers configured for <span x-text="clientLabel(selectedClient)"></span></p>
+                    <div class="card u-text-center" style="grid-column: 1 / -1; padding: 60px;">
+                        <p style="color: var(--text-secondary)">No providers configured for <span
+                                x-text="clientLabel(selectedClient)"></span></p>
                     </div>
                 </template>
 
-                <template x-for="(provider, index) in providers" :key="provider.name">
-                    <div class="provider-card">
+                <template x-for="provider in providers" :key="provider.name">
+                    <div class="card">
                         <div class="provider-header">
-                            <div class="provider-title">
-                                <span class="provider-priority" x-text="'#' + provider.priority"></span>
-                                <h3 x-text="provider.name"></h3>
+                            <div class="provider-info">
+                                <div class="provider-name-row">
+                                    <span class="priority-badge" x-text="'#' + provider.priority"></span>
+                                    <h3 class="provider-name" x-text="provider.name"></h3>
+                                </div>
                                 <span
-                                    :class="'badge ' + (provider.enabled ? 'badge-success' : 'badge-disabled')"
-                                    x-text="provider.enabled ? 'Enabled' : 'Disabled'">
+                                    :class="'provider-status ' + (provider.enabled ? 'status-enabled' : 'status-disabled')"
+                                    x-text="provider.enabled ? 'Active' : 'Disabled'">
                                 </span>
                             </div>
-                            <div class="provider-actions">
+                            <div class="provider-controls">
                                 <label class="switch" :title="provider.enabled ? 'Disable' : 'Enable'">
-                                    <input type="checkbox" :checked="provider.enabled" @change="toggleProvider(provider, $event)">
+                                    <input type="checkbox" :checked="provider.enabled"
+                                        @change="toggleProvider(provider, $event)">
                                     <span class="slider"></span>
                                 </label>
-                                <button @click="editProvider(provider)" class="btn btn-sm">Edit</button>
-                                <button @click="deleteProvider(provider.name)" class="btn btn-sm btn-danger">Delete</button>
+                                <button @click="editProvider(provider)" class="icon-btn" title="Edit">✏️</button>
+                                <button @click="deleteProvider(provider.name)" class="icon-btn danger"
+                                    title="Delete">🗑️</button>
                             </div>
                         </div>
                         <div class="provider-details">
-                            <div class="detail-row">
-                                <span class="label">Base URL:</span>
-                                <span class="value" x-text="provider.base_url"></span>
+                            <div class="detail-item">
+                                <span class="detail-label">Base URL</span>
+                                <span class="detail-value" x-text="provider.base_url"></span>
                             </div>
-                            <div class="detail-row">
-                                <span class="label">API Key:</span>
-                                <span class="value">••••••••</span>
+                            <div class="detail-item">
+                                <span class="detail-label">API Key</span>
+                                <span class="detail-value">••••••••</span>
                             </div>
                         </div>
                     </div>
@@ -116,157 +121,156 @@
         </div>
 
         <!-- Settings Tab -->
-        <div x-show="activeTab === 'settings'" class="tab-content">
-            <form @submit.prevent="saveGlobalConfig()" class="settings-form">
+        <div x-show="activeTab === 'settings'" class="tab-content" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            <form @submit.prevent="saveGlobalConfig()">
                 <div class="form-section">
-                    <h2>Server Configuration</h2>
-
-                    <div class="form-group">
-                        <label>Listen Address</label>
-                        <input type="text" x-model="globalConfig.listen_addr" required>
-                        <small>IP address to bind to (default: 127.0.0.1)</small>
+                    <div class="form-header">
+                        <h2>Server Configuration</h2>
                     </div>
 
-                    <div class="form-group">
-                        <label>Port</label>
-                        <input type="number" x-model.number="globalConfig.port" required min="1" max="65535">
-                        <small>Port number (default: 3333)</small>
-                    </div>
+                    <div class="card-grid">
+                        <div class="form-group">
+                            <label class="form-label">Listen Address</label>
+                            <input type="text" x-model="globalConfig.listen_addr" class="form-input" required>
+                        </div>
 
-                    <div class="form-group">
-                        <label>Log Level</label>
-                        <select x-model="globalConfig.log_level">
-                            <option value="debug">Debug</option>
-                            <option value="info">Info</option>
-                            <option value="warn">Warn</option>
-                            <option value="error">Error</option>
-                        </select>
+                        <div class="form-group">
+                            <label class="form-label">Port</label>
+                            <input type="number" x-model.number="globalConfig.port" class="form-input" required min="1"
+                                max="65535">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Log Level</label>
+                            <select x-model="globalConfig.log_level" class="form-select">
+                                <option value="debug">Debug</option>
+                                <option value="info">Info</option>
+                                <option value="warn">Warn</option>
+                                <option value="error">Error</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
                 <div class="form-section">
-                    <h2>Provider Failover</h2>
-
-                    <div class="form-group">
-                        <label>Reactivate After</label>
-                        <input type="text" x-model="globalConfig.reactivate_after" required>
-                        <small>Duration before reactivating failed providers (e.g., 1h, 30m)</small>
+                    <div class="form-header">
+                        <h2>Provider Failover</h2>
                     </div>
 
-                    <div class="form-group">
-                        <label>Upstream Idle Timeout</label>
-                        <input type="text" x-model="globalConfig.upstream_idle_timeout" required>
-                        <small>Timeout for idle upstream connections (e.g., 3m)</small>
+                    <div class="card-grid">
+                        <div class="form-group">
+                            <label class="form-label">Reactivate After</label>
+                            <input type="text" x-model="globalConfig.reactivate_after" class="form-input" required>
+                            <div class="form-hint">e.g., 1h, 30m</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Upstream Idiie Timeout</label>
+                            <input type="text" x-model="globalConfig.upstream_idle_timeout" class="form-input" required>
+                            <div class="form-hint">e.g., 3m</div>
+                        </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" x-model="globalConfig.ignore_count_tokens_failover">
-                            Ignore Count Tokens Failover
+                            <span style="font-weight: 500;">Ignore Count Tokens Failover</span>
                         </label>
-                        <small>Disable provider switching for count_tokens requests (keeps context cache warm)</small>
+                        <div class="form-hint" style="margin-left: 24px;">Keeps context cache warm by disabling
+                            switching for token counting</div>
                     </div>
                 </div>
 
                 <div class="form-section">
-                    <h2>Logging</h2>
-
-                    <div class="form-group">
-                        <label>Log Directory</label>
-                        <input type="text" x-model="globalConfig.log_dir">
-                        <small>Directory for log files (default: ~/.clipal/logs)</small>
+                    <div class="form-header">
+                        <h2>Logging & Notifications</h2>
                     </div>
 
-                    <div class="form-group">
-                        <label>Log Retention Days</label>
-                        <input type="number" x-model.number="globalConfig.log_retention_days" min="0">
-                        <small>Number of days to keep log files</small>
+                    <div class="card-grid">
+                        <div class="form-group">
+                            <label class="form-label">Log Directory</label>
+                            <input type="text" x-model="globalConfig.log_dir" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Retention (Days)</label>
+                            <input type="number" x-model.number="globalConfig.log_retention_days" class="form-input"
+                                min="0">
+                        </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" x-model="globalConfig.log_stdout">
-                            Log to Stdout
-                        </label>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <h2>Notifications</h2>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" x-model="globalConfig.notifications.enabled">
-                            Enable Desktop Notifications
-                        </label>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Minimum Level</label>
-                        <select x-model="globalConfig.notifications.min_level">
-                            <option value="debug">Debug</option>
-                            <option value="info">Info</option>
-                            <option value="warn">Warn</option>
-                            <option value="error">Error</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" x-model="globalConfig.notifications.provider_switch">
-                            Notify on Provider Switch
-                        </label>
+                    <div class="card-grid" style="margin-top: 20px;">
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" x-model="globalConfig.log_stdout">
+                                <span>Log to Stdout</span>
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" x-model="globalConfig.notifications.enabled">
+                                <span>Enable Desktop Notifications</span>
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" x-model="globalConfig.notifications.provider_switch">
+                                <span>Notify on Switch</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
 
-                <div class="form-actions">
+                <div class="form-actions" style="display: flex; gap: 12px;">
                     <button type="submit" class="btn btn-primary">Save Configuration</button>
-                    <button type="button" @click="loadGlobalConfig()" class="btn">Reset</button>
-                    <button type="button" @click="exportConfig()" class="btn">Export Config</button>
+                    <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
+                    <button type="button" @click="exportConfig()" class="btn btn-secondary"
+                        style="margin-left: auto;">Export Config</button>
                 </div>
             </form>
         </div>
 
         <!-- Status Tab -->
-        <div x-show="activeTab === 'status'" class="tab-content">
-            <div class="status-grid">
-                <div class="status-card">
-                    <h3>System Information</h3>
-                    <div class="status-info">
-                        <div class="info-row">
-                            <span class="label">Version:</span>
-                            <span class="value" x-text="status.version"></span>
+        <div x-show="activeTab === 'status'" class="tab-content" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            <div class="card-grid">
+                <div class="card">
+                    <div class="provider-header">
+                        <h3 class="provider-name">System Info</h3>
+                    </div>
+                    <div class="provider-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Version</span>
+                            <span class="detail-value" x-text="status.version"></span>
                         </div>
-                        <div class="info-row">
-                            <span class="label">Uptime:</span>
-                            <span class="value" x-text="status.uptime"></span>
+                        <div class="detail-item">
+                            <span class="detail-label">Uptime</span>
+                            <span class="detail-value" x-text="status.uptime"></span>
                         </div>
-                        <div class="info-row">
-                            <span class="label">Config Directory:</span>
-                            <span class="value" x-text="status.config_dir"></span>
+                        <div class="detail-item">
+                            <span class="detail-label">Config Dir</span>
+                            <span class="detail-value" x-text="status.config_dir"></span>
                         </div>
                     </div>
                 </div>
 
                 <template x-for="(client, name) in status.clients" :key="name">
-                    <div class="status-card">
-                        <h3 x-text="name"></h3>
-                        <div class="status-info">
-                            <div class="info-row">
-                                <span class="label">Total Providers:</span>
-                                <span class="value" x-text="client.provider_count"></span>
+                    <div class="card">
+                        <div class="provider-header">
+                            <h3 class="provider-name" x-text="name" style="text-transform: capitalize;"></h3>
+                        </div>
+                        <div class="provider-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Total Providers</span>
+                                <span class="detail-value" x-text="client.provider_count"></span>
                             </div>
-                            <div class="info-row">
-                                <span class="label">Enabled:</span>
-                                <span class="value" x-text="client.enabled_providers.length"></span>
+                            <div class="detail-item">
+                                <span class="detail-label">Active Providers</span>
+                                <span class="detail-value" x-text="client.enabled_providers.length"></span>
                             </div>
-                            <div class="info-row">
-                                <span class="label">First Enabled:</span>
-                                <span class="value" x-text="client.current_provider || 'None'"></span>
-                            </div>
-                            <div class="info-row">
-                                <span class="label">Enabled Providers:</span>
-                                <span class="value" x-text="client.enabled_providers.join(', ') || 'None'"></span>
+                            <div class="detail-item">
+                                <span class="detail-label">Current</span>
+                                <span class="detail-value" x-text="client.current_provider || 'None'"></span>
                             </div>
                         </div>
                     </div>
@@ -275,55 +279,52 @@
         </div>
     </div>
 
-    <!-- Add/Edit Provider Modal -->
-    <div x-show="showAddProviderModal || showEditProviderModal"
-         class="modal-overlay"
-         @click.self="closeModals()">
+    <!-- Modals -->
+    <div class="modal-backdrop" :class="{'show': showAddProviderModal || showEditProviderModal}"
+        @click.self="closeModals()">
         <div class="modal">
             <div class="modal-header">
                 <h2 x-text="showEditProviderModal ? 'Edit Provider' : 'Add Provider'"></h2>
-                <button @click="closeModals()" class="modal-close">&times;</button>
+                <button @click="closeModals()" class="icon-btn" style="font-size: 18px;">&times;</button>
             </div>
             <form @submit.prevent="saveProvider()">
                 <div class="modal-body">
                     <div class="form-group">
-                        <label>Name *</label>
-                        <input type="text" x-model="providerForm.name" required>
-                        <small>Allowed: 1-64 chars of letters/numbers/._-. Must start with letter/number. Not allowed: / or &#92;.</small>
+                        <label class="form-label">Name *</label>
+                        <input type="text" x-model="providerForm.name" class="form-input" required
+                            placeholder="e.g. anthropic-primary">
+                        <div class="form-hint">Allows letters, numbers, ., _, -</div>
                     </div>
 
                     <div class="form-group">
-                        <label>Base URL *</label>
-                        <input type="text" x-model="providerForm.base_url" required>
-                        <small>API endpoint URL (e.g., https://api.anthropic.com)</small>
+                        <label class="form-label">Base URL *</label>
+                        <input type="text" x-model="providerForm.base_url" class="form-input" required
+                            placeholder="https://api.example.com">
                     </div>
 
                     <div class="form-group">
-                        <label x-text="showEditProviderModal ? 'API Key' : 'API Key *'"></label>
-                        <input
-                            type="password"
-                            x-model="providerForm.api_key"
+                        <label class="form-label" x-text="showEditProviderModal ? 'API Key' : 'API Key *'"></label>
+                        <input type="password" x-model="providerForm.api_key" class="form-input"
                             :required="!showEditProviderModal"
                             :placeholder="showEditProviderModal ? 'Leave blank to keep existing' : ''">
-                        <small x-show="showEditProviderModal">Leave blank to keep existing API key</small>
                     </div>
 
                     <div class="form-group">
-                        <label>Priority</label>
-                        <input type="number" x-model.number="providerForm.priority" min="1">
-                        <small>Lower number = higher priority</small>
+                        <label class="form-label">Priority</label>
+                        <input type="number" x-model.number="providerForm.priority" class="form-input" min="1">
+                        <div class="form-hint">Higher priority (lower number) is tried first</div>
                     </div>
 
                     <div class="form-group">
-                        <label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" x-model="providerForm.enabled">
-                            Enabled
+                            <span>Enabled</span>
                         </label>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="submit" class="btn btn-primary">Save</button>
-                    <button type="button" @click="closeModals()" class="btn">Cancel</button>
+                    <button type="button" @click="closeModals()" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Provider</button>
                 </div>
             </form>
         </div>
@@ -331,4 +332,5 @@
 
     <script src="/static/app.js"></script>
 </body>
+
 </html>
