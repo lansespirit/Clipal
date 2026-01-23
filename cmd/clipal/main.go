@@ -20,6 +20,7 @@ import (
 	"github.com/lansespirit/Clipal/internal/notify"
 	"github.com/lansespirit/Clipal/internal/proxy"
 	"github.com/lansespirit/Clipal/internal/selfupdate"
+	"github.com/lansespirit/Clipal/internal/web"
 )
 
 var (
@@ -102,13 +103,16 @@ func main() {
 	defer notify.Shutdown()
 	logger.SetHook(notify.LogHook)
 
+	// Create web management handler
+	webHandler := web.NewHandler(cfgDir, version)
+
 	// Create and start the router
 	router := proxy.NewRouter(cfg)
 
 	// Handle shutdown signals
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- router.Start()
+		errCh <- router.Start(version, webHandler)
 	}()
 
 	sigCh := make(chan os.Signal, 1)

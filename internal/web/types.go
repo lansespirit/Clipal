@@ -1,0 +1,171 @@
+package web
+
+// Keep request/response DTOs in the web package so we don't leak internal config
+// structs directly over HTTP. This prevents accidental JSON field-name mismatches
+// and lets us redact sensitive fields like API keys.
+
+import "github.com/lansespirit/Clipal/internal/config"
+
+// GlobalConfigRequest represents a request to update global configuration
+type GlobalConfigRequest struct {
+	ListenAddr                string                     `json:"listen_addr"`
+	Port                      int                        `json:"port"`
+	LogLevel                  string                     `json:"log_level"`
+	ReactivateAfter           string                     `json:"reactivate_after"`
+	UpstreamIdleTimeout       string                     `json:"upstream_idle_timeout"`
+	MaxRequestBodyBytes       int64                      `json:"max_request_body_bytes"`
+	LogDir                    string                     `json:"log_dir"`
+	LogRetentionDays          int                        `json:"log_retention_days"`
+	LogStdout                 *bool                      `json:"log_stdout"`
+	Notifications             NotificationsConfigRequest `json:"notifications"`
+	IgnoreCountTokensFailover bool                       `json:"ignore_count_tokens_failover"`
+}
+
+type NotificationsConfigRequest struct {
+	Enabled        bool   `json:"enabled"`
+	MinLevel       string `json:"min_level"`
+	ProviderSwitch *bool  `json:"provider_switch"`
+}
+
+// GlobalConfigResponse represents the global configuration returned to the UI.
+type GlobalConfigResponse struct {
+	ListenAddr                string                      `json:"listen_addr"`
+	Port                      int                         `json:"port"`
+	LogLevel                  string                      `json:"log_level"`
+	ReactivateAfter           string                      `json:"reactivate_after"`
+	UpstreamIdleTimeout       string                      `json:"upstream_idle_timeout"`
+	MaxRequestBodyBytes       int64                       `json:"max_request_body_bytes"`
+	LogDir                    string                      `json:"log_dir"`
+	LogRetentionDays          int                         `json:"log_retention_days"`
+	LogStdout                 bool                        `json:"log_stdout"`
+	Notifications             NotificationsConfigResponse `json:"notifications"`
+	IgnoreCountTokensFailover bool                        `json:"ignore_count_tokens_failover"`
+}
+
+type NotificationsConfigResponse struct {
+	Enabled        bool   `json:"enabled"`
+	MinLevel       string `json:"min_level"`
+	ProviderSwitch bool   `json:"provider_switch"`
+}
+
+// ProviderRequest represents a request to create or update a provider
+type ProviderRequest struct {
+	Name     string `json:"name"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	Priority int    `json:"priority"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+}
+
+// ProviderResponse is returned for provider listings (never includes api_key).
+type ProviderResponse struct {
+	Name     string `json:"name"`
+	BaseURL  string `json:"base_url"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// ReorderRequest represents a request to reorder providers
+type ReorderRequest struct {
+	Providers []string `json:"providers"` // Array of provider names in desired order
+}
+
+// ExportConfigResponse represents the full configuration export.
+// NOTE: This includes API keys and should only be used for local backup/migration.
+type ExportConfigResponse struct {
+	Global     GlobalConfigResponse `json:"global"`
+	ClaudeCode ClientConfigExport   `json:"claude_code"`
+	Codex      ClientConfigExport   `json:"codex"`
+	Gemini     ClientConfigExport   `json:"gemini"`
+}
+
+type ClientConfigExport struct {
+	Providers []ProviderExport `json:"providers"`
+}
+
+type ProviderExport struct {
+	Name     string `json:"name"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	Priority int    `json:"priority"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+}
+
+// StatusResponse represents the system status
+type StatusResponse struct {
+	Version   string                  `json:"version"`
+	Uptime    string                  `json:"uptime"`
+	ConfigDir string                  `json:"config_dir"`
+	Clients   map[string]ClientStatus `json:"clients"`
+}
+
+// ClientStatus represents the status of a client proxy
+type ClientStatus struct {
+	ProviderCount    int      `json:"provider_count"`
+	EnabledProviders []string `json:"enabled_providers"`
+	CurrentProvider  string   `json:"current_provider"`
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// SuccessResponse represents a success response
+type SuccessResponse struct {
+	Message string `json:"message"`
+}
+
+func boolPtrOrTrue(v *bool) bool {
+	if v == nil {
+		return true
+	}
+	return *v
+}
+
+func toGlobalConfigResponse(gc config.GlobalConfig) GlobalConfigResponse {
+	return GlobalConfigResponse{
+		ListenAddr:          gc.ListenAddr,
+		Port:                gc.Port,
+		LogLevel:            string(gc.LogLevel),
+		ReactivateAfter:     gc.ReactivateAfter,
+		UpstreamIdleTimeout: gc.UpstreamIdleTimeout,
+		MaxRequestBodyBytes: gc.MaxRequestBody,
+		LogDir:              gc.LogDir,
+		LogRetentionDays:    gc.LogRetentionDays,
+		LogStdout:           boolPtrOrTrue(gc.LogStdout),
+		Notifications: NotificationsConfigResponse{
+			Enabled:        gc.Notifications.Enabled,
+			MinLevel:       string(gc.Notifications.MinLevel),
+			ProviderSwitch: boolPtrOrTrue(gc.Notifications.ProviderSwitch),
+		},
+		IgnoreCountTokensFailover: gc.IgnoreCountTokensFailover,
+	}
+}
+
+func toProviderResponses(providers []config.Provider) []ProviderResponse {
+	out := make([]ProviderResponse, 0, len(providers))
+	for _, p := range providers {
+		out = append(out, ProviderResponse{
+			Name:     p.Name,
+			BaseURL:  p.BaseURL,
+			Priority: p.Priority,
+			Enabled:  p.IsEnabled(),
+		})
+	}
+	return out
+}
+
+func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {
+	out := make([]ProviderExport, 0, len(cc.Providers))
+	for _, p := range cc.Providers {
+		out = append(out, ProviderExport{
+			Name:     p.Name,
+			BaseURL:  p.BaseURL,
+			APIKey:   p.APIKey,
+			Priority: p.Priority,
+			Enabled:  p.Enabled,
+		})
+	}
+	return ClientConfigExport{Providers: out}
+}

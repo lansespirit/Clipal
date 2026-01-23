@@ -16,6 +16,7 @@ import (
 
 	"github.com/lansespirit/Clipal/internal/config"
 	"github.com/lansespirit/Clipal/internal/logger"
+	"github.com/lansespirit/Clipal/internal/notify"
 )
 
 // ClientType represents the type of CLI client
@@ -132,11 +133,27 @@ func newClientProxy(clientType ClientType, providers []config.Provider, reactiva
 }
 
 // Start starts the proxy server
-func (r *Router) Start() error {
+func (r *Router) Start(version string, webHandler interface{}) error {
 	port := r.cfg.Global.Port
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", r.handleRequest)
+
+	// Register web management interface routes if provided
+	hasWebUI := false
+	if webHandler != nil {
+		if wh, ok := webHandler.(interface{ RegisterRoutes(*http.ServeMux) }); ok {
+			wh.RegisterRoutes(mux)
+			hasWebUI = true
+		}
+	}
+
+	// Proxy endpoints
+	mux.HandleFunc("/claudecode", r.handleRequest)
+	mux.HandleFunc("/claudecode/", r.handleRequest)
+	mux.HandleFunc("/codex", r.handleRequest)
+	mux.HandleFunc("/codex/", r.handleRequest)
+	mux.HandleFunc("/gemini", r.handleRequest)
+	mux.HandleFunc("/gemini/", r.handleRequest)
 	mux.HandleFunc("/health", r.handleHealth)
 
 	addr := net.JoinHostPort(r.cfg.Global.ListenAddr, strconv.Itoa(port))
@@ -150,6 +167,10 @@ func (r *Router) Start() error {
 	r.mu.Unlock()
 
 	logger.Info("clipal starting on %s", addr)
+	if hasWebUI {
+		// The web UI is localhost-only (enforced by the web handler).
+		logger.Info("web management interface available at http://localhost:%d/ (localhost only)", port)
+	}
 
 	// Log loaded providers
 	for clientType, proxy := range r.proxies {
@@ -239,7 +260,9 @@ func (r *Router) stopProviderConfigWatcher() {
 }
 
 func (r *Router) providerConfigFiles() []string {
-	return []string{"claude-code.yaml", "codex.yaml", "gemini.yaml"}
+	// config.yaml carries global runtime knobs (log level, failover policy, body limit, etc.)
+	// and should be hot-reloaded together with provider configs.
+	return []string{"config.yaml", "claude-code.yaml", "codex.yaml", "gemini.yaml"}
 }
 
 func (r *Router) snapshotProviderConfigModTimes() {
@@ -295,6 +318,7 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 	}
 
 	logger.SetLevel(newCfg.Global.LogLevel)
+	notify.Configure(newCfg.Global.Notifications)
 	reactivateAfter, err := time.ParseDuration(newCfg.Global.ReactivateAfter)
 	if err != nil || reactivateAfter < 0 {
 		reactivateAfter = time.Hour
@@ -328,7 +352,7 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 		p.Close()
 	}
 
-	logger.Info("provider configs reloaded from %s", r.configDir)
+	logger.Info("configs reloaded from %s", r.configDir)
 	for ct, p := range newProxies {
 		logger.Info("loaded %d providers for %s", len(p.providers), ct)
 	}

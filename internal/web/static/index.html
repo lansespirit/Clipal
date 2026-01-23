@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clipal Management Interface</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script defer src="/static/alpine.min.js"></script>
+</head>
+<body x-data="app()" x-init="init()">
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>Clipal Management</h1>
+            <div class="header-info">
+                <span class="version" x-text="'v' + status.version"></span>
+                <span class="uptime" x-text="'Uptime: ' + status.uptime"></span>
+                <button @click="refreshStatus()" class="btn btn-sm">Refresh</button>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs">
+            <button
+                @click="activeTab = 'providers'"
+                :class="{'active': activeTab === 'providers'}"
+                class="tab">
+                Providers
+            </button>
+            <button
+                @click="activeTab = 'settings'"
+                :class="{'active': activeTab === 'settings'}"
+                class="tab">
+                Global Settings
+            </button>
+            <button
+                @click="activeTab = 'status'"
+                :class="{'active': activeTab === 'status'}"
+                class="tab">
+                Status
+            </button>
+        </nav>
+
+        <!-- Alert Messages -->
+        <div x-show="alert.show"
+             :class="'alert alert-' + alert.type"
+             x-transition>
+            <span x-text="alert.message"></span>
+            <button @click="alert.show = false" class="alert-close">&times;</button>
+        </div>
+
+        <!-- Providers Tab -->
+        <div x-show="activeTab === 'providers'" class="tab-content">
+            <!-- Client Switcher (centered) -->
+            <div class="client-switcher">
+                <div class="client-switcher-card">
+                    <div class="segmented" role="tablist" aria-label="Client Type">
+                        <template x-for="client in clientOptions" :key="client.value">
+                            <button
+                                type="button"
+                                @click="selectClient(client.value)"
+                                :class="{'active': selectedClient === client.value}"
+                                class="segment"
+                                x-text="client.label">
+                            </button>
+                        </template>
+                    </div>
+
+                    <button @click="openAddProviderModal()" class="btn btn-primary btn-block">
+                        <span x-text="'Add Provider to ' + clientLabel(selectedClient)"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Providers List -->
+            <div class="providers-list">
+                <template x-if="providers.length === 0">
+                    <div class="empty-state">
+                        <p>No providers configured for <span x-text="clientLabel(selectedClient)"></span></p>
+                    </div>
+                </template>
+
+                <template x-for="(provider, index) in providers" :key="provider.name">
+                    <div class="provider-card">
+                        <div class="provider-header">
+                            <div class="provider-title">
+                                <span class="provider-priority" x-text="'#' + provider.priority"></span>
+                                <h3 x-text="provider.name"></h3>
+                                <span
+                                    :class="'badge ' + (provider.enabled ? 'badge-success' : 'badge-disabled')"
+                                    x-text="provider.enabled ? 'Enabled' : 'Disabled'">
+                                </span>
+                            </div>
+                            <div class="provider-actions">
+                                <label class="switch" :title="provider.enabled ? 'Disable' : 'Enable'">
+                                    <input type="checkbox" :checked="provider.enabled" @change="toggleProvider(provider, $event)">
+                                    <span class="slider"></span>
+                                </label>
+                                <button @click="editProvider(provider)" class="btn btn-sm">Edit</button>
+                                <button @click="deleteProvider(provider.name)" class="btn btn-sm btn-danger">Delete</button>
+                            </div>
+                        </div>
+                        <div class="provider-details">
+                            <div class="detail-row">
+                                <span class="label">Base URL:</span>
+                                <span class="value" x-text="provider.base_url"></span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="label">API Key:</span>
+                                <span class="value">••••••••</span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div x-show="activeTab === 'settings'" class="tab-content">
+            <form @submit.prevent="saveGlobalConfig()" class="settings-form">
+                <div class="form-section">
+                    <h2>Server Configuration</h2>
+
+                    <div class="form-group">
+                        <label>Listen Address</label>
+                        <input type="text" x-model="globalConfig.listen_addr" required>
+                        <small>IP address to bind to (default: 127.0.0.1)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input type="number" x-model.number="globalConfig.port" required min="1" max="65535">
+                        <small>Port number (default: 3333)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Log Level</label>
+                        <select x-model="globalConfig.log_level">
+                            <option value="debug">Debug</option>
+                            <option value="info">Info</option>
+                            <option value="warn">Warn</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h2>Provider Failover</h2>
+
+                    <div class="form-group">
+                        <label>Reactivate After</label>
+                        <input type="text" x-model="globalConfig.reactivate_after" required>
+                        <small>Duration before reactivating failed providers (e.g., 1h, 30m)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Upstream Idle Timeout</label>
+                        <input type="text" x-model="globalConfig.upstream_idle_timeout" required>
+                        <small>Timeout for idle upstream connections (e.g., 3m)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" x-model="globalConfig.ignore_count_tokens_failover">
+                            Ignore Count Tokens Failover
+                        </label>
+                        <small>Disable provider switching for count_tokens requests (keeps context cache warm)</small>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h2>Logging</h2>
+
+                    <div class="form-group">
+                        <label>Log Directory</label>
+                        <input type="text" x-model="globalConfig.log_dir">
+                        <small>Directory for log files (default: ~/.clipal/logs)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Log Retention Days</label>
+                        <input type="number" x-model.number="globalConfig.log_retention_days" min="0">
+                        <small>Number of days to keep log files</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" x-model="globalConfig.log_stdout">
+                            Log to Stdout
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h2>Notifications</h2>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" x-model="globalConfig.notifications.enabled">
+                            Enable Desktop Notifications
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Minimum Level</label>
+                        <select x-model="globalConfig.notifications.min_level">
+                            <option value="debug">Debug</option>
+                            <option value="info">Info</option>
+                            <option value="warn">Warn</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" x-model="globalConfig.notifications.provider_switch">
+                            Notify on Provider Switch
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
+                    <button type="button" @click="loadGlobalConfig()" class="btn">Reset</button>
+                    <button type="button" @click="exportConfig()" class="btn">Export Config</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Status Tab -->
+        <div x-show="activeTab === 'status'" class="tab-content">
+            <div class="status-grid">
+                <div class="status-card">
+                    <h3>System Information</h3>
+                    <div class="status-info">
+                        <div class="info-row">
+                            <span class="label">Version:</span>
+                            <span class="value" x-text="status.version"></span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Uptime:</span>
+                            <span class="value" x-text="status.uptime"></span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Config Directory:</span>
+                            <span class="value" x-text="status.config_dir"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <template x-for="(client, name) in status.clients" :key="name">
+                    <div class="status-card">
+                        <h3 x-text="name"></h3>
+                        <div class="status-info">
+                            <div class="info-row">
+                                <span class="label">Total Providers:</span>
+                                <span class="value" x-text="client.provider_count"></span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Enabled:</span>
+                                <span class="value" x-text="client.enabled_providers.length"></span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">First Enabled:</span>
+                                <span class="value" x-text="client.current_provider || 'None'"></span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Enabled Providers:</span>
+                                <span class="value" x-text="client.enabled_providers.join(', ') || 'None'"></span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Provider Modal -->
+    <div x-show="showAddProviderModal || showEditProviderModal"
+         class="modal-overlay"
+         @click.self="closeModals()">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 x-text="showEditProviderModal ? 'Edit Provider' : 'Add Provider'"></h2>
+                <button @click="closeModals()" class="modal-close">&times;</button>
+            </div>
+            <form @submit.prevent="saveProvider()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" x-model="providerForm.name" required>
+                        <small>Allowed: 1-64 chars of letters/numbers/._-. Must start with letter/number. Not allowed: / or &#92;.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Base URL *</label>
+                        <input type="text" x-model="providerForm.base_url" required>
+                        <small>API endpoint URL (e.g., https://api.anthropic.com)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label x-text="showEditProviderModal ? 'API Key' : 'API Key *'"></label>
+                        <input
+                            type="password"
+                            x-model="providerForm.api_key"
+                            :required="!showEditProviderModal"
+                            :placeholder="showEditProviderModal ? 'Leave blank to keep existing' : ''">
+                        <small x-show="showEditProviderModal">Leave blank to keep existing API key</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Priority</label>
+                        <input type="number" x-model.number="providerForm.priority" min="1">
+                        <small>Lower number = higher priority</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" x-model="providerForm.enabled">
+                            Enabled
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="button" @click="closeModals()" class="btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
