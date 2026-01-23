@@ -4,6 +4,7 @@ function app() {
         isLoading: false,
         theme: localStorage.getItem('theme') || 'system',
         activeTab: 'providers',
+        servicePoll: null,
         selectedClient: 'claude-code',
         clientOptions: [
             { value: 'claude-code', label: 'Claude Code' },
@@ -11,12 +12,45 @@ function app() {
             { value: 'gemini', label: 'Gemini' }
         ],
         providers: [],
-        globalConfig: {},
+        // Keep a stable object shape so Alpine x-model bindings don't explode
+        // during the initial render (before loadGlobalConfig completes).
+        globalConfig: {
+            listen_addr: '',
+            port: 0,
+            log_level: 'info',
+            reactivate_after: '',
+            upstream_idle_timeout: '',
+            max_request_body_bytes: 0,
+            log_dir: '',
+            log_retention_days: 0,
+            log_stdout: true,
+            notifications: {
+                enabled: false,
+                min_level: 'error',
+                provider_switch: true
+            },
+            ignore_count_tokens_failover: false
+        },
         status: {
             version: '',
             uptime: '',
             config_dir: '',
             clients: {}
+        },
+        serviceStatus: {
+            os: '',
+            install_command: '',
+            install_hint: '',
+            supported: true,
+            installed: false,
+            ok: false,
+            output: '',
+            error: ''
+        },
+        serviceForm: {
+            force: false,
+            stdout_path: '',
+            stderr_path: ''
         },
         alert: {
             show: false,
@@ -34,6 +68,15 @@ function app() {
         },
         editingProviderName: '',
 
+        // Helpers
+        withDefaultGlobalConfig(cfg) {
+            // Merge (shallow) and also ensure nested notifications exists.
+            const def = this.globalConfig;
+            const out = { ...def, ...(cfg || {}) };
+            out.notifications = { ...def.notifications, ...((cfg && cfg.notifications) ? cfg.notifications : {}) };
+            return out;
+        },
+
         // Initialization
         async init() {
             this.initTheme();
@@ -43,12 +86,23 @@ function app() {
             try {
                 await Promise.all([
                     this.refreshStatus(),
+                    this.loadServiceStatus(),
                     this.loadProviders(),
                     this.loadGlobalConfig()
                 ]);
             } finally {
                 this.isLoading = false;
             }
+
+            // Simple poller: 3s refresh while on Services/Status tabs.
+            this.servicePoll = setInterval(() => {
+                if (this.activeTab === 'services') {
+                    this.loadServiceStatus(true);
+                }
+                if (this.activeTab === 'status') {
+                    this.refreshStatus();
+                }
+            }, 3000);
         },
 
         // Theme Management
@@ -101,6 +155,7 @@ function app() {
                 const response = await fetch(url, {
                     ...options,
                     headers: {
+                        'X-Clipal-UI': '1',
                         'Content-Type': 'application/json',
                         ...options.headers
                     }
@@ -135,6 +190,74 @@ function app() {
             } catch (error) {
                 console.error('Failed to refresh status:', error);
             }
+        },
+
+        // Services
+        async loadServiceStatus(background = false) {
+            try {
+                this.serviceStatus = await this.apiCall('/api/service/status', {}, !!background);
+            } catch (error) {
+                console.error('Failed to load service status:', error);
+            }
+        },
+
+        async serviceAction(action) {
+            if (action === 'uninstall' && !confirm('Uninstall the system service?')) return;
+            if (action === 'stop' && !confirm('Stop the system service?')) return;
+            if (action === 'restart' && !confirm('Restart the system service?')) return;
+
+            // Best-effort request: the service might stop/restart mid-flight.
+            try {
+                await fetch(`/api/service/${action}`, {
+                    method: 'POST',
+                    headers: { 'X-Clipal-UI': '1', 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.serviceForm),
+                    keepalive: true
+                });
+            } catch (e) {
+                // Ignore network errors (common when the service restarts).
+            }
+
+            this.showAlert('info', `Requested service ${action}. Refreshing...`);
+            // Staggered refresh to cover fast/slow restart paths.
+            setTimeout(() => this.loadServiceStatus(true), 1500);
+            setTimeout(() => this.loadServiceStatus(true), 3500);
+            setTimeout(() => this.loadServiceStatus(true), 7000);
+        },
+
+        async copyToClipboard(text) {
+            const value = String(text || '').trim();
+            if (!value) return false;
+
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(value);
+                    return true;
+                }
+            } catch (e) {
+                // fall through to legacy approach
+            }
+
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = value;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'absolute';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (e) {
+                return false;
+            }
+        },
+
+        async copyServiceInstallCommand() {
+            const ok = await this.copyToClipboard(this.serviceStatus.install_command);
+            if (ok) this.showAlert('success', 'Install command copied');
+            else this.showAlert('error', 'Failed to copy command');
         },
 
         // Providers
@@ -264,7 +387,8 @@ function app() {
         // Global Config
         async loadGlobalConfig() {
             try {
-                this.globalConfig = await this.apiCall('/api/config/global');
+                const cfg = await this.apiCall('/api/config/global');
+                this.globalConfig = this.withDefaultGlobalConfig(cfg);
             } catch (error) {
                 console.error('Failed to load global config:', error);
             }

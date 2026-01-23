@@ -40,13 +40,22 @@ Monitor your Clipal instance:
 - Per-client provider statistics
 - Enabled providers and first enabled provider (from config)
 
-### 4. Configuration Export
+### 4. Service Management
+Manage Clipal as an OS background service (same as `clipal service *`):
+- Install / uninstall the system service
+- Start / stop / restart
+- View `status` output (best-effort; may vary by OS)
+
+### 5. Configuration Export
 Export your entire configuration as JSON for backup or migration purposes.
 
 ## Security Notes
 
 - The web interface is localhost-only (enforced). Requests from non-loopback addresses return 403 even if you bind the proxy to 0.0.0.0/::.
+- The UI additionally enforces a localhost Host header (localhost/127.0.0.1/[::1]) to mitigate DNS rebinding attacks.
 - The management API is unauthenticated by design (for local use)
+- State-changing API requests require `X-Clipal-UI: 1` and `Content-Type: application/json` (the bundled UI sets these automatically; include them if you're calling the API manually).
+- WebUI API request bodies are capped at 1 MiB.
 - API keys are never displayed in the interface (shown as ••••••••)
 - All configuration changes are validated before being saved
 - Configuration files are saved with 0600 permissions (owner read/write only) and written atomically to avoid partial reads during hot reload

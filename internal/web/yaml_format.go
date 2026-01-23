@@ -66,18 +66,20 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 	b.WriteString("# Global configuration for clipal\n")
 	b.WriteString("# Managed by the web UI (comments kept for readability)\n\n")
 
-	b.WriteString(fmt.Sprintf("listen_addr: %s\n", strings.TrimSpace(gc.ListenAddr)))
+	// Quote strings to avoid YAML injection via newlines/# and to keep the file
+	// parseable even if a value contains spaces or special characters.
+	b.WriteString(fmt.Sprintf("listen_addr: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.ListenAddr))))
 	b.WriteString(fmt.Sprintf("port: %d\n", gc.Port))
-	b.WriteString(fmt.Sprintf("log_level: %s # debug | info | warn | error\n", strings.TrimSpace(string(gc.LogLevel))))
-	b.WriteString(fmt.Sprintf("reactivate_after: %s # set to 0 to disable temporary deactivation\n", strings.TrimSpace(gc.ReactivateAfter)))
+	b.WriteString(fmt.Sprintf("log_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.LogLevel)))))
+	b.WriteString(fmt.Sprintf("reactivate_after: %s # set to 0 to disable temporary deactivation\n", yamlDoubleQuote(strings.TrimSpace(gc.ReactivateAfter))))
 	b.WriteString("# Cancel an upstream attempt if no response body bytes are received for this long.\n")
 	b.WriteString("# Useful for SSE streams that can hang after headers. Set to 0 to disable.\n")
-	b.WriteString(fmt.Sprintf("upstream_idle_timeout: %s\n", strings.TrimSpace(gc.UpstreamIdleTimeout)))
+	b.WriteString(fmt.Sprintf("upstream_idle_timeout: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.UpstreamIdleTimeout))))
 	b.WriteString("# Max request body size in bytes (clipal buffers request bodies for retries).\n")
 	b.WriteString(fmt.Sprintf("max_request_body_bytes: %d\n\n", gc.MaxRequestBody))
 
 	b.WriteString("# Default: <config-dir>/logs (e.g. ~/.clipal/logs)\n")
-	b.WriteString(fmt.Sprintf("log_dir: %s\n", yamlMaybeQuoteEmpty(gc.LogDir)))
+	b.WriteString(fmt.Sprintf("log_dir: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.LogDir))))
 	b.WriteString(fmt.Sprintf("log_retention_days: %d\n", gc.LogRetentionDays))
 	b.WriteString(fmt.Sprintf("log_stdout: %v\n\n", boolPtrOrTrue(gc.LogStdout)))
 
@@ -87,7 +89,7 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 	b.WriteString("# Desktop notifications (best-effort, cross-platform via beeep)\n")
 	b.WriteString("notifications:\n")
 	b.WriteString(fmt.Sprintf("  enabled: %v\n", gc.Notifications.Enabled))
-	b.WriteString(fmt.Sprintf("  min_level: %s # debug | info | warn | error\n", strings.TrimSpace(string(gc.Notifications.MinLevel))))
+	b.WriteString(fmt.Sprintf("  min_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.Notifications.MinLevel)))))
 	b.WriteString(fmt.Sprintf("  provider_switch: %v\n", boolPtrOrTrue(gc.Notifications.ProviderSwitch)))
 
 	b.WriteString("\n")

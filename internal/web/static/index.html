@@ -39,6 +39,9 @@
             <button @click="activeTab = 'settings'" :class="{'active': activeTab === 'settings'}" class="tab">
                 Global Settings
             </button>
+            <button @click="activeTab = 'services'" :class="{'active': activeTab === 'services'}" class="tab">
+                Services
+            </button>
             <button @click="activeTab = 'status'" :class="{'active': activeTab === 'status'}" class="tab">
                 System Status
             </button>
@@ -228,6 +231,146 @@
                         style="margin-left: auto;">Export Config</button>
                 </div>
             </form>
+        </div>
+
+        <!-- Services Tab -->
+        <div x-show="activeTab === 'services'" class="tab-content" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            <div class="card-grid">
+                <div class="card" style="grid-column: 1 / -1;">
+                    <div class="provider-header">
+                        <div>
+                            <h3 class="provider-name">Clipal Service</h3>
+                            <div class="status-client-subtitle">
+                                Manage the OS background service (same as <span class="mono-pill">clipal service *</span>)
+                            </div>
+                        </div>
+                        <div class="status-metrics">
+                            <button type="button" class="metric-pill" disabled
+                                :class="serviceStatus.supported ? 'pill-success' : 'pill-danger'"
+                                x-text="serviceStatus.supported ? 'Supported' : 'Unsupported'"></button>
+
+                            <template x-if="serviceStatus.supported && !serviceStatus.installed">
+                                <template x-if="serviceStatus.os === 'windows'">
+                                    <button type="button" class="metric-pill pill-primary" @click="copyServiceInstallCommand()">
+                                        Install
+                                    </button>
+                                </template>
+                                <template x-if="serviceStatus.os !== 'windows'">
+                                    <button type="button" class="metric-pill pill-primary" @click="serviceAction('install')">
+                                        Install
+                                    </button>
+                                </template>
+                            </template>
+                            <template x-if="!serviceStatus.supported || serviceStatus.installed">
+                                <button type="button" class="metric-pill" disabled
+                                    :class="serviceStatus.installed ? 'pill-success' : 'pill-warning'"
+                                    x-text="serviceStatus.installed ? 'Installed' : 'Not installed'"></button>
+                            </template>
+
+                            <button type="button" class="metric-pill pill-secondary" @click="loadServiceStatus()">
+                                Check
+                            </button>
+                        </div>
+                    </div>
+
+                    <template x-if="!serviceStatus.supported">
+                        <div class="card u-text-center" style="grid-column: 1 / -1; padding: 40px;">
+                            <p style="color: var(--text-secondary); margin-bottom: 10px;">
+                                Service manager is not supported on this OS build.
+                            </p>
+                            <p class="form-hint" x-show="serviceStatus.error" x-text="serviceStatus.error"></p>
+                        </div>
+                    </template>
+
+                    <template x-if="serviceStatus.supported && !serviceStatus.installed">
+                        <div class="card u-text-center" style="grid-column: 1 / -1; padding: 40px;">
+                            <p style="color: var(--text-primary); font-weight: 600; margin-bottom: 10px;">
+                                Autostart service is not installed yet.
+                            </p>
+                            <p style="color: var(--text-secondary); margin-bottom: 18px;">
+                                <template x-if="serviceStatus.os === 'windows'">
+                                    <span>Install requires an elevated console on Windows. Use the command below.</span>
+                                </template>
+                                <template x-if="serviceStatus.os !== 'windows'">
+                                    <span>Click <b>Install</b> to register Clipal as a background service for this user.</span>
+                                </template>
+                            </p>
+                            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                                <template x-if="serviceStatus.os === 'windows'">
+                                    <button type="button" class="btn btn-primary" @click="copyServiceInstallCommand()">
+                                        Copy Install Command
+                                    </button>
+                                </template>
+                                <template x-if="serviceStatus.os !== 'windows'">
+                                    <button type="button" class="btn btn-primary" @click="serviceAction('install')">
+                                        Install Service
+                                    </button>
+                                </template>
+                                <button type="button" class="btn btn-secondary" @click="loadServiceStatus()">
+                                    Refresh
+                                </button>
+                            </div>
+                            <div class="form-hint" style="margin-top: 14px;">
+                                <template x-if="serviceStatus.install_command">
+                                    <div>
+                                        <div style="margin-bottom: 10px;" x-show="serviceStatus.install_hint"
+                                            x-text="serviceStatus.install_hint"></div>
+                                        <pre class="log-output" x-text="serviceStatus.install_command"></pre>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="kv-grid" style="margin-bottom: 20px;" x-show="serviceStatus.supported">
+                        <div class="kv-item">
+                            <div class="kv-label">Config Dir</div>
+                            <div class="kv-value" x-text="status.config_dir"></div>
+                        </div>
+                        <div class="kv-item" x-show="serviceStatus.error">
+                            <div class="kv-label">Last Error</div>
+                            <div class="kv-value" x-text="serviceStatus.error"></div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px;"
+                        x-show="serviceStatus.supported && serviceStatus.installed">
+                        <label class="checkbox-label" title="Reinstall/update the system service if it already exists">
+                            <input type="checkbox" x-model="serviceForm.force">
+                            <span class="checkbox-text">Force</span>
+                        </label>
+
+                        <button type="button" class="btn btn-primary" @click="serviceAction('install')">
+                            Install
+                        </button>
+                        <button type="button" class="btn btn-secondary" @click="serviceAction('start')"
+                            :disabled="!serviceStatus.installed">
+                            Start
+                        </button>
+                        <button type="button" class="btn btn-secondary" @click="serviceAction('stop')"
+                            :disabled="!serviceStatus.installed">
+                            Stop
+                        </button>
+                        <button type="button" class="btn btn-primary" @click="serviceAction('restart')"
+                            :disabled="!serviceStatus.installed">
+                            Restart
+                        </button>
+                        <button type="button" class="btn btn-danger" @click="serviceAction('uninstall')"
+                            :disabled="!serviceStatus.installed">
+                            Uninstall
+                        </button>
+                    </div>
+
+                    <div class="form-hint" style="margin-bottom: 12px;" x-show="serviceStatus.supported && serviceStatus.installed">
+                        Note: restart/stop may temporarily disconnect this page. Status auto-refreshes every 3s while
+                        this tab is open.
+                    </div>
+
+                    <pre class="log-output" x-show="serviceStatus.supported && serviceStatus.installed && !!serviceStatus.output"
+                        x-text="serviceStatus.output || ''"></pre>
+                </div>
+            </div>
         </div>
 
         <!-- Status Tab -->

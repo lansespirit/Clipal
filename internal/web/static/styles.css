@@ -245,9 +245,8 @@ body {
     padding: 6px;
     border-radius: 18px;
     margin-bottom: 40px;
-    max-width: 500px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    max-width: none;
     box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
 }
 
@@ -404,6 +403,56 @@ body {
     border: 1px solid var(--border);
 }
 
+.metric-pill {
+    appearance: none;
+}
+
+.metric-pill:disabled {
+    opacity: 0.85;
+    cursor: default;
+}
+
+.pill-primary {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: transparent;
+    cursor: pointer;
+}
+
+.pill-secondary {
+    cursor: pointer;
+}
+
+.pill-success {
+    background: var(--success-soft);
+    color: var(--success);
+    border-color: transparent;
+}
+
+.pill-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    border-color: transparent;
+}
+
+.pill-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: transparent;
+}
+
+.btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
 .mono-pill {
     padding: 4px 8px;
 }
@@ -412,6 +461,20 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+.log-output {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    padding: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 360px;
+    overflow: auto;
 }
 
 .chip {

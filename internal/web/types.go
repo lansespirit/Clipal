@@ -116,6 +116,29 @@ type SuccessResponse struct {
 	Message string `json:"message"`
 }
 
+// ServiceActionRequest triggers an OS service action.
+// Most fields are optional and only apply on some platforms.
+type ServiceActionRequest struct {
+	Force      bool   `json:"force"`
+	StdoutPath string `json:"stdout_path,omitempty"` // macOS: launchd StandardOutPath
+	StderrPath string `json:"stderr_path,omitempty"` // macOS: launchd StandardErrorPath
+}
+
+// ServiceStatusResponse reports best-effort status for "clipal service status".
+// Output and Error (if any) are intended for display/debugging.
+type ServiceStatusResponse struct {
+	OS        string `json:"os"`
+	Supported bool   `json:"supported"`
+	Installed bool   `json:"installed"`
+	OK        bool   `json:"ok"`
+	Output    string `json:"output,omitempty"`
+	Error     string `json:"error,omitempty"`
+
+	// UI helpers (e.g. Windows may require elevated install in some environments).
+	InstallCommand string `json:"install_command,omitempty"`
+	InstallHint    string `json:"install_hint,omitempty"`
+}
+
 func boolPtrOrTrue(v *bool) bool {
 	if v == nil {
 		return true

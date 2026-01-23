@@ -57,11 +57,27 @@ func TestFormatGlobalConfigYAML_HasHeaderAndQuotesEmptyStrings(t *testing.T) {
 	if !strings.HasPrefix(got, "# Global configuration for clipal\n") {
 		t.Fatalf("expected header comment, got:\n%s", got)
 	}
+	if !strings.Contains(got, "listen_addr: \"127.0.0.1\"") {
+		t.Fatalf("expected listen_addr to be quoted, got:\n%s", got)
+	}
 	if !strings.Contains(got, "log_dir: \"\"") {
 		t.Fatalf("expected log_dir empty string to be quoted, got:\n%s", got)
 	}
 	if !strings.Contains(got, "\nnotifications:\n") {
 		t.Fatalf("expected notifications block, got:\n%s", got)
+	}
+}
+
+func TestFormatGlobalConfigYAML_EscapesNewlines(t *testing.T) {
+	gc := config.DefaultGlobalConfig()
+	gc.ListenAddr = "127.0.0.1\nport: 1"
+
+	got := string(formatGlobalConfigYAML(gc))
+	if strings.Contains(got, "listen_addr: 127.0.0.1\nport: 1") {
+		t.Fatalf("expected listen_addr to be quoted/escaped (no YAML injection), got:\n%s", got)
+	}
+	if !strings.Contains(got, "listen_addr: \"127.0.0.1\\nport: 1\"") {
+		t.Fatalf("expected escaped newline in listen_addr, got:\n%s", got)
 	}
 }
 

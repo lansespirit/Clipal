@@ -2,13 +2,17 @@ package web
 
 import (
 	"embed"
+	"mime"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 )
 
 //go:embed static/*
 var staticFiles embed.FS
+
+const maxAPIRequestBytes = 1 << 20 // 1 MiB (WebUI requests are small)
 
 // Handler manages HTTP routes for the web management interface
 type Handler struct {
@@ -37,11 +41,41 @@ func isLoopbackRemote(remoteAddr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func isLocalhostHost(hostport string) bool {
+	host := strings.TrimSpace(hostport)
+	if host == "" {
+		// Be permissive for HTTP/1.0 style requests or tests with an empty Host.
+		return true
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	lower := strings.ToLower(host)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isStateChangingMethod(m string) bool {
+	switch m {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) localOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// The management interface is designed for local use only (no auth).
 		// Enforce loopback access even if the proxy listens on 0.0.0.0/::.
-		if !isLoopbackRemote(r.RemoteAddr) {
+		//
+		// Additionally enforce a localhost Host header to mitigate DNS rebinding
+		// (attackers can resolve a public domain to 127.0.0.1 after the page loads).
+		if !isLoopbackRemote(r.RemoteAddr) || !isLocalhostHost(r.Host) {
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				writeError(w, "forbidden: management interface is localhost-only", http.StatusForbidden)
@@ -51,6 +85,34 @@ func (h *Handler) localOnly(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+
+		// Put a hard cap on WebUI request bodies to avoid unbounded memory usage.
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxAPIRequestBytes)
+		}
+
+		// Basic CSRF hardening for state-changing API calls: require an explicit
+		// header that the bundled UI will set. Cross-site requests can't set it
+		// without a CORS preflight (which we do not allow).
+		if strings.HasPrefix(r.URL.Path, "/api/") && isStateChangingMethod(r.Method) {
+			if r.Header.Get("X-Clipal-UI") != "1" {
+				writeError(w, "forbidden: missing X-Clipal-UI header", http.StatusForbidden)
+				return
+			}
+
+			// If a state-changing request carries a body, require JSON.
+			// This prevents accidental form-encoded submissions and keeps semantics clear.
+			if r.Method != http.MethodDelete && (r.ContentLength != 0 || r.Header.Get("Content-Type") != "") {
+				mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if err != nil || mt != "application/json" {
+					writeError(w, "unsupported media type: expected application/json", http.StatusUnsupportedMediaType)
+					return
+				}
+			}
+		}
+
 		next(w, r)
 	}
 }
@@ -68,6 +130,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/providers/", h.localOnly(h.routeProviders))
 	mux.HandleFunc("/api/status", h.localOnly(h.api.HandleGetStatus))
+
+	// Service management (OS background service for clipal)
+	mux.HandleFunc("/api/service/status", h.localOnly(h.api.HandleServiceStatus))
+	mux.HandleFunc("/api/service/", h.localOnly(h.routeService))
 }
 
 // serveIndex serves the main management interface HTML
@@ -89,23 +155,29 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 
 // serveStatic serves static assets (CSS, JS)
 func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/static/")
-	if path == "" || path == "/" {
+	p := strings.TrimPrefix(r.URL.Path, "/static/")
+	if p == "" || p == "/" {
 		http.NotFound(w, r)
 		return
 	}
 
-	data, err := staticFiles.ReadFile("static/" + path)
+	// Prevent path traversal attempts; embed.FS is already strict, but keep this
+	// explicit to avoid surprises if the backing fs ever changes.
+	p = path.Clean("/" + p)
+	p = strings.TrimPrefix(p, "/")
+	if p == "" || strings.HasPrefix(p, "..") {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := staticFiles.ReadFile("static/" + p)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	// Set content type based on file extension
-	if strings.HasSuffix(path, ".js") {
-		w.Header().Set("Content-Type", "application/javascript")
-	} else if strings.HasSuffix(path, ".css") {
-		w.Header().Set("Content-Type", "text/css")
+	if ct := mime.TypeByExtension(path.Ext(p)); ct != "" {
+		w.Header().Set("Content-Type", ct)
 	}
 
 	w.Write(data)
@@ -147,5 +219,25 @@ func (h *Handler) routeProviders(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		writeError(w, "invalid request path", http.StatusBadRequest)
+	}
+}
+
+func (h *Handler) routeService(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(r.URL.EscapedPath(), "/")
+
+	// Supported:
+	//   GET  /api/service/status  (handled separately)
+	//   POST /api/service/<install|uninstall|start|stop|restart>
+	action := strings.TrimPrefix(path, "/api/service/")
+	if action == "" || action == "status" {
+		writeError(w, "invalid request path", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		h.api.HandleServiceAction(w, r, action)
+	default:
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
