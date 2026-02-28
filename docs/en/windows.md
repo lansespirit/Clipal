@@ -76,6 +76,7 @@ You can pick one of the following:
 #### Option A: built-in command (recommended)
 
 ```powershell
+clipal.exe status
 clipal.exe service install
 
 # Show the underlying actions without executing:
@@ -84,6 +85,7 @@ clipal.exe service install --dry-run
 clipal.exe service --dry-run install
 
 clipal.exe service status
+clipal.exe service status --raw
 clipal.exe service restart
 clipal.exe service stop
 clipal.exe service uninstall

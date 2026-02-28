@@ -12,5 +12,5 @@ Shared conventions:
 
 - Default config dir: `~/.clipal/` (Windows: `%USERPROFILE%\\.clipal\\`)
 - Health check: `GET /health` (default: `http://127.0.0.1:3333/health`)
+- Status summary: `clipal status` (add `--json` for machine-readable output)
 - Client setup (Claude Code / Codex / Gemini): see the project root `README.md`
-

@@ -68,8 +68,10 @@ You can pick one of the following:
 #### Option B1: built-in command (recommended)
 
 ```bash
+clipal status
 clipal service install
 clipal service status
+clipal service status --raw
 clipal service restart
 clipal service stop
 clipal service uninstall

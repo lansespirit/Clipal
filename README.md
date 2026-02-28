@@ -222,11 +222,19 @@ clipal update --dry-run
 nohup clipal >/dev/null 2>&1 &
 ```
 
+Check status (without starting a server):
+
+```bash
+clipal status
+clipal status --json
+```
+
 For long-running background mode on boot/logon (launchd / systemd / Task Scheduler), you can use:
 
 ```bash
 clipal service install
 clipal service status
+clipal service status --raw
 clipal service restart
 clipal service stop
 clipal service uninstall

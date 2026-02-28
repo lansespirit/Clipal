@@ -76,6 +76,9 @@ log_retention_days: 7
 #### 方式 A：内置命令（推荐）
 
 ```powershell
+# 查看运行状态
+clipal.exe status
+
 # 安装并立即运行（任务名：Clipal）
 clipal.exe service install
 
@@ -86,6 +89,7 @@ clipal.exe service --dry-run install
 
 # 查看状态
 clipal.exe service status
+clipal.exe service status --raw
 
 # 重启 / 停止 / 卸载
 clipal.exe service restart

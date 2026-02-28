@@ -35,6 +35,9 @@ func main() {
 		case "update":
 			runUpdate(os.Args[2:])
 			return
+		case "status":
+			runStatus(os.Args[2:])
+			return
 		case "service":
 			runService(os.Args[2:])
 			return

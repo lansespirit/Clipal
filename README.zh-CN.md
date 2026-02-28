@@ -290,11 +290,19 @@ clipal update --dry-run
 nohup clipal >/dev/null 2>&1 &
 ```
 
+查看运行状态（不会启动服务端进程）：
+
+```bash
+clipal status
+clipal status --json
+```
+
 如果你是“开机/登录后自动启动”的长期后台运行场景（launchd / systemd / 任务计划程序），推荐直接用：
 
 ```bash
 clipal service install
 clipal service status
+clipal service status --raw
 clipal service restart
 clipal service stop
 clipal service uninstall

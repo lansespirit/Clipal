@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -21,6 +22,8 @@ func runService(args []string) {
 	binaryPath := fs.String("bin", "", "Path to clipal binary (default: current executable)")
 	force := fs.Bool("force", false, "Reinstall/update the system service if it already exists")
 	dryRun := fs.Bool("dry-run", false, "Print actions without executing them")
+	raw := fs.Bool("raw", false, "Status only: print underlying service manager output")
+	jsonOut := fs.Bool("json", false, "Status only: output status as JSON")
 	timeout := fs.Duration("timeout", 30*time.Second, "Overall timeout for service manager commands")
 
 	// macOS launchd (optional)
@@ -82,6 +85,30 @@ func runService(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
+	if action == service.ActionStatus && !opts.DryRun && !*raw {
+		st, rawOut, stErr := service.GetStatus(ctx, opts)
+		if stErr != nil {
+			if rawOut != "" {
+				fmt.Fprintln(os.Stderr, rawOut)
+			}
+			fmt.Fprintf(os.Stderr, "clipal service %s failed: %v\n", action, stErr)
+			os.Exit(1)
+		}
+
+		if *jsonOut {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(st); err != nil {
+				fmt.Fprintf(os.Stderr, "clipal service %s failed: %v\n", action, err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		printServiceStatus(st)
+		return
+	}
+
 	out, err := service.ExecutePlan(ctx, plan, opts.DryRun)
 	if err != nil {
 		if out != "" {
@@ -103,6 +130,54 @@ func printServiceUsage() {
 	fmt.Fprintln(os.Stderr, "  clipal service install --config-dir ~/.clipal")
 	fmt.Fprintln(os.Stderr, "  clipal service restart")
 	fmt.Fprintln(os.Stderr, "  clipal service status")
+	fmt.Fprintln(os.Stderr, "  clipal service status --raw")
+	fmt.Fprintln(os.Stderr, "  clipal service status --json")
+}
+
+func printServiceStatus(st service.Status) {
+	installed := "no"
+	if st.Installed {
+		installed = "yes"
+	}
+	loaded := "no"
+	if st.Loaded {
+		loaded = "yes"
+	}
+	running := "no"
+	if st.Running {
+		running = "yes"
+	}
+	pid := ""
+	if st.PID > 0 {
+		pid = fmt.Sprintf(" (pid %d)", st.PID)
+	}
+
+	fmt.Fprintf(os.Stdout, "Service:   %s (%s)\n", st.Manager, st.Name)
+	if strings.TrimSpace(st.Scope) != "" {
+		fmt.Fprintf(os.Stdout, "Scope:     %s\n", st.Scope)
+	}
+	fmt.Fprintf(os.Stdout, "Installed: %s\n", installed)
+	fmt.Fprintf(os.Stdout, "Loaded:    %s\n", loaded)
+	fmt.Fprintf(os.Stdout, "Running:   %s%s\n", running, pid)
+	if strings.TrimSpace(st.BinaryPath) != "" {
+		fmt.Fprintf(os.Stdout, "Program:   %s\n", st.BinaryPath)
+	}
+	if strings.TrimSpace(st.ConfigDir) != "" {
+		fmt.Fprintf(os.Stdout, "Config:    %s\n", st.ConfigDir)
+	}
+	if strings.TrimSpace(st.StdoutPath) != "" || strings.TrimSpace(st.StderrPath) != "" {
+		fmt.Fprintf(os.Stdout, "Logs:      stdout=%s\n", orDash(st.StdoutPath))
+		fmt.Fprintf(os.Stdout, "           stderr=%s\n", orDash(st.StderrPath))
+	}
+	if strings.TrimSpace(st.LastExit) != "" {
+		fmt.Fprintf(os.Stdout, "Last exit: %s\n", st.LastExit)
+	}
+	if strings.TrimSpace(st.Detail) != "" {
+		fmt.Fprintf(os.Stdout, "Detail:    %s\n", st.Detail)
+	}
+	fmt.Fprintln(os.Stdout, "")
+	fmt.Fprintln(os.Stdout, "Hint:")
+	fmt.Fprintln(os.Stdout, "  clipal service status --raw   (full manager output)")
 }
 
 // splitServiceArgs accepts both:

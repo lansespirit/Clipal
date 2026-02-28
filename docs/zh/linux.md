@@ -68,11 +68,15 @@ log_retention_days: 7
 #### 方式 B1：内置命令（推荐）
 
 ```bash
+# 查看运行状态
+clipal status
+
 # 安装并启用开机自启（登录后），并立即启动
 clipal service install
 
 # 查看状态
 clipal service status
+clipal service status --raw
 
 # 重启 / 停止 / 卸载
 clipal service restart
