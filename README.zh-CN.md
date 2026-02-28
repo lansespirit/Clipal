@@ -12,7 +12,7 @@ clipal 是一个轻量级的 LLM API 反向代理服务，专为 Claude Code、C
 
 ### 核心理念
 
-- **极简**：无 UI、无数据库、无历史记录，只做代理转发
+- **极简**：无数据库、无历史记录，只做代理转发（并提供一个仅本机访问的管理 UI）
 - **透明**：不转换消息格式，依赖上游 API 供应商的格式兼容能力
 - **便携**：单一二进制文件，跨平台运行
 - **可配置**：YAML 配置文件，按客户端类型分离
@@ -22,7 +22,8 @@ clipal 是一个轻量级的 LLM API 反向代理服务，专为 Claude Code、C
 - 多 API 供应商配置，支持优先级排序
 - 自动故障转移：当前供应商失败时自动切换到下一个
 - Provider 临时禁用：鉴权/额度错误会自动 deactivate，并按 `reactivate_after` 自动恢复
-- 配置热加载：更新 `claude-code.yaml` / `codex.yaml` / `gemini.yaml` 后自动重新加载并重新验证
+- 配置热加载：更新 `config.yaml` / `claude-code.yaml` / `codex.yaml` / `gemini.yaml` 后自动重新加载并重新验证
+- 本机 Web 管理界面（localhost-only）：Provider 管理、全局配置、系统状态、服务控制
 - 按日志级别输出运行日志（DEBUG/INFO/WARN/ERROR）
 - 三套独立配置文件，分别服务于：
   - Claude Code (`claude-code.yaml`)
@@ -71,6 +72,7 @@ clipal 是一个轻量级的 LLM API 反向代理服务，专为 Claude Code、C
 
 | 路径前缀 | 对应配置 | 说明 |
 |----------|----------|------|
+| `/` | — | Web 管理界面（仅本机访问） |
 | `/claudecode/*` | `claude-code.yaml` | Claude Code 请求 |
 | `/codex/*` | `codex.yaml` | Codex CLI 请求 |
 | `/gemini/*` | `gemini.yaml` | Gemini CLI 请求 |

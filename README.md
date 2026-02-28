@@ -12,7 +12,7 @@ Clipal is a lightweight reverse proxy that routes requests to one of multiple up
 
 ## Core ideas
 
-- **Minimal**: no UI, no DB, no history — just proxying
+- **Minimal**: no DB, no history — just proxying (plus a localhost-only management UI)
 - **Transparent**: no message-format conversion; relies on upstream compatibility
 - **Portable**: single cross-platform binary
 - **Configurable**: YAML configs separated by client type
@@ -22,7 +22,8 @@ Clipal is a lightweight reverse proxy that routes requests to one of multiple up
 - Multiple upstream providers with priority ordering
 - Automatic failover (tries the next provider on errors)
 - Temporary provider deactivation on auth/quota errors, with auto-reactivation via `reactivate_after`
-- Hot reload: changes to `claude-code.yaml` / `codex.yaml` / `gemini.yaml` reload automatically
+- Hot reload: changes to `config.yaml` / `claude-code.yaml` / `codex.yaml` / `gemini.yaml` reload automatically
+- Local web management UI (localhost-only): provider management, global settings, status, service control
 - Log levels: `debug` / `info` / `warn` / `error`
 - Separate client configs:
   - Claude Code (`claude-code.yaml`)
@@ -70,6 +71,7 @@ Clipal is a lightweight reverse proxy that routes requests to one of multiple up
 
 | Path prefix | Config file | Notes |
 |------------|-------------|-------|
+| `/` | — | Web management UI (localhost-only) |
 | `/claudecode/*` | `~/.clipal/claude-code.yaml` | Claude Code upstreams |
 | `/codex/*` | `~/.clipal/codex.yaml` | Codex CLI upstreams |
 | `/gemini/*` | `~/.clipal/gemini.yaml` | Gemini CLI upstreams |
