@@ -100,13 +100,20 @@ func ExecutePlan(ctx context.Context, plan *Plan, dryRun bool) (string, error) {
 		}
 
 		b, err := cmd.CombinedOutput()
+		// If the caller marked this command as best-effort, suppress both its error
+		// and any emitted output. Tools like launchctl may print scary messages for
+		// idempotent operations (e.g., bootstrap when already loaded) even though
+		// the overall action succeeds.
+		if err != nil && c.IgnoreError {
+			continue
+		}
 		if len(b) > 0 {
 			out.Write(b)
 			if b[len(b)-1] != '\n' {
 				out.WriteByte('\n')
 			}
 		}
-		if err != nil && !c.IgnoreError {
+		if err != nil {
 			return out.String(), err
 		}
 	}
