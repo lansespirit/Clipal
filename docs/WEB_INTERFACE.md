@@ -16,11 +16,15 @@ http://127.0.0.1:3333/
 
 ### 1. Provider Management
 - **View Providers**: See all configured providers for each client type (Claude Code, Codex, Gemini)
+- **Mode & Pin**: Switch per-client mode (`auto` / `manual`) and pin a provider for manual routing
+- **One-click 📌 Pin**: Pin a provider from the provider list (sets mode to `manual` + updates `pinned_provider`)
+- **One-click Unpin/Auto**: Switch back to `auto` failover mode from the pinned section
 - **Add Provider**: Add new API providers with custom configurations
 - **Edit Provider**: Update existing provider settings
 - **Delete Provider**: Remove providers you no longer need
 - **Enable/Disable**: Toggle providers on/off without deleting them
-- **Priority Management**: Providers are ordered by priority (lower number = higher priority)
+- **Priority Management**: Providers are ordered by priority (lower number = higher priority; priorities start at 1)
+  - When a client is in `manual` mode, the pinned provider cannot be disabled
 
 ### 2. Global Settings
 Configure system-wide settings:
@@ -30,6 +34,8 @@ Configure system-wide settings:
   - Reactivate After: Duration before reactivating failed providers
   - Upstream Idle Timeout: Timeout for idle connections
   - Ignore Count Tokens Failover: Keep context cache warm for Claude Code
+- **Circuit Breaker**: Configure circuit breaker thresholds and open timeout
+  - Set **Failure Threshold** to `0` to disable the circuit breaker
 - **Logging**: Configure log directory, retention, and output
 - **Notifications**: Desktop notification settings
 
@@ -37,8 +43,12 @@ Configure system-wide settings:
 Monitor your Clipal instance:
 - Version and uptime information
 - Configuration directory location
-- Per-client provider statistics
-- Enabled providers and first enabled provider (from config)
+- Per-client routing info (mode / pinned / current)
+- Last provider switch event (when in auto mode and a failover occurs)
+- Per-provider runtime status and skip reason (used by auto routing):
+  - `disabled` (disabled in config)
+  - `deactivated` (temporary cooldown; shows remaining time)
+  - `circuit_open` (circuit breaker open; shows remaining time)
 
 ### 4. Service Management
 Manage Clipal as an OS background service (same as `clipal service *`):

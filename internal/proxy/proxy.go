@@ -28,6 +28,14 @@ const (
 	ClientGemini     ClientType = "gemini"
 )
 
+type ProviderSwitchEvent struct {
+	At     time.Time
+	From   string
+	To     string
+	Reason string
+	Status int
+}
+
 // Router manages multiple client proxies
 type Router struct {
 	cfg        *config.Config
@@ -35,6 +43,7 @@ type Router struct {
 	proxies    map[ClientType]*ClientProxy
 	server     *http.Server
 	mu         sync.RWMutex
+	reloadMu   sync.Mutex
 	watchMu    sync.Mutex
 	watchStop  chan struct{}
 	watchDone  chan struct{}
@@ -42,9 +51,20 @@ type Router struct {
 	watchEvery time.Duration
 }
 
+// ConfigSnapshot returns the current in-memory config pointer.
+// The returned config should be treated as immutable by callers.
+func (r *Router) ConfigSnapshot() *config.Config {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg
+}
+
 // ClientProxy handles requests for a specific client type
 type ClientProxy struct {
 	clientType       ClientType
+	mode             config.ClientMode
+	pinnedProvider   string
+	pinnedIndex      int
 	providers        []config.Provider
 	currentIndex     int
 	countTokensIndex int
@@ -53,6 +73,9 @@ type ClientProxy struct {
 	deactivated      []providerDeactivation
 	reactivateAfter  time.Duration
 	upstreamIdle     time.Duration
+
+	breakers   []*circuitBreaker
+	lastSwitch ProviderSwitchEvent
 }
 
 // Close releases resources held by the ClientProxy.
@@ -74,6 +97,7 @@ func NewRouter(cfg *config.Config) *Router {
 		upstreamIdle = 3 * time.Minute
 		logger.Warn("invalid upstream_idle_timeout %q, defaulting to 3m", cfg.Global.UpstreamIdleTimeout)
 	}
+	cbCfg := normalizeCircuitBreakerConfig(cfg.Global.CircuitBreaker)
 	r := &Router{
 		cfg:        cfg,
 		configDir:  cfg.ConfigDir(),
@@ -85,35 +109,64 @@ func NewRouter(cfg *config.Config) *Router {
 	// Initialize client proxies
 	claudeProviders := config.GetEnabledProviders(cfg.ClaudeCode)
 	if len(claudeProviders) > 0 {
-		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, claudeProviders, reactivateAfter, upstreamIdle)
+		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, cfg.ClaudeCode.Mode, cfg.ClaudeCode.PinnedProvider, claudeProviders, reactivateAfter, upstreamIdle, cbCfg)
 	}
 
 	codexProviders := config.GetEnabledProviders(cfg.Codex)
 	if len(codexProviders) > 0 {
-		r.proxies[ClientCodex] = newClientProxy(ClientCodex, codexProviders, reactivateAfter, upstreamIdle)
+		r.proxies[ClientCodex] = newClientProxy(ClientCodex, cfg.Codex.Mode, cfg.Codex.PinnedProvider, codexProviders, reactivateAfter, upstreamIdle, cbCfg)
 	}
 
 	geminiProviders := config.GetEnabledProviders(cfg.Gemini)
 	if len(geminiProviders) > 0 {
-		r.proxies[ClientGemini] = newClientProxy(ClientGemini, geminiProviders, reactivateAfter, upstreamIdle)
+		r.proxies[ClientGemini] = newClientProxy(ClientGemini, cfg.Gemini.Mode, cfg.Gemini.PinnedProvider, geminiProviders, reactivateAfter, upstreamIdle, cbCfg)
 	}
 
 	return r
 }
 
-func newClientProxy(clientType ClientType, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration) *ClientProxy {
+func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, cbCfg circuitBreakerConfig) *ClientProxy {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
+	pinnedIndex := -1
+	pinnedProvider = strings.TrimSpace(pinnedProvider)
+	if mode == config.ClientModeManual && pinnedProvider != "" {
+		for i := range providers {
+			if providers[i].Name == pinnedProvider {
+				pinnedIndex = i
+				break
+			}
+		}
+	}
+
+	breakers := make([]*circuitBreaker, len(providers))
+	for i := range providers {
+		breakers[i] = newCircuitBreaker(cbCfg)
+	}
 	return &ClientProxy{
-		clientType:       clientType,
-		providers:        providers,
-		currentIndex:     0,
-		countTokensIndex: 0,
-		deactivated:      make([]providerDeactivation, len(providers)),
-		reactivateAfter:  reactivateAfter,
-		upstreamIdle:     upstreamIdle,
+		clientType:     clientType,
+		mode:           mode,
+		pinnedProvider: pinnedProvider,
+		pinnedIndex:    pinnedIndex,
+		providers:      providers,
+		currentIndex: func() int {
+			if pinnedIndex >= 0 {
+				return pinnedIndex
+			}
+			return 0
+		}(),
+		countTokensIndex: func() int {
+			if pinnedIndex >= 0 {
+				return pinnedIndex
+			}
+			return 0
+		}(),
+		deactivated:     make([]providerDeactivation, len(providers)),
+		reactivateAfter: reactivateAfter,
+		upstreamIdle:    upstreamIdle,
+		breakers:        breakers,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -276,7 +329,21 @@ func (r *Router) snapshotProviderConfigModTimes() {
 	}
 }
 
+// ReloadProviderConfigs forces a best-effort reload from disk.
+// Intended for the web UI, so changes apply immediately.
+func (r *Router) ReloadProviderConfigs() {
+	r.reloadMu.Lock()
+	defer r.reloadMu.Unlock()
+
+	// Keep lastMod in sync so the watcher doesn't immediately reload again.
+	r.snapshotProviderConfigModTimes()
+	r.reloadProviderConfigsLocked()
+}
+
 func (r *Router) reloadIfProviderConfigsChanged() {
+	r.reloadMu.Lock()
+	defer r.reloadMu.Unlock()
+
 	changed := false
 	for _, name := range r.providerConfigFiles() {
 		path := filepath.Join(r.configDir, name)
@@ -298,6 +365,10 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 		return
 	}
 
+	r.reloadProviderConfigsLocked()
+}
+
+func (r *Router) reloadProviderConfigsLocked() {
 	newCfg, err := config.Load(r.configDir)
 	if err != nil {
 		logger.Warn("provider config reload failed: %v", err)
@@ -329,16 +400,17 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 		upstreamIdle = 3 * time.Minute
 		logger.Warn("invalid upstream_idle_timeout %q, defaulting to 3m", newCfg.Global.UpstreamIdleTimeout)
 	}
+	cbCfg := normalizeCircuitBreakerConfig(newCfg.Global.CircuitBreaker)
 
 	newProxies := make(map[ClientType]*ClientProxy)
 	if ps := config.GetEnabledProviders(newCfg.ClaudeCode); len(ps) > 0 {
-		newProxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, ps, reactivateAfter, upstreamIdle)
+		newProxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, newCfg.ClaudeCode.Mode, newCfg.ClaudeCode.PinnedProvider, ps, reactivateAfter, upstreamIdle, cbCfg)
 	}
 	if ps := config.GetEnabledProviders(newCfg.Codex); len(ps) > 0 {
-		newProxies[ClientCodex] = newClientProxy(ClientCodex, ps, reactivateAfter, upstreamIdle)
+		newProxies[ClientCodex] = newClientProxy(ClientCodex, newCfg.Codex.Mode, newCfg.Codex.PinnedProvider, ps, reactivateAfter, upstreamIdle, cbCfg)
 	}
 	if ps := config.GetEnabledProviders(newCfg.Gemini); len(ps) > 0 {
-		newProxies[ClientGemini] = newClientProxy(ClientGemini, ps, reactivateAfter, upstreamIdle)
+		newProxies[ClientGemini] = newClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, reactivateAfter, upstreamIdle, cbCfg)
 	}
 
 	r.mu.Lock()
@@ -353,6 +425,7 @@ func (r *Router) reloadIfProviderConfigsChanged() {
 	}
 
 	logger.Info("configs reloaded from %s", r.configDir)
+	logger.Info("circuit breaker states reset due to config reload")
 	for ct, p := range newProxies {
 		logger.Info("loaded %d providers for %s", len(p.providers), ct)
 	}
@@ -398,7 +471,7 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 		stripPrefix = "/gemini"
 	default:
 		logger.Warn("unknown path prefix: %s", path)
-		http.Error(w, "Unknown endpoint. Use /claudecode, /codex, or /gemini", http.StatusNotFound)
+		writeProxyError(w, "Unknown endpoint. Use /claudecode, /codex, or /gemini", http.StatusNotFound)
 		return
 	}
 
@@ -410,7 +483,7 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 
 	if !exists || len(proxy.providers) == 0 {
 		logger.Warn("[%s] no providers configured", clientType)
-		http.Error(w, fmt.Sprintf("No providers configured for %s", clientType), http.StatusServiceUnavailable)
+		writeProxyError(w, fmt.Sprintf("No providers configured for %s", clientType), http.StatusServiceUnavailable)
 		return
 	}
 

@@ -514,6 +514,16 @@ body {
     border-color: transparent;
 }
 
+.chip-muted {
+    opacity: 0.7;
+}
+
+.chip-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: transparent;
+}
+
 /* Components: Provider Card */
 .provider-header {
     display: flex;

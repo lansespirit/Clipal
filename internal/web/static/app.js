@@ -12,6 +12,10 @@ function app() {
             { value: 'gemini', label: 'Gemini' }
         ],
         providers: [],
+        clientConfig: {
+            mode: 'auto',
+            pinned_provider: ''
+        },
         // Keep a stable object shape so Alpine x-model bindings don't explode
         // during the initial render (before loadGlobalConfig completes).
         globalConfig: {
@@ -28,6 +32,12 @@ function app() {
                 enabled: false,
                 min_level: 'error',
                 provider_switch: true
+            },
+            circuit_breaker: {
+                failure_threshold: 4,
+                success_threshold: 2,
+                open_timeout: '60s',
+                half_open_max_inflight: 1
             },
             ignore_count_tokens_failover: false
         },
@@ -74,6 +84,7 @@ function app() {
             const def = this.globalConfig;
             const out = { ...def, ...(cfg || {}) };
             out.notifications = { ...def.notifications, ...((cfg && cfg.notifications) ? cfg.notifications : {}) };
+            out.circuit_breaker = { ...def.circuit_breaker, ...((cfg && cfg.circuit_breaker) ? cfg.circuit_breaker : {}) };
             return out;
         },
 
@@ -266,9 +277,57 @@ function app() {
             return match ? match.label : clientType;
         },
 
+        providerStatusLabel(p) {
+            if (!p) return '';
+            const name = String(p.name || '').trim();
+            if (!name) return '';
+
+            if (p.enabled === false) return `${name} (disabled)`;
+
+            const skip = String(p.skip_reason || '').trim();
+            if (skip === 'deactivated') {
+                const r = String(p.deactivated_reason || '').trim() || 'deactivated';
+                const d = String(p.deactivated_in || '').trim();
+                return d ? `${name} (${r} ${d})` : `${name} (${r})`;
+            }
+            if (skip === 'circuit_open') {
+                const d = String(p.circuit_open_in || '').trim();
+                return d ? `${name} (circuit ${d})` : `${name} (circuit open)`;
+            }
+            if (skip === 'disabled') return `${name} (disabled)`;
+
+            const st = String(p.circuit_state || '').trim();
+            if (st && st !== 'closed') {
+                const d = String(p.circuit_open_in || '').trim();
+                return d ? `${name} (${st} ${d})` : `${name} (${st})`;
+            }
+
+            return name;
+        },
+
+        providerStatusTitle(p) {
+            const base = this.providerStatusLabel(p);
+            if (!base) return '';
+
+            const skip = String(p.skip_reason || '').trim();
+            if (skip !== 'deactivated') return base;
+
+            const msg = String(p.deactivated_message || '').trim();
+            if (!msg) return base;
+
+            const max = 300;
+            const clipped = msg.length > max ? (msg.slice(0, max) + '...') : msg;
+            return `${base}\n${clipped}`;
+        },
+
         async loadProviders() {
             try {
-                this.providers = await this.apiCall(`/api/providers/${this.selectedClient}`);
+                const [providers, clientCfg] = await Promise.all([
+                    this.apiCall(`/api/providers/${this.selectedClient}`),
+                    this.apiCall(`/api/client-config/${this.selectedClient}`, {}, true)
+                ]);
+                this.providers = providers || [];
+                this.clientConfig = { ...this.clientConfig, ...(clientCfg || {}) };
             } catch (error) {
                 console.error('Failed to load providers:', error);
                 this.providers = [];
@@ -281,6 +340,42 @@ function app() {
             }
             this.selectedClient = clientType;
             this.loadProviders();
+        },
+
+        async saveClientConfig() {
+            try {
+                await this.apiCall(`/api/client-config/${this.selectedClient}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(this.clientConfig)
+                });
+                this.showAlert('success', 'Client configuration saved');
+                await this.refreshStatus();
+            } catch (error) {
+                console.error('Failed to save client config:', error);
+            }
+        },
+
+        async setClientMode(mode) {
+            const m = String(mode || '').toLowerCase();
+            if (m !== 'auto' && m !== 'manual') return;
+            this.clientConfig.mode = m;
+            if (m === 'auto') {
+                this.clientConfig.pinned_provider = '';
+            } else if (!String(this.clientConfig.pinned_provider || '').trim()) {
+                const firstEnabled = (this.providers || []).find(p => !!p.enabled);
+                if (firstEnabled && firstEnabled.name) {
+                    this.clientConfig.pinned_provider = firstEnabled.name;
+                }
+            }
+            await this.saveClientConfig();
+        },
+
+        async pinProvider(name) {
+            const v = String(name || '').trim();
+            if (!v) return;
+            this.clientConfig.mode = 'manual';
+            this.clientConfig.pinned_provider = v;
+            await this.saveClientConfig();
         },
 
         async toggleProvider(provider, event) {

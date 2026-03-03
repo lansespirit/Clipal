@@ -28,7 +28,11 @@ func NewRotatingFileWriter(dir, prefix string, retentionDays int) (*RotatingFile
 	if dir == "" {
 		return nil, fmt.Errorf("log dir is empty")
 	}
-	if retentionDays <= 0 {
+	// retentionDays:
+	// - <0 is invalid and falls back to the default
+	// - 0 means "keep forever" (no cleanup)
+	// - >0 means "keep last N days"
+	if retentionDays < 0 {
 		retentionDays = 7
 	}
 	prefix = strings.TrimSpace(prefix)
@@ -104,6 +108,10 @@ func (w *RotatingFileWriter) ensureOpenLocked(day string) error {
 }
 
 func (w *RotatingFileWriter) cleanupLocked(today string) error {
+	if w.retentionDays == 0 {
+		return nil
+	}
+
 	entries, err := os.ReadDir(w.dir)
 	if err != nil {
 		return err

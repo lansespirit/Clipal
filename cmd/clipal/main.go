@@ -106,11 +106,11 @@ func main() {
 	defer notify.Shutdown()
 	logger.SetHook(notify.LogHook)
 
-	// Create web management handler
-	webHandler := web.NewHandler(cfgDir, version)
-
 	// Create and start the router
 	router := proxy.NewRouter(cfg)
+
+	// Create web management handler (needs access to runtime state for status)
+	webHandler := web.NewHandler(cfgDir, version, router)
 
 	// Handle shutdown signals
 	errCh := make(chan error, 1)

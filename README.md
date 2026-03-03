@@ -91,11 +91,21 @@ log_dir: ""               # default: <config-dir>/logs
 log_retention_days: 7     # default: 7
 log_stdout: true          # default: true
 ignore_count_tokens_failover: false # Claude Code: don't failover main chat on count_tokens failures
+
+# Circuit breaker: avoid repeatedly calling unhealthy providers
+circuit_breaker:
+  failure_threshold: 4 # set to 0 to disable
+  success_threshold: 2
+  open_timeout: "60s"
+  half_open_max_inflight: 1
 ```
 
 ### Client configs (`claude-code.yaml` / `codex.yaml` / `gemini.yaml`)
 
 ```yaml
+mode: "auto"            # auto | manual (manual never switches)
+pinned_provider: ""      # required when mode=manual
+
 providers:
   - name: "anthropic-direct"
     base_url: "https://api.anthropic.com"
@@ -115,13 +125,18 @@ providers:
 For each client (claude-code / codex / gemini), Clipal maintains an independent provider list and selects upstreams with these rules:
 
 - Only uses providers with `enabled != false`
-- Sorts by `priority` ascending (lower number = higher priority); ties keep YAML order
+- Sorts by `priority` ascending (lower number = higher priority; priorities start at `1`); ties keep YAML order
 - Sticky preference: a successful provider becomes the next preferred one
-- On request failure, tries the next available provider
+- **Mode `auto` (default):** on request failure, tries the next available provider
+- **Mode `manual`:** always routes to `pinned_provider` and **never** fails over to another provider
+  - The pinned provider response is returned directly (including error status/body/headers); upstream `Retry-After` is preserved when present
 - Temporary deactivation:
   - `401/403` auth and `402` billing/quota errors deactivate the provider and move on
   - `429` is inspected; quota/auth-like cases deactivate, otherwise it failovers without deactivation (cooldown up to `1h`)
 - Auto-reactivation: deactivated providers are re-enabled after `reactivate_after`
+- Circuit breaker (optional):
+  - If enabled (`circuit_breaker.failure_threshold > 0`), each provider has an independent circuit (`closed` → `open` → `half_open`)
+  - When a circuit is `open`, the provider is skipped; if this makes all providers temporarily unavailable, Clipal returns `Retry-After` until it can probe again
 - Hot reload resets the provider set based on the updated config
 
 ## Docs

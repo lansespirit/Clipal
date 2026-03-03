@@ -65,9 +65,9 @@ func (a *API) HandleServiceStatus(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(errStr, "service not installed") || strings.Contains(errStr, "not installed") {
 			writeJSON(w, ServiceStatusResponse{
 				OS:             osName,
-				Supported: true,
-				Installed: false,
-				OK:        false,
+				Supported:      true,
+				Installed:      false,
+				OK:             false,
 				InstallCommand: installCmd,
 				InstallHint:    installHint,
 			})
@@ -100,9 +100,9 @@ func (a *API) HandleServiceStatus(w http.ResponseWriter, r *http.Request) {
 			// returning localized system error strings that would reappear every poll.
 			writeJSON(w, ServiceStatusResponse{
 				OS:             osName,
-				Supported: true,
-				Installed: false,
-				OK:        false,
+				Supported:      true,
+				Installed:      false,
+				OK:             false,
 				InstallCommand: installCmd,
 				InstallHint:    installHint,
 			})

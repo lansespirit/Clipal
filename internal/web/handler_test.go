@@ -9,7 +9,7 @@ import (
 
 func TestLocalOnly_RejectsNonLoopbackRemote(t *testing.T) {
 	dir := t.TempDir()
-	h := NewHandler(dir, "test")
+	h := NewHandler(dir, "test", nil)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -27,7 +27,7 @@ func TestLocalOnly_RejectsNonLoopbackRemote(t *testing.T) {
 
 func TestLocalOnly_RejectsNonLocalHostHeader(t *testing.T) {
 	dir := t.TempDir()
-	h := NewHandler(dir, "test")
+	h := NewHandler(dir, "test", nil)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -45,7 +45,7 @@ func TestLocalOnly_RejectsNonLocalHostHeader(t *testing.T) {
 
 func TestLocalOnly_APIStateChanging_RequiresUIHeader(t *testing.T) {
 	dir := t.TempDir()
-	h := NewHandler(dir, "test")
+	h := NewHandler(dir, "test", nil)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -64,6 +64,12 @@ func TestLocalOnly_APIStateChanging_RequiresUIHeader(t *testing.T) {
     "enabled": false,
     "min_level": "error",
     "provider_switch": true
+  },
+  "circuit_breaker": {
+    "failure_threshold": 4,
+    "success_threshold": 2,
+    "open_timeout": "60s",
+    "half_open_max_inflight": 1
   },
   "ignore_count_tokens_failover": false
 }`)

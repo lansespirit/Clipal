@@ -115,12 +115,22 @@ log_dir: ""             # 日志目录（默认：<config-dir>/logs，例如 ~/.
 log_retention_days: 7   # 日志保留天数（默认 7）
 log_stdout: true        # 是否同时输出到 stdout（后台静默运行可设为 false）
 ignore_count_tokens_failover: false # Claude Code: count_tokens 失败不影响主会话 provider（保持 context cache）
+
+# 熔断器（Circuit Breaker）：避免持续向不健康 Provider 发送请求
+circuit_breaker:
+  failure_threshold: 4        # 连续失败多少次后打开熔断（设为 0 可禁用）
+  success_threshold: 2        # 半开状态下连续成功多少次后恢复
+  open_timeout: 60s           # 打开后多久进入半开探测（如 60s/2m）
+  half_open_max_inflight: 1   # 半开探测并发数上限
 ```
 
 ### 客户端配置格式
 
 ```yaml
 # ~/.clipal/claude-code.yaml
+mode: auto # auto | manual（manual=严格不切换，失败直接返回错误）
+pinned_provider: "" # mode=manual 时必填：要锁定的 provider name
+
 providers:
   - name: "anthropic-direct"
     base_url: "https://api.anthropic.com"
@@ -157,16 +167,22 @@ providers:
 | `log_retention_days` | int | 否 | 日志保留天数（默认 7） |
 | `log_stdout` | bool | 否 | 是否同时输出到 stdout（默认 true） |
 | `ignore_count_tokens_failover` | bool | 否 | Claude Code：`/v1/messages/count_tokens` 的失败不影响主会话 provider 选择（默认 false） |
+| `circuit_breaker.failure_threshold` | int | 否 | 熔断器：连续失败阈值（默认 4） |
+| `circuit_breaker.success_threshold` | int | 否 | 熔断器：半开恢复阈值（默认 2） |
+| `circuit_breaker.open_timeout` | duration | 否 | 熔断器：打开后多久进入半开探测（默认 60s） |
+| `circuit_breaker.half_open_max_inflight` | int | 否 | 熔断器：半开探测并发数上限（默认 1） |
 
 **客户端配置 (claude-code.yaml / codex.yaml / gemini.yaml)**
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
+| `mode` | string | 否 | `auto`（默认）或 `manual`（严格不切换） |
+| `pinned_provider` | string | 否 | `mode=manual` 时必填：锁定的 provider 名称 |
 | `providers` | array | 是 | API 供应商列表 |
 | `providers[].name` | string | 是 | 供应商名称（用于日志标识） |
 | `providers[].base_url` | string | 是 | API 供应商 Base URL |
 | `providers[].api_key` | string | 是 | API Key |
-| `providers[].priority` | int | 是 | 优先级（数字越小优先级越高） |
+| `providers[].priority` | int | 是 | 优先级（数字越小优先级越高，从 1 开始） |
 | `providers[].enabled` | bool | 否 | 是否启用，默认 true |
 
 ## Provider 优先级与调度策略
@@ -174,13 +190,18 @@ providers:
 clipal 对每个客户端（claude-code / codex / gemini）独立维护一组 providers，并按以下策略选择上游：
 
 - **启用过滤**：只使用 `enabled != false` 的 providers。
-- **优先级排序**：按 `priority` 升序（数字越小优先级越高）；同优先级保持 YAML 文件中的顺序。
+- **优先级排序**：按 `priority` 升序（数字越小优先级越高，从 `1` 开始）；同优先级保持 YAML 文件中的顺序。
 - **粘性优先**：每个客户端维护一个 `currentIndex`，默认从优先级最高的 provider 开始；一旦某个 provider 成功响应，会把 `currentIndex` 更新为该 provider，使后续请求优先继续使用它（减少频繁切换）。
-- **失败切换**：请求失败时会按顺序切换到下一个可用 provider（直到尝试完所有未被禁用的 provider）。
+- **自动模式（`mode=auto`，默认）失败切换**：请求失败时会按顺序切换到下一个可用 provider（直到尝试完所有未被禁用的 provider）。
+- **手动锁定（`mode=manual`）**：只会转发到 `pinned_provider`，不会切换到其他 provider。
+  - 会直接返回 pinned provider 的响应（包括错误状态码/错误体/headers）；若上游已返回 `Retry-After` 则会透传。
 - **临时禁用（deactivate）**：
   - 鉴权/权限问题（`401/403`）或计费/额度问题（`402`）会将该 provider 标记为临时禁用并切换到下一个。
   - `429` 会进一步解析 OpenAI/Claude 的错误结构：若判断为配额/鉴权类则禁用；若是 rate limit/overload 则仅切换重试不禁用。
 - **自动恢复**：被临时禁用的 provider 会在 `reactivate_after` 到期后自动恢复（默认 `1h`）。
+- **熔断器（Circuit Breaker，可选）**：
+  - 当 `circuit_breaker.failure_threshold > 0` 时启用；每个 provider 独立维护熔断状态（`closed/open/half_open`）。
+  - `open` 时会跳过该 provider；若因此导致所有 provider 暂时不可用，会返回 `Retry-After`，直到进入半开探测。
 - **配置热加载**：当 `claude-code.yaml` / `codex.yaml` / `gemini.yaml` 文件发生变更，会自动重新加载配置并重建 providers（等价于重新验证并清空上一轮的临时禁用状态）。
 
 ### 合理性分析（当前定位：本地 CLI 反代）

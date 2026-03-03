@@ -16,6 +16,13 @@ func formatClientConfigYAML(clientType string, cc config.ClientConfig) []byte {
 	b.WriteString("# " + header + "\n")
 	b.WriteString("# Providers are sorted by priority (lower number = higher priority)\n\n")
 
+	mode := strings.TrimSpace(string(cc.Mode))
+	if mode == "" {
+		mode = string(config.ClientModeAuto)
+	}
+	b.WriteString(fmt.Sprintf("mode: %s # auto | manual\n", yamlMaybeQuoteEmpty(mode)))
+	b.WriteString(fmt.Sprintf("pinned_provider: %s # used when mode=manual\n\n", yamlMaybeQuoteEmpty(strings.TrimSpace(cc.PinnedProvider))))
+
 	if len(cc.Providers) == 0 {
 		b.WriteString("providers: []\n")
 		return b.Bytes()
@@ -80,11 +87,18 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 
 	b.WriteString("# Default: <config-dir>/logs (e.g. ~/.clipal/logs)\n")
 	b.WriteString(fmt.Sprintf("log_dir: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.LogDir))))
-	b.WriteString(fmt.Sprintf("log_retention_days: %d\n", gc.LogRetentionDays))
+	b.WriteString(fmt.Sprintf("log_retention_days: %d # set to 0 to keep forever\n", gc.LogRetentionDays))
 	b.WriteString(fmt.Sprintf("log_stdout: %v\n\n", boolPtrOrTrue(gc.LogStdout)))
 
 	b.WriteString("# Claude Code: if true, /v1/messages/count_tokens failures won't affect the main conversation provider.\n")
 	b.WriteString(fmt.Sprintf("ignore_count_tokens_failover: %v\n\n", gc.IgnoreCountTokensFailover))
+
+	b.WriteString("# Circuit breaker (prevents repeated requests to unhealthy providers)\n")
+	b.WriteString("circuit_breaker:\n")
+	b.WriteString(fmt.Sprintf("  failure_threshold: %d # consecutive failures before opening (set to 0 to disable)\n", gc.CircuitBreaker.FailureThreshold))
+	b.WriteString(fmt.Sprintf("  success_threshold: %d # consecutive successes in half-open before closing\n", gc.CircuitBreaker.SuccessThreshold))
+	b.WriteString(fmt.Sprintf("  open_timeout: %s # e.g. 60s, 2m\n", yamlDoubleQuote(strings.TrimSpace(gc.CircuitBreaker.OpenTimeout))))
+	b.WriteString(fmt.Sprintf("  half_open_max_inflight: %d # concurrent probe requests in half-open\n\n", gc.CircuitBreaker.HalfOpenMaxInFlight))
 
 	b.WriteString("# Desktop notifications (best-effort, cross-platform via beeep)\n")
 	b.WriteString("notifications:\n")

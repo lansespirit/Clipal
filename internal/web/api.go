@@ -13,6 +13,7 @@ import (
 
 	"github.com/lansespirit/Clipal/internal/config"
 	"github.com/lansespirit/Clipal/internal/logger"
+	"github.com/lansespirit/Clipal/internal/proxy"
 )
 
 var startTime = time.Now()
@@ -25,14 +26,23 @@ const (
 type API struct {
 	configDir string
 	version   string
+	runtime   *proxy.Router
 }
 
 // NewAPI creates a new API handler
-func NewAPI(configDir, version string) *API {
+func NewAPI(configDir, version string, runtime *proxy.Router) *API {
 	return &API{
 		configDir: configDir,
 		version:   version,
+		runtime:   runtime,
 	}
+}
+
+func (a *API) reloadRuntimeProviderConfigs() {
+	if a.runtime == nil {
+		return
+	}
+	a.runtime.ReloadProviderConfigs()
 }
 
 // HandleGetGlobalConfig returns the current global configuration
@@ -84,6 +94,10 @@ func (a *API) HandleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.Global.Notifications.Enabled = req.Notifications.Enabled
 	cfg.Global.Notifications.MinLevel = config.LogLevel(req.Notifications.MinLevel)
 	cfg.Global.Notifications.ProviderSwitch = req.Notifications.ProviderSwitch
+	cfg.Global.CircuitBreaker.FailureThreshold = req.CircuitBreaker.FailureThreshold
+	cfg.Global.CircuitBreaker.SuccessThreshold = req.CircuitBreaker.SuccessThreshold
+	cfg.Global.CircuitBreaker.OpenTimeout = req.CircuitBreaker.OpenTimeout
+	cfg.Global.CircuitBreaker.HalfOpenMaxInFlight = req.CircuitBreaker.HalfOpenMaxInFlight
 	cfg.Global.IgnoreCountTokensFailover = req.IgnoreCountTokensFailover
 
 	// Validate
@@ -97,6 +111,8 @@ func (a *API) HandleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("global configuration updated via web interface")
 	writeJSON(w, SuccessResponse{Message: "configuration updated successfully"})
@@ -121,20 +137,92 @@ func (a *API) HandleGetProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var providers []config.Provider
-	switch clientType {
-	case "claude-code":
-		providers = cfg.ClaudeCode.Providers
-	case "codex":
-		providers = cfg.Codex.Providers
-	case "gemini":
-		providers = cfg.Gemini.Providers
-	default:
-		writeError(w, "unknown client type", http.StatusBadRequest)
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	writeJSON(w, toProviderResponses(providers))
+	writeJSON(w, toProviderResponses(cc.Providers))
+}
+
+func (a *API) HandleGetClientConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientType := extractClientTypeFromClientConfigPath(r.URL.EscapedPath())
+	if clientType == "" {
+		writeError(w, "invalid client type", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := config.Load(a.configDir)
+	if err != nil {
+		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, ClientConfigResponse{
+		Mode:           string(cc.Mode),
+		PinnedProvider: cc.PinnedProvider,
+	})
+}
+
+func (a *API) HandleUpdateClientConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientType := extractClientTypeFromClientConfigPath(r.URL.EscapedPath())
+	if clientType == "" {
+		writeError(w, "invalid client type", http.StatusBadRequest)
+		return
+	}
+
+	var req ClientConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := config.Load(a.configDir)
+	if err != nil {
+		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	mode := config.ClientMode(strings.ToLower(strings.TrimSpace(req.Mode)))
+	pin := strings.TrimSpace(req.PinnedProvider)
+
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cc.Mode = mode
+	cc.PinnedProvider = pin
+	if err := cfg.Validate(); err != nil {
+		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+		return
+	}
+	if err := a.saveClientConfig(clientType, *cc); err != nil {
+		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	a.reloadRuntimeProviderConfigs()
+
+	logger.Info("client configuration updated for %s via web interface", clientType)
+	writeJSON(w, SuccessResponse{Message: "configuration updated successfully"})
 }
 
 // HandleAddProvider adds a new provider for a specific client
@@ -180,16 +268,28 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Enforce unique provider names within a client config (the name is used as the identifier in URLs).
-	existing := getProvidersForClient(cfg, clientType)
-	if providerNameExists(existing, name) {
+	if providerNameExists(cc.Providers, name) {
 		writeError(w, "provider name already exists", http.StatusConflict)
 		return
 	}
 
-	priority := req.Priority
-	if priority <= 0 {
-		priority = nextPriority(existing)
+	priority := 0
+	if req.Priority != nil {
+		priority = *req.Priority
+		if priority < 1 {
+			writeError(w, "priority must be >= 1", http.StatusBadRequest)
+			return
+		}
+	}
+	if priority == 0 {
+		priority = nextPriority(cc.Providers)
 	}
 
 	provider := config.Provider{
@@ -200,30 +300,17 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 		Enabled:  req.Enabled,
 	}
 
-	// Add provider to appropriate client config
-	switch clientType {
-	case "claude-code":
-		cfg.ClaudeCode.Providers = append(cfg.ClaudeCode.Providers, provider)
-		if err := a.saveClientConfig(clientType, cfg.ClaudeCode); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-	case "codex":
-		cfg.Codex.Providers = append(cfg.Codex.Providers, provider)
-		if err := a.saveClientConfig(clientType, cfg.Codex); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-	case "gemini":
-		cfg.Gemini.Providers = append(cfg.Gemini.Providers, provider)
-		if err := a.saveClientConfig(clientType, cfg.Gemini); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-	default:
-		writeError(w, "unknown client type", http.StatusBadRequest)
+	cc.Providers = append(cc.Providers, provider)
+	if err := cfg.Validate(); err != nil {
+		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
 		return
 	}
+	if err := a.saveClientConfig(clientType, *cc); err != nil {
+		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("provider %s added to %s via web interface", name, clientType)
 	writeJSON(w, SuccessResponse{Message: "provider added successfully"})
@@ -266,9 +353,11 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.APIKey) != "" {
 		req.APIKey = strings.TrimSpace(req.APIKey)
 	}
-	if req.Priority < 0 {
-		writeError(w, "priority must be >= 0", http.StatusBadRequest)
-		return
+	if req.Priority != nil {
+		if *req.Priority < 1 {
+			writeError(w, "priority must be >= 1", http.StatusBadRequest)
+			return
+		}
 	}
 
 	cfg, err := config.Load(a.configDir)
@@ -277,45 +366,31 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Reject renames that collide with another provider in the same client config.
 	if req.Name != "" && req.Name != providerName {
-		existing := getProvidersForClient(cfg, clientType)
-		if providerNameExists(existing, req.Name) {
+		if providerNameExists(cc.Providers, req.Name) {
 			writeError(w, "provider name already exists", http.StatusConflict)
 			return
 		}
 	}
 
-	// Update provider in appropriate client config
-	var updated bool
-	switch clientType {
-	case "claude-code":
-		updated = updateProviderInList(cfg.ClaudeCode.Providers, providerName, req)
-		if updated {
-			if err := a.saveClientConfig(clientType, cfg.ClaudeCode); err != nil {
-				writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-				return
-			}
+	updated := updateProviderInList(cc.Providers, providerName, req)
+	if updated {
+		if err := cfg.Validate(); err != nil {
+			writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+			return
 		}
-	case "codex":
-		updated = updateProviderInList(cfg.Codex.Providers, providerName, req)
-		if updated {
-			if err := a.saveClientConfig(clientType, cfg.Codex); err != nil {
-				writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-				return
-			}
+		if err := a.saveClientConfig(clientType, *cc); err != nil {
+			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
+			return
 		}
-	case "gemini":
-		updated = updateProviderInList(cfg.Gemini.Providers, providerName, req)
-		if updated {
-			if err := a.saveClientConfig(clientType, cfg.Gemini); err != nil {
-				writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-	default:
-		writeError(w, "unknown client type", http.StatusBadRequest)
-		return
+		a.reloadRuntimeProviderConfigs()
 	}
 
 	if !updated {
@@ -346,36 +421,24 @@ func (a *API) HandleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete provider from appropriate client config
-	var deleted bool
-	switch clientType {
-	case "claude-code":
-		cfg.ClaudeCode.Providers, deleted = deleteProviderFromList(cfg.ClaudeCode.Providers, providerName)
-		if deleted {
-			if err := a.saveClientConfig(clientType, cfg.ClaudeCode); err != nil {
-				writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-	case "codex":
-		cfg.Codex.Providers, deleted = deleteProviderFromList(cfg.Codex.Providers, providerName)
-		if deleted {
-			if err := a.saveClientConfig(clientType, cfg.Codex); err != nil {
-				writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-	case "gemini":
-		cfg.Gemini.Providers, deleted = deleteProviderFromList(cfg.Gemini.Providers, providerName)
-		if deleted {
-			if err := a.saveClientConfig(clientType, cfg.Gemini); err != nil {
-				writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-	default:
-		writeError(w, "unknown client type", http.StatusBadRequest)
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	var deleted bool
+	cc.Providers, deleted = deleteProviderFromList(cc.Providers, providerName)
+	if deleted {
+		if err := cfg.Validate(); err != nil {
+			writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := a.saveClientConfig(clientType, *cc); err != nil {
+			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
+			return
+		}
+		a.reloadRuntimeProviderConfigs()
 	}
 
 	if !deleted {
@@ -412,45 +475,28 @@ func (a *API) HandleReorderProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reorder providers
-	switch clientType {
-	case "claude-code":
-		reordered, err := reorderProviders(cfg.ClaudeCode.Providers, req.Providers)
-		if err != nil {
-			writeError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cfg.ClaudeCode.Providers = reordered
-		if err := a.saveClientConfig(clientType, cfg.ClaudeCode); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-	case "codex":
-		reordered, err := reorderProviders(cfg.Codex.Providers, req.Providers)
-		if err != nil {
-			writeError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cfg.Codex.Providers = reordered
-		if err := a.saveClientConfig(clientType, cfg.Codex); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-	case "gemini":
-		reordered, err := reorderProviders(cfg.Gemini.Providers, req.Providers)
-		if err != nil {
-			writeError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cfg.Gemini.Providers = reordered
-		if err := a.saveClientConfig(clientType, cfg.Gemini); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-	default:
-		writeError(w, "unknown client type", http.StatusBadRequest)
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	reordered, err := reorderProviders(cc.Providers, req.Providers)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cc.Providers = reordered
+	if err := cfg.Validate(); err != nil {
+		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+		return
+	}
+	if err := a.saveClientConfig(clientType, *cc); err != nil {
+		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("providers reordered for %s via web interface", clientType)
 	writeJSON(w, SuccessResponse{Message: "providers reordered successfully"})
@@ -463,10 +509,22 @@ func (a *API) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
-		return
+	var cfg *config.Config
+	if a.runtime != nil {
+		cfg = a.runtime.ConfigSnapshot()
+	}
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load(a.configDir)
+		if err != nil {
+			writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	var snap proxy.RouterRuntimeSnapshot
+	if a.runtime != nil {
+		snap = a.runtime.RuntimeSnapshot()
 	}
 
 	status := StatusResponse{
@@ -476,47 +534,9 @@ func (a *API) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
 		Clients:   make(map[string]ClientStatus),
 	}
 
-	// Claude Code status
-	if len(cfg.ClaudeCode.Providers) > 0 {
-		enabled := config.GetEnabledProviders(cfg.ClaudeCode)
-		var enabledNames []string
-		for _, p := range enabled {
-			enabledNames = append(enabledNames, p.Name)
-		}
-		status.Clients["claude-code"] = ClientStatus{
-			ProviderCount:    len(cfg.ClaudeCode.Providers),
-			EnabledProviders: enabledNames,
-			CurrentProvider:  getFirstEnabledProvider(enabled),
-		}
-	}
-
-	// Codex status
-	if len(cfg.Codex.Providers) > 0 {
-		enabled := config.GetEnabledProviders(cfg.Codex)
-		var enabledNames []string
-		for _, p := range enabled {
-			enabledNames = append(enabledNames, p.Name)
-		}
-		status.Clients["codex"] = ClientStatus{
-			ProviderCount:    len(cfg.Codex.Providers),
-			EnabledProviders: enabledNames,
-			CurrentProvider:  getFirstEnabledProvider(enabled),
-		}
-	}
-
-	// Gemini status
-	if len(cfg.Gemini.Providers) > 0 {
-		enabled := config.GetEnabledProviders(cfg.Gemini)
-		var enabledNames []string
-		for _, p := range enabled {
-			enabledNames = append(enabledNames, p.Name)
-		}
-		status.Clients["gemini"] = ClientStatus{
-			ProviderCount:    len(cfg.Gemini.Providers),
-			EnabledProviders: enabledNames,
-			CurrentProvider:  getFirstEnabledProvider(enabled),
-		}
-	}
+	status.Clients["claude-code"] = buildClientStatus(cfg.ClaudeCode, cfg.ClaudeCode.Providers, snap.Clients[proxy.ClientClaudeCode])
+	status.Clients["codex"] = buildClientStatus(cfg.Codex, cfg.Codex.Providers, snap.Clients[proxy.ClientCodex])
+	status.Clients["gemini"] = buildClientStatus(cfg.Gemini, cfg.Gemini.Providers, snap.Clients[proxy.ClientGemini])
 
 	writeJSON(w, status)
 }
@@ -548,6 +568,88 @@ func (a *API) HandleExportConfig(w http.ResponseWriter, r *http.Request) {
 
 // Helper functions
 
+func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt proxy.ClientRuntimeSnapshot) ClientStatus {
+	enabled := config.GetEnabledProviders(cc)
+	enabledNames := make([]string, 0, len(enabled))
+	for _, p := range enabled {
+		enabledNames = append(enabledNames, p.Name)
+	}
+
+	mode := strings.TrimSpace(string(cc.Mode))
+	if mode == "" {
+		mode = string(config.ClientModeAuto)
+	}
+	pin := strings.TrimSpace(cc.PinnedProvider)
+
+	current := strings.TrimSpace(rt.CurrentProvider)
+	if mode == string(config.ClientModeManual) && pin != "" {
+		// Manual mode is intended to be "sticky" to the pinned provider. Use the
+		// config value so UI updates immediately after pinning (before the runtime
+		// reload watcher swaps proxies).
+		current = pin
+	} else if current == "" {
+		current = getFirstEnabledProvider(enabled)
+	}
+
+	// Map runtime per-provider info by name (runtime only contains enabled providers).
+	rtByName := make(map[string]proxy.ProviderRuntimeSnapshot, len(rt.Providers))
+	for _, p := range rt.Providers {
+		rtByName[p.Name] = p
+	}
+
+	outProviders := make([]ProviderStatus, 0, len(providers))
+	now := time.Now()
+	for _, p := range providers {
+		ps := ProviderStatus{
+			Name:     p.Name,
+			Priority: p.Priority,
+			Enabled:  p.IsEnabled(),
+		}
+		if !p.IsEnabled() {
+			ps.SkipReason = "disabled"
+			outProviders = append(outProviders, ps)
+			continue
+		}
+		if rtSnap, ok := rtByName[p.Name]; ok {
+			if !rtSnap.DeactivatedUntil.IsZero() && now.Before(rtSnap.DeactivatedUntil) {
+				ps.SkipReason = "deactivated"
+				ps.DeactivatedReason = rtSnap.DeactivatedReason
+				ps.DeactivatedMessage = rtSnap.DeactivatedMessage
+				ps.DeactivatedIn = time.Until(rtSnap.DeactivatedUntil).Truncate(time.Second).String()
+			}
+			ps.CircuitState = rtSnap.CircuitState
+			if ps.SkipReason == "" && rtSnap.CircuitState == "open" && rtSnap.CircuitOpenIn > 0 {
+				ps.SkipReason = "circuit_open"
+				ps.CircuitOpenIn = rtSnap.CircuitOpenIn.Truncate(time.Second).String()
+			}
+		}
+		outProviders = append(outProviders, ps)
+	}
+
+	var lastSwitch *ProviderSwitchStatus
+	if rt.LastSwitch != nil && !rt.LastSwitch.At.IsZero() {
+		lastSwitch = &ProviderSwitchStatus{
+			At:     rt.LastSwitch.At.Format(time.RFC3339),
+			From:   rt.LastSwitch.From,
+			To:     rt.LastSwitch.To,
+			Reason: rt.LastSwitch.Reason,
+			Status: rt.LastSwitch.Status,
+		}
+	}
+
+	return ClientStatus{
+		Mode:           mode,
+		PinnedProvider: pin,
+
+		ProviderCount:    len(providers),
+		EnabledProviders: enabledNames,
+		CurrentProvider:  current,
+
+		LastSwitch: lastSwitch,
+		Providers:  outProviders,
+	}
+}
+
 func (a *API) saveGlobalConfig(global config.GlobalConfig) error {
 	path := filepath.Join(a.configDir, "config.yaml")
 	data := formatGlobalConfigYAML(global)
@@ -568,6 +670,28 @@ func extractClientType(path string) string {
 		return parts[2]
 	}
 	return ""
+}
+
+func extractClientTypeFromClientConfigPath(path string) string {
+	// Extract client type from path like /api/client-config/claude-code
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "client-config" {
+		return parts[2]
+	}
+	return ""
+}
+
+func getClientConfigRef(cfg *config.Config, clientType string) (*config.ClientConfig, error) {
+	switch clientType {
+	case "claude-code":
+		return &cfg.ClaudeCode, nil
+	case "codex":
+		return &cfg.Codex, nil
+	case "gemini":
+		return &cfg.Gemini, nil
+	default:
+		return nil, fmt.Errorf("unknown client type")
+	}
 }
 
 func getProvidersForClient(cfg *config.Config, clientType string) []config.Provider {
@@ -629,8 +753,8 @@ func updateProviderInList(providers []config.Provider, name string, req Provider
 			if req.APIKey != "" {
 				providers[i].APIKey = req.APIKey
 			}
-			if req.Priority > 0 {
-				providers[i].Priority = req.Priority
+			if req.Priority != nil {
+				providers[i].Priority = *req.Priority
 			}
 			if req.Enabled != nil {
 				providers[i].Enabled = req.Enabled

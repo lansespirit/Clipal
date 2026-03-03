@@ -1,6 +1,9 @@
 # Gemini CLI API providers configuration
 # Providers are sorted by priority (lower number = higher priority)
 
+mode: auto # auto | manual
+pinned_provider: "" # used when mode=manual
+
 providers:
   # Primary provider - Google Gemini API
   - name: "gemini-direct"

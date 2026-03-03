@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/lansespirit/Clipal/internal/proxy"
 )
 
 //go:embed static/*
@@ -20,9 +22,9 @@ type Handler struct {
 }
 
 // NewHandler creates a new web handler
-func NewHandler(configDir, version string) *Handler {
+func NewHandler(configDir, version string, runtime *proxy.Router) *Handler {
 	return &Handler{
-		api: NewAPI(configDir, version),
+		api: NewAPI(configDir, version, runtime),
 	}
 }
 
@@ -128,12 +130,24 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/config/global/update", h.localOnly(h.api.HandleUpdateGlobalConfig))
 	mux.HandleFunc("/api/config/export", h.localOnly(h.api.HandleExportConfig))
 
+	mux.HandleFunc("/api/client-config/", h.localOnly(h.routeClientConfig))
 	mux.HandleFunc("/api/providers/", h.localOnly(h.routeProviders))
 	mux.HandleFunc("/api/status", h.localOnly(h.api.HandleGetStatus))
 
 	// Service management (OS background service for clipal)
 	mux.HandleFunc("/api/service/status", h.localOnly(h.api.HandleServiceStatus))
 	mux.HandleFunc("/api/service/", h.localOnly(h.routeService))
+}
+
+func (h *Handler) routeClientConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.api.HandleGetClientConfig(w, r)
+	case http.MethodPut:
+		h.api.HandleUpdateClientConfig(w, r)
+	default:
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // serveIndex serves the main management interface HTML

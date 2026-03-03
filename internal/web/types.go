@@ -8,27 +8,6 @@ import "github.com/lansespirit/Clipal/internal/config"
 
 // GlobalConfigRequest represents a request to update global configuration
 type GlobalConfigRequest struct {
-	ListenAddr                string                     `json:"listen_addr"`
-	Port                      int                        `json:"port"`
-	LogLevel                  string                     `json:"log_level"`
-	ReactivateAfter           string                     `json:"reactivate_after"`
-	UpstreamIdleTimeout       string                     `json:"upstream_idle_timeout"`
-	MaxRequestBodyBytes       int64                      `json:"max_request_body_bytes"`
-	LogDir                    string                     `json:"log_dir"`
-	LogRetentionDays          int                        `json:"log_retention_days"`
-	LogStdout                 *bool                      `json:"log_stdout"`
-	Notifications             NotificationsConfigRequest `json:"notifications"`
-	IgnoreCountTokensFailover bool                       `json:"ignore_count_tokens_failover"`
-}
-
-type NotificationsConfigRequest struct {
-	Enabled        bool   `json:"enabled"`
-	MinLevel       string `json:"min_level"`
-	ProviderSwitch *bool  `json:"provider_switch"`
-}
-
-// GlobalConfigResponse represents the global configuration returned to the UI.
-type GlobalConfigResponse struct {
 	ListenAddr                string                      `json:"listen_addr"`
 	Port                      int                         `json:"port"`
 	LogLevel                  string                      `json:"log_level"`
@@ -37,9 +16,39 @@ type GlobalConfigResponse struct {
 	MaxRequestBodyBytes       int64                       `json:"max_request_body_bytes"`
 	LogDir                    string                      `json:"log_dir"`
 	LogRetentionDays          int                         `json:"log_retention_days"`
-	LogStdout                 bool                        `json:"log_stdout"`
-	Notifications             NotificationsConfigResponse `json:"notifications"`
+	LogStdout                 *bool                       `json:"log_stdout"`
+	Notifications             NotificationsConfigRequest  `json:"notifications"`
+	CircuitBreaker            CircuitBreakerConfigRequest `json:"circuit_breaker"`
 	IgnoreCountTokensFailover bool                        `json:"ignore_count_tokens_failover"`
+}
+
+type NotificationsConfigRequest struct {
+	Enabled        bool   `json:"enabled"`
+	MinLevel       string `json:"min_level"`
+	ProviderSwitch *bool  `json:"provider_switch"`
+}
+
+type CircuitBreakerConfigRequest struct {
+	FailureThreshold    int    `json:"failure_threshold"`
+	SuccessThreshold    int    `json:"success_threshold"`
+	OpenTimeout         string `json:"open_timeout"`
+	HalfOpenMaxInFlight int    `json:"half_open_max_inflight"`
+}
+
+// GlobalConfigResponse represents the global configuration returned to the UI.
+type GlobalConfigResponse struct {
+	ListenAddr                string                       `json:"listen_addr"`
+	Port                      int                          `json:"port"`
+	LogLevel                  string                       `json:"log_level"`
+	ReactivateAfter           string                       `json:"reactivate_after"`
+	UpstreamIdleTimeout       string                       `json:"upstream_idle_timeout"`
+	MaxRequestBodyBytes       int64                        `json:"max_request_body_bytes"`
+	LogDir                    string                       `json:"log_dir"`
+	LogRetentionDays          int                          `json:"log_retention_days"`
+	LogStdout                 bool                         `json:"log_stdout"`
+	Notifications             NotificationsConfigResponse  `json:"notifications"`
+	CircuitBreaker            CircuitBreakerConfigResponse `json:"circuit_breaker"`
+	IgnoreCountTokensFailover bool                         `json:"ignore_count_tokens_failover"`
 }
 
 type NotificationsConfigResponse struct {
@@ -48,13 +57,32 @@ type NotificationsConfigResponse struct {
 	ProviderSwitch bool   `json:"provider_switch"`
 }
 
+type CircuitBreakerConfigResponse struct {
+	FailureThreshold    int    `json:"failure_threshold"`
+	SuccessThreshold    int    `json:"success_threshold"`
+	OpenTimeout         string `json:"open_timeout"`
+	HalfOpenMaxInFlight int    `json:"half_open_max_inflight"`
+}
+
+type ClientConfigRequest struct {
+	Mode           string `json:"mode"`
+	PinnedProvider string `json:"pinned_provider"`
+}
+
+type ClientConfigResponse struct {
+	Mode           string `json:"mode"`
+	PinnedProvider string `json:"pinned_provider"`
+}
+
 // ProviderRequest represents a request to create or update a provider
 type ProviderRequest struct {
-	Name     string `json:"name"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Priority int    `json:"priority"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	// Priority is 1-based. Omit to keep existing value (on updates) or to
+	// auto-assign the next priority (on create).
+	Priority *int  `json:"priority,omitempty"`
+	Enabled  *bool `json:"enabled,omitempty"`
 }
 
 // ProviderResponse is returned for provider listings (never includes api_key).
@@ -80,7 +108,9 @@ type ExportConfigResponse struct {
 }
 
 type ClientConfigExport struct {
-	Providers []ProviderExport `json:"providers"`
+	Mode           string           `json:"mode"`
+	PinnedProvider string           `json:"pinned_provider"`
+	Providers      []ProviderExport `json:"providers"`
 }
 
 type ProviderExport struct {
@@ -101,9 +131,38 @@ type StatusResponse struct {
 
 // ClientStatus represents the status of a client proxy
 type ClientStatus struct {
+	Mode           string `json:"mode"`
+	PinnedProvider string `json:"pinned_provider,omitempty"`
+
 	ProviderCount    int      `json:"provider_count"`
 	EnabledProviders []string `json:"enabled_providers"`
 	CurrentProvider  string   `json:"current_provider"`
+
+	LastSwitch *ProviderSwitchStatus `json:"last_switch,omitempty"`
+	Providers  []ProviderStatus      `json:"providers,omitempty"`
+}
+
+type ProviderSwitchStatus struct {
+	At     string `json:"at"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Reason string `json:"reason"`
+	Status int    `json:"status"`
+}
+
+type ProviderStatus struct {
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
+
+	SkipReason string `json:"skip_reason,omitempty"` // disabled | deactivated | circuit_open
+
+	DeactivatedReason  string `json:"deactivated_reason,omitempty"`
+	DeactivatedMessage string `json:"deactivated_message,omitempty"`
+	DeactivatedIn      string `json:"deactivated_in,omitempty"`
+
+	CircuitState  string `json:"circuit_state,omitempty"` // closed | open | half_open
+	CircuitOpenIn string `json:"circuit_open_in,omitempty"`
 }
 
 // ErrorResponse represents an error response
@@ -162,6 +221,12 @@ func toGlobalConfigResponse(gc config.GlobalConfig) GlobalConfigResponse {
 			MinLevel:       string(gc.Notifications.MinLevel),
 			ProviderSwitch: boolPtrOrTrue(gc.Notifications.ProviderSwitch),
 		},
+		CircuitBreaker: CircuitBreakerConfigResponse{
+			FailureThreshold:    gc.CircuitBreaker.FailureThreshold,
+			SuccessThreshold:    gc.CircuitBreaker.SuccessThreshold,
+			OpenTimeout:         gc.CircuitBreaker.OpenTimeout,
+			HalfOpenMaxInFlight: gc.CircuitBreaker.HalfOpenMaxInFlight,
+		},
 		IgnoreCountTokensFailover: gc.IgnoreCountTokensFailover,
 	}
 }
@@ -190,5 +255,9 @@ func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {
 			Enabled:  p.Enabled,
 		})
 	}
-	return ClientConfigExport{Providers: out}
+	return ClientConfigExport{
+		Mode:           string(cc.Mode),
+		PinnedProvider: cc.PinnedProvider,
+		Providers:      out,
+	}
 }

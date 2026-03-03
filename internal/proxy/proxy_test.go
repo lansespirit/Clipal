@@ -205,10 +205,10 @@ func TestForwardWithFailover_DeactivateOn401(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -244,10 +244,10 @@ func TestForwardWithFailover_RetryOn503DoesNotDeactivate(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -276,11 +276,11 @@ func TestForwardWithFailover_ContextCanceledDoesNotRetryOtherProviders(t *testin
 		return nil, r.Context().Err()
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 		{Name: "p3", BaseURL: "http://p3", APIKey: "k3", Priority: 3},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -321,10 +321,10 @@ func TestForwardWithFailover_IdleTimeoutBeforeFirstByteRetriesNextProvider(t *te
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 10*time.Millisecond)
+	}, time.Hour, 10*time.Millisecond, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -443,10 +443,10 @@ func TestForwardWithFailover_DeactivateOn429Quota(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -478,10 +478,10 @@ func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -497,6 +497,161 @@ func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 	}
 }
 
+func TestForwardManual_DoesNotDeactivateOn401(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return newResponse(http.StatusUnauthorized, nil, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusUnauthorized)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated on auth failure in manual mode")
+	}
+}
+
+func TestForwardManual_DoesNotDeactivateOn402(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return newResponse(http.StatusPaymentRequired, nil, `{"error":{"type":"billing_error","message":"no money"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusPaymentRequired)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated on billing failure in manual mode")
+	}
+}
+
+func TestForwardManual_DoesNotDeactivateOn429Quota(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("Content-Type", "application/json")
+		return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"quota","type":"insufficient_quota","code":"insufficient_quota"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusTooManyRequests)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated on quota failure in manual mode")
+	}
+}
+
+func TestForwardManual_PassesThrough200(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("Content-Type", "text/plain")
+		return newResponse(http.StatusOK, h, "ok"), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusOK)
+	}
+	if got := rr.Body.String(); got != "ok" {
+		t.Fatalf("body: got %q want %q", got, "ok")
+	}
+	if ra := strings.TrimSpace(res.Header.Get("Retry-After")); ra != "" {
+		t.Fatalf("did not expect Retry-After on success, got %q", ra)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated")
+	}
+}
+
+func TestForwardWithFailover_AllProvidersHalfOpenBusy_ReturnsRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	// Transport should never be called when the circuit breaker refuses the request.
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected upstream call to %s", r.URL.String())
+		return nil, errors.New("unreachable")
+	})
+
+	cbCfg := circuitBreakerConfig{
+		enabled:             true,
+		failureThreshold:    1,
+		successThreshold:    1,
+		openTimeout:         60 * time.Second,
+		halfOpenMaxInFlight: 1,
+	}
+
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, cbCfg)
+	cp.httpClient.Transport = rt
+
+	// Force half-open saturation.
+	if len(cp.breakers) != 1 || cp.breakers[0] == nil {
+		t.Fatalf("expected 1 circuit breaker")
+	}
+	cb := cp.breakers[0]
+	cb.mu.Lock()
+	cb.state = circuitHalfOpen
+	cb.halfOpenInFlight = cb.cfg.halfOpenMaxInFlight
+	cb.mu.Unlock()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusServiceUnavailable)
+	}
+	if ra := strings.TrimSpace(res.Header.Get("Retry-After")); ra == "" {
+		t.Fatalf("expected Retry-After header to be set")
+	}
+}
+
 func TestForwardWithFailover_ReactivateAfterTTL(t *testing.T) {
 	t.Parallel()
 
@@ -504,9 +659,9 @@ func TestForwardWithFailover_ReactivateAfterTTL(t *testing.T) {
 		return newResponse(http.StatusOK, nil, "ok"), nil
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	// Simulate a prior deactivation older than the TTL.
@@ -556,10 +711,10 @@ func TestForwardWithFailover_403GzipBodyDecodedAndRetriesNextProvider(t *testing
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -603,10 +758,10 @@ func TestForwardWithFailover_429AnthropicRateLimitDoesNotDeactivate(t *testing.T
 		}
 	})
 
-	cp := newClientProxy(ClientClaudeCode, []config.Provider{
+	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -638,10 +793,10 @@ func TestForwardWithFailover_429RetryAfterCooldown(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -658,8 +813,8 @@ func TestForwardWithFailover_429RetryAfterCooldown(t *testing.T) {
 	if until.IsZero() {
 		t.Fatalf("expected non-zero cooldown until")
 	}
-	if until.Sub(time.Now()) < 90*time.Second {
-		t.Fatalf("expected cooldown close to 120s, got %s", until.Sub(time.Now()))
+	if time.Until(until) < 90*time.Second {
+		t.Fatalf("expected cooldown close to 120s, got %s", time.Until(until))
 	}
 }
 
@@ -680,10 +835,10 @@ func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -700,7 +855,7 @@ func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 	if until.IsZero() {
 		t.Fatalf("expected non-zero cooldown until")
 	}
-	remaining := until.Sub(time.Now())
+	remaining := time.Until(until)
 	if remaining > time.Hour+5*time.Second {
 		t.Fatalf("expected cooldown capped near 1h, got %s", remaining)
 	}
@@ -726,10 +881,10 @@ func TestForwardWithFailover_AllProvidersCooldownReturnsRetryAfter(t *testing.T)
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, []config.Provider{
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
-	}, time.Hour, 0)
+	}, time.Hour, 0, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
 
 	rr := httptest.NewRecorder()
@@ -744,3 +899,201 @@ func TestForwardWithFailover_AllProvidersCooldownReturnsRetryAfter(t *testing.T)
 		t.Fatalf("expected Retry-After header to be set")
 	}
 }
+
+func TestForwardManual_DoesNotFailover(t *testing.T) {
+	t.Parallel()
+
+	var callsP1 int
+	var callsP2 int
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			callsP1++
+			return nil, errors.New("network down")
+		case "p2":
+			callsP2++
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+	}, time.Hour, 0, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusBadGateway)
+	}
+	if callsP1 != 1 {
+		t.Fatalf("expected p1 to be called once, got %d", callsP1)
+	}
+	if callsP2 != 0 {
+		t.Fatalf("expected p2 not to be called, got %d", callsP2)
+	}
+}
+
+func TestForwardManual_PassesThroughRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("Retry-After", "10")
+		h.Set("Content-Type", "application/json")
+		return newResponse(http.StatusTooManyRequests, h, `{"error":{"type":"rate_limit_error","message":"slow down"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusTooManyRequests)
+	}
+	if got := strings.TrimSpace(res.Header.Get("Retry-After")); got != "10" {
+		t.Fatalf("Retry-After: got %q want %q", got, "10")
+	}
+	if got := rr.Body.String(); !strings.Contains(got, "slow down") {
+		t.Fatalf("expected upstream body to be forwarded, got %q", got)
+	}
+
+	if len(cp.deactivated) != 1 {
+		t.Fatalf("expected one provider deactivation slot, got %d", len(cp.deactivated))
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated in manual mode")
+	}
+}
+
+func TestCircuitBreaker_OpensAndReturnsRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return newResponse(http.StatusServiceUnavailable, nil, "down"), nil
+	})
+
+	cbCfg := circuitBreakerConfig{
+		enabled:             true,
+		failureThreshold:    2,
+		successThreshold:    1,
+		openTimeout:         10 * time.Second,
+		halfOpenMaxInFlight: 1,
+	}
+
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, cbCfg)
+	cp.httpClient.Transport = rt
+
+	// First two failures trip the circuit.
+	for i := 0; i < 2; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+		cp.forwardWithFailover(rr, req, "/v1/test")
+		if rr.Result().StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("status[%d]: got %d want %d", i, rr.Result().StatusCode, http.StatusServiceUnavailable)
+		}
+	}
+
+	// Next request should be blocked by open circuit and return Retry-After.
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+	res := rr.Result()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusServiceUnavailable)
+	}
+	if ra := res.Header.Get("Retry-After"); ra == "" {
+		t.Fatalf("expected Retry-After header to be set")
+	}
+}
+
+func TestCircuitBreaker_DoesNotCountClientCancelAsFailure(t *testing.T) {
+	t.Parallel()
+
+	firstRead := make(chan struct{})
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		body := &ctxCancelBody{
+			ctx:       r.Context(),
+			first:     []byte("hello"),
+			firstRead: firstRead,
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       body,
+		}, nil
+	})
+
+	cbCfg := circuitBreakerConfig{
+		enabled:             true,
+		failureThreshold:    1,
+		successThreshold:    1,
+		openTimeout:         10 * time.Second,
+		halfOpenMaxInFlight: 1,
+	}
+
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, cbCfg)
+	cp.httpClient.Transport = rt
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		<-firstRead
+		cancel()
+	}()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`))).WithContext(ctx)
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	if len(cp.breakers) != 1 || cp.breakers[0] == nil {
+		t.Fatalf("expected 1 circuit breaker")
+	}
+	cb := cp.breakers[0]
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.state != circuitClosed {
+		t.Fatalf("expected circuit to remain closed, got %s", cb.state)
+	}
+	if cb.consecutiveFailures != 0 {
+		t.Fatalf("expected no failures recorded, got %d", cb.consecutiveFailures)
+	}
+}
+
+type ctxCancelBody struct {
+	ctx       context.Context
+	first     []byte
+	sentFirst bool
+	firstRead chan struct{}
+}
+
+func (b *ctxCancelBody) Read(p []byte) (int, error) {
+	if !b.sentFirst {
+		b.sentFirst = true
+		if b.firstRead != nil {
+			close(b.firstRead)
+		}
+		return copy(p, b.first), nil
+	}
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (b *ctxCancelBody) Close() error { return nil }

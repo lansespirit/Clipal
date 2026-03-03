@@ -23,7 +23,7 @@ func decodeJSON(t *testing.T, body *bytes.Buffer) map[string]any {
 
 func TestHandleGetGlobalConfig_ReturnsSnakeCase(t *testing.T) {
 	dir := t.TempDir()
-	api := NewAPI(dir, "test")
+	api := NewAPI(dir, "test", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/global", nil)
 	w := httptest.NewRecorder()
@@ -72,7 +72,7 @@ providers:
 		t.Fatal(err)
 	}
 
-	api := NewAPI(dir, "test")
+	api := NewAPI(dir, "test", nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/providers/codex", nil)
 	w := httptest.NewRecorder()
 	api.HandleGetProviders(w, req)
@@ -114,7 +114,7 @@ providers:
 		t.Fatal(err)
 	}
 
-	api := NewAPI(dir, "test")
+	api := NewAPI(dir, "test", nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
 	w := httptest.NewRecorder()
 	api.HandleExportConfig(w, req)
@@ -149,7 +149,7 @@ providers:
 
 func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
 	dir := t.TempDir()
-	api := NewAPI(dir, "test")
+	api := NewAPI(dir, "test", nil)
 
 	body := []byte(`{
   "listen_addr": "127.0.0.1",
@@ -165,6 +165,12 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
     "enabled": true,
     "min_level": "warn",
     "provider_switch": false
+  },
+  "circuit_breaker": {
+    "failure_threshold": 4,
+    "success_threshold": 2,
+    "open_timeout": "60s",
+    "half_open_max_inflight": 1
   },
   "ignore_count_tokens_failover": true
 }`)
