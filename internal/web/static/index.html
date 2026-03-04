@@ -81,36 +81,37 @@
                     <button @click="openAddProviderModal()" class="btn btn-primary btn-full">
                         <span x-text="'Add Provider to ' + clientLabel(selectedClient)"></span>
                     </button>
-                </div>
-            </div>
 
-            <!-- Manual/Auto Mode -->
-            <div class="card" style="margin-bottom: 16px;">
-                <div class="form-group">
-                    <label class="form-label">Mode</label>
-                    <select class="form-select" :value="clientConfig.mode" @change="setClientMode($event.target.value)">
-                        <option value="auto">Auto (Failover)</option>
-                        <option value="manual">Manual (Pinned)</option>
-                    </select>
-                    <div class="form-hint">Manual mode never switches providers; failures return errors.</div>
-                </div>
+                    <!-- Client Mode (compact) -->
+                    <div class="client-mode-row">
+                        <div class="client-mode-left">
+                            <span class="client-mode-label">Mode</span>
+                            <span class="mode-pill" :class="clientConfig.mode === 'auto' ? 'mode-auto' : 'mode-manual'"
+                                x-text="clientConfig.mode === 'auto' ? 'Auto' : 'Manual'"></span>
+                            <span class="tooltip" aria-label="Mode help">
+                                <button type="button" class="info-btn" aria-label="Mode help">i</button>
+                                <span class="tooltip-content" x-text="modeHelpText()"></span>
+                            </span>
+                        </div>
 
-                <div class="form-group" x-show="clientConfig.mode === 'manual'">
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                        <label class="form-label" style="margin: 0;">Pinned Provider</label>
-                        <button type="button" class="btn btn-secondary"
-                            style="padding: 6px 10px; font-size: 12px; border-radius: 8px;"
-                            title="Switch back to auto failover mode" @click="setClientMode('auto')">
-                            Unpin → Auto
-                        </button>
+                        <div class="client-mode-middle" x-show="clientConfig.mode === 'manual'">
+                            <span class="client-mode-label">Pinned:</span>
+                            <span class="mono-pill" x-text="clientConfig.pinned_provider || 'None'"></span>
+                        </div>
+
+                        <div class="client-mode-right">
+                            <button type="button" class="btn btn-secondary btn-sm"
+                                :disabled="clientConfig.mode === 'auto' && !hasEnabledProviders"
+                                :title="(clientConfig.mode === 'auto' && !hasEnabledProviders) ? 'Enable a provider first' : ''"
+                                @click="setClientMode(clientConfig.mode === 'auto' ? 'manual' : 'auto')"
+                                x-text="clientConfig.mode === 'auto' ? 'Switch to Manual' : 'Back to Auto'">
+                            </button>
+                        </div>
                     </div>
-                    <select class="form-select" :value="clientConfig.pinned_provider"
-                        @change="pinProvider($event.target.value)">
-                        <option value="">Select a provider</option>
-                        <template x-for="p in providers" :key="'pin-' + p.name">
-                            <option :value="p.name" x-text="p.name" :disabled="!p.enabled"></option>
-                        </template>
-                    </select>
+
+                    <div class="form-hint" x-show="clientConfig.mode === 'manual'">
+                        Pin a provider by clicking 📌 on a provider card.
+                    </div>
                 </div>
             </div>
 
@@ -130,6 +131,9 @@
                                 <div class="provider-name-row">
                                     <span class="priority-badge" x-text="'#' + provider.priority"></span>
                                     <h3 class="provider-name" x-text="provider.name"></h3>
+                                    <template x-if="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider">
+                                        <span class="pin-badge" title="Pinned provider">Pinned</span>
+                                    </template>
                                 </div>
                                 <span
                                     :class="'provider-status ' + (provider.enabled ? 'status-enabled' : 'status-disabled')"
@@ -138,13 +142,15 @@
                             </div>
                             <div class="provider-controls">
                                 <label class="switch"
-                                    :title="(clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider) ? 'Pinned provider cannot be disabled in manual mode' : (provider.enabled ? 'Disable' : 'Enable')">
+                                    :title="(clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider) ? (provider.enabled ? 'Pinned provider cannot be disabled in manual mode' : 'Enable pinned provider') : (provider.enabled ? 'Disable' : 'Enable')">
                                     <input type="checkbox" :checked="provider.enabled"
-                                        :disabled="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider"
+                                        :disabled="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider && provider.enabled"
                                         @change="toggleProvider(provider, $event)">
                                     <span class="slider"></span>
                                 </label>
-                                <button @click="pinProvider(provider.name)" class="icon-btn" title="Pin (Manual)"
+                                <button @click="pinProvider(provider.name)" class="icon-btn"
+                                    :class="{'pin-active': clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider}"
+                                    :title="(clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider) ? 'Pinned provider' : 'Pin (Manual)'"
                                     :disabled="!provider.enabled">📌</button>
                                 <button @click="editProvider(provider)" class="icon-btn" title="Edit">✏️</button>
                                 <button @click="deleteProvider(provider.name)" class="icon-btn danger"
@@ -558,7 +564,7 @@
                     <div class="form-group">
                         <label class="form-label">Name *</label>
                         <input type="text" x-model="providerForm.name" class="form-input" required
-                            placeholder="e.g. anthropic-primary">
+                            placeholder="e.g. provider-primary">
                         <div class="form-hint">Allows letters, numbers, ., _, -</div>
                     </div>
 

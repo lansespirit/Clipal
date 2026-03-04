@@ -277,6 +277,17 @@ function app() {
             return match ? match.label : clientType;
         },
 
+        get hasEnabledProviders() {
+            return (this.providers || []).some(p => !!p.enabled);
+        },
+
+        modeHelpText() {
+            if ((this.clientConfig.mode || '') === 'manual') {
+                return 'Manual (Pinned)\nAlways use the pinned provider.\nNo failover; failures return errors.';
+            }
+            return 'Auto (Failover)\nTries enabled providers by priority.\nSwitches on failures.';
+        },
+
         providerStatusLabel(p) {
             if (!p) return '';
             const name = String(p.name || '').trim();
@@ -358,13 +369,40 @@ function app() {
         async setClientMode(mode) {
             const m = String(mode || '').toLowerCase();
             if (m !== 'auto' && m !== 'manual') return;
+
+            if (m === 'manual' && !this.hasEnabledProviders) {
+                this.showAlert('error', 'Enable a provider before switching to manual mode');
+                return;
+            }
+
             this.clientConfig.mode = m;
             if (m === 'auto') {
                 this.clientConfig.pinned_provider = '';
-            } else if (!String(this.clientConfig.pinned_provider || '').trim()) {
-                const firstEnabled = (this.providers || []).find(p => !!p.enabled);
-                if (firstEnabled && firstEnabled.name) {
-                    this.clientConfig.pinned_provider = firstEnabled.name;
+            } else {
+                // Default pin: prefer current provider, else highest priority enabled provider.
+                const pinned = String(this.clientConfig.pinned_provider || '').trim();
+                const pinnedProvider = pinned ? (this.providers || []).find(p => p && p.name === pinned) : null;
+                const pinnedOk = pinnedProvider && !!pinnedProvider.enabled;
+
+                if (!pinnedOk) {
+                    // Best-effort refresh so "current provider" is as accurate as possible.
+                    try {
+                        await this.refreshStatus();
+                    } catch (e) {
+                        // Ignore refresh failures; we fall back to local provider list.
+                    }
+
+                    const st = (this.status && this.status.clients) ? this.status.clients[this.selectedClient] : null;
+                    const cur = st ? String(st.current_provider || '').trim() : '';
+                    const curProvider = cur ? (this.providers || []).find(p => p && p.name === cur) : null;
+
+                    if (curProvider && curProvider.name && !!curProvider.enabled) {
+                        this.clientConfig.pinned_provider = curProvider.name;
+                    } else {
+                        const enabled = (this.providers || []).filter(p => p && p.name && !!p.enabled);
+                        enabled.sort((a, b) => Number(a.priority || 0) - Number(b.priority || 0));
+                        this.clientConfig.pinned_provider = (enabled[0] && enabled[0].name) ? enabled[0].name : '';
+                    }
                 }
             }
             await this.saveClientConfig();
@@ -373,6 +411,13 @@ function app() {
         async pinProvider(name) {
             const v = String(name || '').trim();
             if (!v) return;
+
+            const p = (this.providers || []).find(x => x && x.name === v);
+            if (p && p.enabled === false) {
+                this.showAlert('error', 'Enable the provider before pinning it');
+                return;
+            }
+
             this.clientConfig.mode = 'manual';
             this.clientConfig.pinned_provider = v;
             await this.saveClientConfig();

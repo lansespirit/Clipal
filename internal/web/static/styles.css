@@ -311,6 +311,137 @@ body {
     gap: 24px;
 }
 
+.client-mode-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.client-mode-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.client-mode-middle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.client-mode-label {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+
+.client-mode-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.client-mode-right .btn {
+    white-space: nowrap;
+}
+
+.mode-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    border: 1px solid transparent;
+    user-select: none;
+}
+
+.mode-pill.mode-auto {
+    background: var(--primary-soft);
+    color: var(--primary);
+}
+
+.mode-pill.mode-manual {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+}
+
+.tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.info-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+    transition: var(--transition);
+    padding: 0;
+}
+
+.info-btn:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+}
+
+.tooltip-content {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    width: 280px;
+    max-width: min(280px, 80vw);
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+    white-space: pre-line;
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-2px);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+    pointer-events: none;
+}
+
+.tooltip-content::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    left: 10px;
+    width: 10px;
+    height: 10px;
+    background: var(--bg-card);
+    border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    transform: rotate(45deg);
+}
+
+.tooltip:hover .tooltip-content,
+.tooltip:focus-within .tooltip-content {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
 .segmented-group {
     display: flex;
     background: var(--bg-surface);
@@ -546,6 +677,20 @@ body {
     gap: 10px;
 }
 
+.pin-badge {
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    font-size: var(--text-xs);
+    font-weight: var(--font-bold);
+    border: 1px solid transparent;
+    user-select: none;
+}
+
 .priority-badge {
     font-size: 0.75rem;
     font-weight: var(--font-bold);
@@ -606,6 +751,18 @@ body {
     background: var(--bg-surface);
     color: var(--text-primary);
     border-color: var(--border);
+}
+
+.icon-btn.pin-active {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    border-color: transparent;
+}
+
+.icon-btn.pin-active:hover {
+    background: rgba(245, 158, 11, 0.18);
+    color: var(--warning);
+    border-color: transparent;
 }
 
 .icon-btn.danger:hover {
@@ -963,8 +1120,8 @@ input[type="checkbox"]:checked::before {
 .switch {
     position: relative;
     display: inline-block;
-    width: 48px;
-    height: 28px;
+    width: 42px;
+    height: 24px;
 }
 
 .switch input {
@@ -989,8 +1146,8 @@ input[type="checkbox"]:checked::before {
 .slider:before {
     position: absolute;
     content: "";
-    height: 20px;
-    width: 20px;
+    height: 18px;
+    width: 18px;
     left: 3px;
     bottom: 3px;
     background-color: white;
@@ -1005,7 +1162,7 @@ input:checked+.slider {
 }
 
 input:checked+.slider:before {
-    transform: translateX(20px);
+    transform: translateX(18px);
 }
 
 /* Utilities */
