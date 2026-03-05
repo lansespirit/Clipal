@@ -126,6 +126,7 @@ For each client (claude-code / codex / gemini), Clipal maintains an independent 
 
 - Only uses providers with `enabled != false`
 - Sorts by `priority` ascending (lower number = higher priority; priorities start at `1`); ties keep YAML order
+  - If `priority` is omitted (or `0`), it defaults to `1`
 - Sticky preference: a successful provider becomes the next preferred one
 - **Mode `auto` (default):** on request failure, tries the next available provider
 - **Mode `manual`:** always routes to `pinned_provider` and **never** fails over to another provider

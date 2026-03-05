@@ -289,7 +289,8 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if priority == 0 {
-		priority = nextPriority(cc.Providers)
+		// Priority is 1-based. If omitted, default to 1 (highest).
+		priority = 1
 	}
 
 	provider := config.Provider{

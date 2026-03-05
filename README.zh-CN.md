@@ -182,7 +182,7 @@ providers:
 | `providers[].name` | string | 是 | 供应商名称（用于日志标识） |
 | `providers[].base_url` | string | 是 | API 供应商 Base URL |
 | `providers[].api_key` | string | 是 | API Key |
-| `providers[].priority` | int | 是 | 优先级（数字越小优先级越高，从 1 开始） |
+| `providers[].priority` | int | 否 | 优先级（数字越小优先级越高，从 1 开始；省略或为 0 时默认 1） |
 | `providers[].enabled` | bool | 否 | 是否启用，默认 true |
 
 ## Provider 优先级与调度策略
@@ -190,7 +190,7 @@ providers:
 clipal 对每个客户端（claude-code / codex / gemini）独立维护一组 providers，并按以下策略选择上游：
 
 - **启用过滤**：只使用 `enabled != false` 的 providers。
-- **优先级排序**：按 `priority` 升序（数字越小优先级越高，从 `1` 开始）；同优先级保持 YAML 文件中的顺序。
+- **优先级排序**：按 `priority` 升序（数字越小优先级越高，从 `1` 开始；省略或为 0 时默认 1）；同优先级保持 YAML 文件中的顺序。
 - **粘性优先**：每个客户端维护一个 `currentIndex`，默认从优先级最高的 provider 开始；一旦某个 provider 成功响应，会把 `currentIndex` 更新为该 provider，使后续请求优先继续使用它（减少频繁切换）。
 - **自动模式（`mode=auto`，默认）失败切换**：请求失败时会按顺序切换到下一个可用 provider（直到尝试完所有未被禁用的 provider）。
 - **手动锁定（`mode=manual`）**：只会转发到 `pinned_provider`，不会切换到其他 provider。

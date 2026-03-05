@@ -204,6 +204,13 @@ func applyClientDefaults(cc *ClientConfig) {
 	if cc.Mode == "" {
 		cc.Mode = ClientModeAuto
 	}
+
+	// Priority is 1-based. Older configs may omit it (decoded as 0).
+	for i := range cc.Providers {
+		if cc.Providers[i].Priority == 0 {
+			cc.Providers[i].Priority = 1
+		}
+	}
 }
 
 // GetEnabledProviders returns only enabled providers for a client config
