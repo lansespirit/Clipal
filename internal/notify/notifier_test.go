@@ -155,7 +155,7 @@ func TestSenderPanicDoesNotCrashProcess(t *testing.T) {
 	}
 }
 
-func TestNotifierPassesEmptyStringIcon(t *testing.T) {
+func TestNotifierPassesEmbeddedIconBytes(t *testing.T) {
 	ps := true
 	cfg := config.NotificationsConfig{
 		Enabled:        true,
@@ -176,12 +176,18 @@ func TestNotifierPassesEmptyStringIcon(t *testing.T) {
 
 	select {
 	case icon := <-got:
-		s, ok := icon.(string)
+		b, ok := icon.([]byte)
 		if !ok {
-			t.Fatalf("expected string icon, got %T", icon)
+			t.Fatalf("expected []byte icon, got %T", icon)
 		}
-		if s != "" {
-			t.Fatalf("expected empty icon string, got %q", s)
+		if len(b) == 0 {
+			t.Fatalf("expected embedded icon bytes")
+		}
+		if len(defaultIconPNG) == 0 {
+			t.Fatalf("expected embedded icon fixture to be loaded")
+		}
+		if string(b) != string(defaultIconPNG) {
+			t.Fatalf("expected embedded icon bytes to match fixture")
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("expected sender to be called")

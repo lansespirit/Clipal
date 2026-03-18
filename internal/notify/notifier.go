@@ -1,6 +1,7 @@
 package notify
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"regexp"
@@ -24,6 +25,9 @@ var (
 	cleanupInterval = 5 * time.Minute
 	disableCooldown = 5 * time.Minute
 )
+
+//go:embed clipal.png
+var defaultIconPNG []byte
 
 type event struct {
 	title   string
@@ -49,7 +53,7 @@ var (
 )
 
 func Configure(cfg config.NotificationsConfig) {
-	ConfigureWithSender(cfg, beeep.Notify)
+	ConfigureWithSender(cfg, platformSender(beeep.Notify))
 }
 
 func safeSender(sender func(title, message string, icon any) error) func(title, message string, icon any) (err error) {
@@ -292,6 +296,13 @@ func logSendError(err error, lastErrLog *time.Time) {
 	fmt.Fprintf(os.Stderr, "clipal: notification failed: %v\n", err)
 }
 
+func notificationIcon() any {
+	if len(defaultIconPNG) > 0 {
+		return defaultIconPNG
+	}
+	return ""
+}
+
 func (n *Notifier) loop() {
 	defer close(n.done)
 
@@ -358,9 +369,7 @@ func (n *Notifier) loop() {
 			inFlight = true
 			inFlightDone = done
 			go func() {
-				// beeep rejects a nil icon argument on all desktop platforms.
-				// Pass an empty string so the backend can use its own fallback path.
-				done <- n.send(ev.title, ev.message, "")
+				done <- n.send(ev.title, ev.message, notificationIcon())
 			}()
 
 			select {

@@ -1,6 +1,6 @@
 # Clipal
 
-![Clipal](assets/clipal.png)
+![Clipal](assets/clipal-hero.jpg)
 
 English: [README.md](README.md) | 中文: [README.zh-CN.md](README.zh-CN.md)
 
