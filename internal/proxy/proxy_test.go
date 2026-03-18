@@ -745,6 +745,82 @@ func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 	}
 }
 
+func TestForwardWithFailover_RetriesNextKeyBeforeNextProvider(t *testing.T) {
+	t.Parallel()
+
+	var hosts []string
+	var auths []string
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Host)
+		auths = append(auths, r.Header.Get("Authorization"))
+		switch r.Header.Get("Authorization") {
+		case "Bearer k1":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Retry-After", "60")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+		case "Bearer k2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected authorization header")
+		}
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "fallback", Priority: 2},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	if rr.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rr.Result().StatusCode, http.StatusOK)
+	}
+	if len(hosts) != 2 || hosts[0] != "p1" || hosts[1] != "p1" {
+		t.Fatalf("expected both attempts to stay on provider p1, got hosts=%v auth=%v", hosts, auths)
+	}
+	if got := cp.currentIndex; got != 0 {
+		t.Fatalf("currentIndex: got %d want %d", got, 0)
+	}
+	if got := cp.currentKeyIndex[0]; got != 1 {
+		t.Fatalf("currentKeyIndex[0]: got %d want %d", got, 1)
+	}
+}
+
+func TestForwardWithFailover_ReleasesHalfOpenProbeWhenKeysExhausted(t *testing.T) {
+	t.Parallel()
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("Content-Type", "application/json")
+		h.Set("Retry-After", "30")
+		return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{
+		enabled:             true,
+		failureThreshold:    1,
+		successThreshold:    1,
+		openTimeout:         time.Minute,
+		halfOpenMaxInFlight: 1,
+	})
+	cp.httpClient.Transport = rt
+	cp.breakers[0].state = circuitHalfOpen
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	if got := cp.breakers[0].halfOpenInFlight; got != 0 {
+		t.Fatalf("halfOpenInFlight leaked: got %d want %d", got, 0)
+	}
+}
+
 func TestForwardManual_DoesNotDeactivateOn401(t *testing.T) {
 	t.Parallel()
 
@@ -767,6 +843,116 @@ func TestForwardManual_DoesNotDeactivateOn401(t *testing.T) {
 	}
 	if cp.isDeactivated(0) {
 		t.Fatalf("expected pinned provider NOT to be deactivated on auth failure in manual mode")
+	}
+}
+
+func TestForwardManual_MultiKeyPassesThroughPinnedProviderResponse(t *testing.T) {
+	t.Parallel()
+
+	var auths []string
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		h := make(http.Header)
+		h.Set("Retry-After", "9")
+		return newResponse(http.StatusUnauthorized, h, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusUnauthorized)
+	}
+	if got := res.Header.Get("Retry-After"); got != "9" {
+		t.Fatalf("retry-after: got %q want %q", got, "9")
+	}
+	if len(auths) != 1 || auths[0] != "Bearer k1" {
+		t.Fatalf("expected a single attempt with the preferred key, got auths=%v", auths)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated in manual mode")
+	}
+	if cp.isKeyDeactivated(0, 0) || cp.isKeyDeactivated(0, 1) {
+		t.Fatalf("expected manual mode not to deactivate keys")
+	}
+}
+
+func TestForwardManual_MultiKeyPassesThrough402(t *testing.T) {
+	t.Parallel()
+
+	var auths []string
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		return newResponse(http.StatusPaymentRequired, nil, `{"error":{"type":"billing_error","message":"no money"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusPaymentRequired)
+	}
+	if len(auths) != 1 || auths[0] != "Bearer k1" {
+		t.Fatalf("expected a single attempt with the preferred key, got auths=%v", auths)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated in manual mode")
+	}
+	if cp.isKeyDeactivated(0, 0) || cp.isKeyDeactivated(0, 1) {
+		t.Fatalf("expected manual mode not to deactivate keys")
+	}
+}
+
+func TestForwardManual_MultiKeyPassesThrough429RetryAfter(t *testing.T) {
+	t.Parallel()
+
+	var auths []string
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		h := make(http.Header)
+		h.Set("Retry-After", "17")
+		h.Set("Content-Type", "application/json")
+		return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+	})
+
+	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", bytes.NewReader([]byte(`{"x":1}`)))
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusTooManyRequests)
+	}
+	if got := res.Header.Get("Retry-After"); got != "17" {
+		t.Fatalf("retry-after: got %q want %q", got, "17")
+	}
+	if len(auths) != 1 || auths[0] != "Bearer k1" {
+		t.Fatalf("expected a single attempt with the preferred key, got auths=%v", auths)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("expected pinned provider NOT to be deactivated in manual mode")
+	}
+	if cp.isKeyDeactivated(0, 0) || cp.isKeyDeactivated(0, 1) {
+		t.Fatalf("expected manual mode not to deactivate keys")
 	}
 }
 

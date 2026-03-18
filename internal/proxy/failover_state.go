@@ -69,6 +69,20 @@ func (cp *ClientProxy) reactivateExpired() {
 			logger.Info("[%s] provider #%d %s", cp.clientType, i, detail)
 		}
 	}
+	for i := range cp.keyDeactivated {
+		for j, d := range cp.keyDeactivated[i] {
+			if d.until.IsZero() {
+				continue
+			}
+			if now.Before(d.until) {
+				continue
+			}
+			cp.keyDeactivated[i][j] = providerDeactivation{}
+			if i < len(cp.providers) {
+				logger.Info("[%s] provider %s key %d/%d reactivated", cp.clientType, cp.providers[i].Name, j+1, len(cp.providerKeys[i]))
+			}
+		}
+	}
 }
 
 func (cp *ClientProxy) isDeactivated(index int) bool {
@@ -108,6 +122,211 @@ func (cp *ClientProxy) deactivateFor(index int, reason string, status int, msg s
 	}
 }
 
+func (cp *ClientProxy) isKeyDeactivated(providerIndex int, keyIndex int) bool {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+	return cp.isKeyDeactivatedLocked(providerIndex, keyIndex, time.Now())
+}
+
+func (cp *ClientProxy) isKeyDeactivatedLocked(providerIndex int, keyIndex int, now time.Time) bool {
+	if providerIndex < 0 || providerIndex >= len(cp.keyDeactivated) {
+		return false
+	}
+	if keyIndex < 0 || keyIndex >= len(cp.keyDeactivated[providerIndex]) {
+		return false
+	}
+	d := cp.keyDeactivated[providerIndex][keyIndex]
+	return !d.until.IsZero() && now.Before(d.until)
+}
+
+func (cp *ClientProxy) availableKeyCountLocked(providerIndex int, now time.Time) int {
+	if providerIndex < 0 || providerIndex >= len(cp.providerKeys) {
+		return 0
+	}
+	count := 0
+	for keyIndex := range cp.providerKeys[providerIndex] {
+		if !cp.isKeyDeactivatedLocked(providerIndex, keyIndex, now) {
+			count++
+		}
+	}
+	return count
+}
+
+func (cp *ClientProxy) providerAvailableForRoutingLocked(providerIndex int, now time.Time) bool {
+	if providerIndex < 0 || providerIndex >= len(cp.providers) {
+		return false
+	}
+	if !cp.deactivated[providerIndex].until.IsZero() && now.Before(cp.deactivated[providerIndex].until) {
+		return false
+	}
+	if cp.availableKeyCountLocked(providerIndex, now) == 0 {
+		return false
+	}
+	if providerIndex < len(cp.breakers) && cp.breakers[providerIndex] != nil {
+		allow := cp.breakers[providerIndex].peekAllow(now)
+		if !allow.allowed && allow.wait > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (cp *ClientProxy) nextActiveKeyIndexLocked(providerIndex int, from int, now time.Time) int {
+	if providerIndex < 0 || providerIndex >= len(cp.providerKeys) {
+		return 0
+	}
+	n := len(cp.providerKeys[providerIndex])
+	if n == 0 {
+		return 0
+	}
+	if from < 0 || from >= n {
+		from = 0
+	}
+	if !cp.isKeyDeactivatedLocked(providerIndex, from, now) {
+		return from
+	}
+	for step := 1; step <= n; step++ {
+		idx := (from + step) % n
+		if !cp.isKeyDeactivatedLocked(providerIndex, idx, now) {
+			return idx
+		}
+	}
+	return from
+}
+
+func (cp *ClientProxy) ensureActiveKeyIndexLocked(providerIndex int, countTokens bool, now time.Time) int {
+	if providerIndex < 0 || providerIndex >= len(cp.providerKeys) || len(cp.providerKeys[providerIndex]) == 0 {
+		return 0
+	}
+	cur := cp.currentKeyIndex
+	if countTokens {
+		cur = cp.countTokensKeyIndex
+	}
+	if providerIndex >= len(cur) {
+		return 0
+	}
+	if cur[providerIndex] < 0 || cur[providerIndex] >= len(cp.providerKeys[providerIndex]) {
+		cur[providerIndex] = 0
+	}
+	cur[providerIndex] = cp.nextActiveKeyIndexLocked(providerIndex, cur[providerIndex], now)
+	return cur[providerIndex]
+}
+
+func (cp *ClientProxy) setCurrentKeyIndex(providerIndex int, keyIndex int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if providerIndex < 0 || providerIndex >= len(cp.currentKeyIndex) {
+		return
+	}
+	cp.currentKeyIndex[providerIndex] = keyIndex
+}
+
+func (cp *ClientProxy) setCountTokensKeyIndex(providerIndex int, keyIndex int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if providerIndex < 0 || providerIndex >= len(cp.countTokensKeyIndex) {
+		return
+	}
+	cp.countTokensKeyIndex[providerIndex] = keyIndex
+}
+
+func (cp *ClientProxy) activeKeyCount(providerIndex int) int {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+	return cp.availableKeyCountLocked(providerIndex, time.Now())
+}
+
+func (cp *ClientProxy) nextActiveKeyIndex(providerIndex int, from int) int {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+	return cp.nextActiveKeyIndexLocked(providerIndex, from, time.Now())
+}
+
+func (cp *ClientProxy) preferredKeyIndex(providerIndex int, countTokens bool) int {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+	if providerIndex < 0 || providerIndex >= len(cp.providerKeys) || len(cp.providerKeys[providerIndex]) == 0 {
+		return 0
+	}
+	cur := cp.currentKeyIndex
+	if countTokens {
+		cur = cp.countTokensKeyIndex
+	}
+	if providerIndex >= len(cur) {
+		return 0
+	}
+	if cur[providerIndex] < 0 || cur[providerIndex] >= len(cp.providerKeys[providerIndex]) {
+		return 0
+	}
+	return cur[providerIndex]
+}
+
+func (cp *ClientProxy) getActiveKeyCountAndStartIndex(providerIndex int, countTokens bool) (active int, startIndex int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	now := time.Now()
+	if providerIndex < 0 || providerIndex >= len(cp.providerKeys) || len(cp.providerKeys[providerIndex]) == 0 {
+		return 0, 0
+	}
+	active = cp.availableKeyCountLocked(providerIndex, now)
+	if active == 0 {
+		return 0, 0
+	}
+	return active, cp.ensureActiveKeyIndexLocked(providerIndex, countTokens, now)
+}
+
+func (cp *ClientProxy) deactivateKeyFor(providerIndex int, keyIndex int, reason string, status int, msg string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if providerIndex < 0 || providerIndex >= len(cp.keyDeactivated) {
+		return
+	}
+	if keyIndex < 0 || keyIndex >= len(cp.keyDeactivated[providerIndex]) {
+		return
+	}
+	now := time.Now()
+	if !cp.keyDeactivated[providerIndex][keyIndex].until.IsZero() && now.Before(cp.keyDeactivated[providerIndex][keyIndex].until) {
+		return
+	}
+	cp.keyDeactivated[providerIndex][keyIndex] = providerDeactivation{
+		at:      now,
+		until:   now.Add(d),
+		reason:  reason,
+		status:  status,
+		message: msg,
+	}
+	if providerIndex < len(cp.currentKeyIndex) && cp.currentKeyIndex[providerIndex] == keyIndex {
+		cp.currentKeyIndex[providerIndex] = cp.nextActiveKeyIndexLocked(providerIndex, keyIndex, now)
+	}
+	if providerIndex < len(cp.countTokensKeyIndex) && cp.countTokensKeyIndex[providerIndex] == keyIndex {
+		cp.countTokensKeyIndex[providerIndex] = cp.nextActiveKeyIndexLocked(providerIndex, keyIndex, now)
+	}
+}
+
+func (cp *ClientProxy) timeUntilNextKeyAvailableLocked(providerIndex int, now time.Time) (wait time.Duration, reason string, ok bool) {
+	if providerIndex < 0 || providerIndex >= len(cp.keyDeactivated) {
+		return 0, "", false
+	}
+	var soonest time.Time
+	var soonestReason string
+	for _, d := range cp.keyDeactivated[providerIndex] {
+		if d.until.IsZero() || !now.Before(d.until) {
+			continue
+		}
+		if soonest.IsZero() || d.until.Before(soonest) {
+			soonest = d.until
+			soonestReason = d.reason
+		}
+	}
+	if soonest.IsZero() {
+		return 0, "", false
+	}
+	return time.Until(soonest), soonestReason, true
+}
+
 func (cp *ClientProxy) deactivationUntil(index int) time.Time {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()
@@ -134,6 +353,16 @@ func (cp *ClientProxy) timeUntilProviderAvailable(index int) (wait time.Duration
 	if !d.until.IsZero() && now.Before(d.until) {
 		return time.Until(d.until), d.reason, true
 	}
+	if keyWait, keyReason, keyOK := func() (time.Duration, string, bool) {
+		cp.mu.RLock()
+		defer cp.mu.RUnlock()
+		if cp.availableKeyCountLocked(index, now) > 0 {
+			return 0, "", false
+		}
+		return cp.timeUntilNextKeyAvailableLocked(index, now)
+	}(); keyOK {
+		return keyWait, keyReason, true
+	}
 	if cb != nil {
 		allow := cb.peekAllow(now)
 		if !allow.allowed && allow.wait > 0 {
@@ -157,6 +386,20 @@ func (cp *ClientProxy) timeUntilNextAvailable() (wait time.Duration, reason stri
 		if soonest.IsZero() || d.until.Before(soonest) {
 			soonest = d.until
 			soonestReason = d.reason
+		}
+	}
+	for i := range cp.providers {
+		if cp.availableKeyCountLocked(i, now) > 0 {
+			continue
+		}
+		wait, reason, ok := cp.timeUntilNextKeyAvailableLocked(i, now)
+		if !ok || wait <= 0 {
+			continue
+		}
+		until := now.Add(wait)
+		if soonest.IsZero() || until.Before(soonest) {
+			soonest = until
+			soonestReason = reason
 		}
 	}
 	for _, cb := range cp.breakers {
@@ -185,18 +428,9 @@ func (cp *ClientProxy) activeProviderCount() int {
 	now := time.Now()
 	count := 0
 	for i := range cp.providers {
-		// Positive logic: provider is active when not deactivated.
-		// Matches the pattern used in getActiveCountAndStartIndex.
-		if !cp.deactivated[i].until.IsZero() && now.Before(cp.deactivated[i].until) {
-			continue
+		if cp.providerAvailableForRoutingLocked(i, now) {
+			count++
 		}
-		if i < len(cp.breakers) && cp.breakers[i] != nil {
-			allow := cp.breakers[i].peekAllow(now)
-			if !allow.allowed && allow.wait > 0 {
-				continue
-			}
-		}
-		count++
 	}
 	return count
 }
@@ -210,7 +444,7 @@ func (cp *ClientProxy) getActiveCountAndStartIndex() (active int, startIndex int
 
 	// Count active providers.
 	for i := range cp.providers {
-		if cp.deactivated[i].until.IsZero() || !now.Before(cp.deactivated[i].until) {
+		if cp.providerAvailableForRoutingLocked(i, now) {
 			active++
 		}
 	}
@@ -222,7 +456,7 @@ func (cp *ClientProxy) getActiveCountAndStartIndex() (active int, startIndex int
 	if cp.currentIndex < 0 || cp.currentIndex >= len(cp.providers) {
 		cp.currentIndex = 0
 	}
-	if cp.deactivated[cp.currentIndex].until.IsZero() || !now.Before(cp.deactivated[cp.currentIndex].until) {
+	if cp.providerAvailableForRoutingLocked(cp.currentIndex, now) {
 		return active, cp.currentIndex
 	}
 	cp.currentIndex = cp.nextActiveIndexLocked(cp.currentIndex)
@@ -238,7 +472,7 @@ func (cp *ClientProxy) getActiveCountAndCountTokensStartIndex() (active int, sta
 
 	// Count active providers.
 	for i := range cp.providers {
-		if cp.deactivated[i].until.IsZero() || !now.Before(cp.deactivated[i].until) {
+		if cp.providerAvailableForRoutingLocked(i, now) {
 			active++
 		}
 	}
@@ -250,7 +484,7 @@ func (cp *ClientProxy) getActiveCountAndCountTokensStartIndex() (active int, sta
 	if cp.countTokensIndex < 0 || cp.countTokensIndex >= len(cp.providers) {
 		cp.countTokensIndex = 0
 	}
-	if cp.deactivated[cp.countTokensIndex].until.IsZero() || !now.Before(cp.deactivated[cp.countTokensIndex].until) {
+	if cp.providerAvailableForRoutingLocked(cp.countTokensIndex, now) {
 		return active, cp.countTokensIndex
 	}
 	cp.countTokensIndex = cp.nextActiveIndexLocked(cp.countTokensIndex)
@@ -288,7 +522,7 @@ func (cp *ClientProxy) ensureActiveStartIndex() int {
 	if cp.currentIndex < 0 || cp.currentIndex >= len(cp.providers) {
 		cp.currentIndex = 0
 	}
-	if cp.deactivated[cp.currentIndex].until.IsZero() || !now.Before(cp.deactivated[cp.currentIndex].until) {
+	if cp.providerAvailableForRoutingLocked(cp.currentIndex, now) {
 		return cp.currentIndex
 	}
 	cp.currentIndex = cp.nextActiveIndexLocked(cp.currentIndex)
@@ -306,7 +540,7 @@ func (cp *ClientProxy) ensureActiveCountTokensStartIndex() int {
 	if cp.countTokensIndex < 0 || cp.countTokensIndex >= len(cp.providers) {
 		cp.countTokensIndex = 0
 	}
-	if cp.deactivated[cp.countTokensIndex].until.IsZero() || !now.Before(cp.deactivated[cp.countTokensIndex].until) {
+	if cp.providerAvailableForRoutingLocked(cp.countTokensIndex, now) {
 		return cp.countTokensIndex
 	}
 	cp.countTokensIndex = cp.nextActiveIndexLocked(cp.countTokensIndex)
@@ -333,7 +567,7 @@ func (cp *ClientProxy) nextActiveIndexLocked(from int) int {
 	now := time.Now()
 	for step := 1; step <= n; step++ {
 		idx := (from + step) % n
-		if cp.deactivated[idx].until.IsZero() || !now.Before(cp.deactivated[idx].until) {
+		if cp.providerAvailableForRoutingLocked(idx, now) {
 			return idx
 		}
 	}

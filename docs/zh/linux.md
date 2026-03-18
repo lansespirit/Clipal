@@ -34,7 +34,7 @@ cp examples/codex.yaml ~/.clipal/codex.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
-编辑 `~/.clipal/*.yaml` 填好 `api_key`。
+编辑 `~/.clipal/*.yaml` 填好 `api_key` 或 `api_keys`。
 
 ## 4. 前台启动（首次验证）
 

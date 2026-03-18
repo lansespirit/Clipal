@@ -60,6 +60,26 @@ func describeRequestBuildFailure(provider string, err error) string {
 	return fmt.Sprintf("%s request could not be prepared locally: %s", provider, msg)
 }
 
+func isKeyScopedFailure(reason string) bool {
+	switch reason {
+	case "auth", "billing", "quota", "rate_limit", "overloaded":
+		return true
+	default:
+		return false
+	}
+}
+
+func keyFailureDuration(reason string, cooldown time.Duration, reactivateAfter time.Duration) time.Duration {
+	switch reason {
+	case "auth", "billing", "quota":
+		return reactivateAfter
+	case "rate_limit", "overloaded":
+		return cooldown
+	default:
+		return 0
+	}
+}
+
 // forwardWithFailover forwards the request with automatic failover.
 func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Request, path string) {
 	if cp.mode == config.ClientModeManual {
@@ -120,7 +140,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		}
 
 		index := (startIndex + offset) % len(cp.providers)
-		if cp.isDeactivated(index) {
+		if cp.isDeactivated(index) || cp.activeKeyCount(index) == 0 {
 			continue
 		}
 		now := time.Now()
@@ -129,156 +149,211 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 			continue
 		}
 		provider := cp.providers[index]
+		keyActive, keyStart := cp.getActiveKeyCountAndStartIndex(index, false)
+		if keyActive == 0 {
+			cp.releaseCircuitPermit(index, allow.usedProbe)
+			continue
+		}
 
 		attempted++
-		logger.Debug("[%s] forwarding to: %s (attempt %d/%d)", cp.clientType, provider.Name, attempted, active)
+		logger.Debug("[%s] forwarding to: %s (attempt %d/%d, keys=%d)", cp.clientType, provider.Name, attempted, active, len(cp.providerKeys[index]))
 
-		attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
+		providerFailed := false
+		keyExhausted := false
+		keyExhaustedReason := ""
+		keyExhaustedStatus := 0
 
-		// Create the proxy request
-		reqWithAttemptCtx := req.WithContext(attemptCtx)
-		proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, path, bodyBytes)
-		if err != nil {
-			summary := describeRequestBuildFailure(provider.Name, err)
-			attemptSummaries = append(attemptSummaries, summary)
-			lastFailedProvider = provider.Name
-			logger.Error("[%s] %s", cp.clientType, summary)
-			cp.releaseCircuitPermit(index, allow.usedProbe)
-			cancelAttempt(nil)
-			continue
-		}
-		hadUpstreamAttempt = true
+		for keyOffset, keyTried := 0, 0; keyOffset < len(cp.providerKeys[index]) && keyTried < keyActive; keyOffset++ {
+			keyIndex := (keyStart + keyOffset) % len(cp.providerKeys[index])
+			if cp.isKeyDeactivated(index, keyIndex) {
+				continue
+			}
+			keyTried++
+			apiKey := cp.providerKeys[index][keyIndex]
 
-		// Ensure the body can be retried (http.Request may be reused by the transport).
-		proxyReq.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-		}
-
-		// Send the request
-		resp, err := cp.httpClient.Do(proxyReq)
-		if err != nil {
-			// Don't retry across providers when the request context is already canceled;
-			// this otherwise produces misleading "all providers failed" logs.
-			if req.Context().Err() != nil {
+			attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
+			reqWithAttemptCtx := req.WithContext(attemptCtx)
+			proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, apiKey, path, bodyBytes)
+			if err != nil {
+				summary := describeRequestBuildFailure(provider.Name, err)
+				attemptSummaries = append(attemptSummaries, summary)
+				lastFailedProvider = provider.Name
+				logger.Error("[%s] %s", cp.clientType, summary)
 				cp.releaseCircuitPermit(index, allow.usedProbe)
 				cancelAttempt(nil)
+				providerFailed = true
+				break
+			}
+			hadUpstreamAttempt = true
+
+			proxyReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+
+			resp, err := cp.httpClient.Do(proxyReq)
+			if err != nil {
+				if req.Context().Err() != nil {
+					cp.releaseCircuitPermit(index, allow.usedProbe)
+					cancelAttempt(nil)
+					return
+				}
+				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
+				cancelAttempt(nil)
+				nextIndex, nextName := nextProviderName(cp, index)
+				summary := describeAttemptFailure(provider.Name, "network", 0, true)
+				attemptSummaries = append(attemptSummaries, summary)
+				if nextName != "" {
+					logger.Warn("[%s] %s; trying next=%s", cp.clientType, summary, nextName)
+				} else {
+					logger.Warn("[%s] %s; trying next provider", cp.clientType, summary)
+				}
+				lastSwitchReason = "network"
+				lastSwitchStatus = 0
+				lastFailedProvider = provider.Name
+				if nextName != "" {
+					cp.announceProviderSwitch(provider.Name, nextName, lastSwitchReason, lastSwitchStatus)
+				}
+				cp.setCurrentIndex(nextIndex)
+				providerFailed = true
+				break
+			}
+
+			var (
+				action   failureAction
+				reason   string
+				msg      string
+				cooldown time.Duration
+			)
+			inspect := resp.StatusCode == http.StatusUnauthorized ||
+				resp.StatusCode == http.StatusForbidden ||
+				resp.StatusCode == http.StatusPaymentRequired ||
+				resp.StatusCode == http.StatusTooManyRequests ||
+				shouldRetry(resp.StatusCode)
+			if inspect {
+				body, truncated := readResponseBodyBytes(resp, 32*1024)
+				action, reason, msg, cooldown = classifyUpstreamFailure(resp.StatusCode, resp.Header, body, truncated)
+			} else {
+				action = failureReturnToClient
+			}
+
+			if action != failureReturnToClient {
+				resp.Body.Close()
+				cancelAttempt(nil)
+				lastFailedProvider = provider.Name
+				summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
+				attemptSummaries = append(attemptSummaries, summary)
+				if isKeyScopedFailure(reason) {
+					d := keyFailureDuration(reason, cooldown, cp.reactivateAfter)
+					if d > 0 {
+						cp.deactivateKeyFor(index, keyIndex, reason, resp.StatusCode, msg, d)
+					}
+					nextKeyActive := cp.activeKeyCount(index)
+					if nextKeyActive > 0 {
+						nextKeyIndex := cp.nextActiveKeyIndex(index, keyIndex)
+						cp.setCurrentKeyIndex(index, nextKeyIndex)
+						if action == failureDeactivateAndRetryNext {
+							logger.Error("[%s] %s; trying next key for provider=%s", cp.clientType, summary, provider.Name)
+						} else {
+							logger.Warn("[%s] %s; trying next key for provider=%s", cp.clientType, summary, provider.Name)
+						}
+						continue
+					}
+					if d > 0 {
+						cp.deactivateFor(index, reason, resp.StatusCode, msg, d)
+					}
+					cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, reason)
+					keyExhausted = true
+					keyExhaustedReason = reason
+					keyExhaustedStatus = resp.StatusCode
+					break
+				}
+
+				cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, reason)
+				lastSwitchReason = reason
+				lastSwitchStatus = resp.StatusCode
+				nextIndex, nextName := nextProviderName(cp, index)
+				switch action {
+				case failureDeactivateAndRetryNext:
+					cp.deactivateFor(index, reason, resp.StatusCode, msg, cp.reactivateAfter)
+					if nextName != "" {
+						logger.Error("[%s] %s; marking provider unavailable and trying next=%s", cp.clientType, summary, nextName)
+					} else {
+						logger.Error("[%s] %s; marking provider unavailable and trying next provider", cp.clientType, summary)
+					}
+				case failureRetryNext:
+					summaryWithCooldown := summary
+					if cooldown > 0 {
+						cp.deactivateFor(index, reason, resp.StatusCode, msg, cooldown)
+						summaryWithCooldown = fmt.Sprintf("%s; cooling down for %s", summary, cooldown)
+					}
+					if nextName != "" {
+						logger.Warn("[%s] %s; trying next=%s", cp.clientType, summaryWithCooldown, nextName)
+					} else {
+						logger.Warn("[%s] %s; trying next provider", cp.clientType, summaryWithCooldown)
+					}
+				}
+				if nextName != "" {
+					cp.announceProviderSwitch(provider.Name, nextName, lastSwitchReason, lastSwitchStatus)
+				}
+				cp.setCurrentIndex(nextIndex)
+				providerFailed = true
+				break
+			}
+
+			onCommit := func() {
+				cp.setCurrentIndex(index)
+				cp.setCurrentKeyIndex(index, keyIndex)
+			}
+
+			result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
+			if result.kind == streamFinal {
+				cp.logRequestResult(provider.Name, resp.StatusCode, result, false)
 				return
 			}
-			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
-			cancelAttempt(nil)
-			nextIndex, nextName := nextProviderName(cp, index)
-			summary := describeAttemptFailure(provider.Name, "network", 0, true)
-			attemptSummaries = append(attemptSummaries, summary)
-			if nextName != "" {
-				logger.Warn("[%s] %s; trying next=%s", cp.clientType, summary, nextName)
-			} else {
+
+			if isUpstreamIdleTimeout(attemptCtx, attemptCtx.Err()) {
+				summary := describeAttemptFailure(provider.Name, "idle_timeout", 0, true)
+				attemptSummaries = append(attemptSummaries, summary)
 				logger.Warn("[%s] %s; trying next provider", cp.clientType, summary)
+				lastSwitchReason = "idle_timeout"
+				lastSwitchStatus = 0
+				lastFailedProvider = provider.Name
+				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "idle_timeout")
+			} else {
+				summary := describeAttemptFailure(provider.Name, "network", 0, true)
+				attemptSummaries = append(attemptSummaries, summary)
+				logger.Warn("[%s] %s; trying next provider", cp.clientType, summary)
+				lastSwitchReason = "network"
+				lastSwitchStatus = 0
+				lastFailedProvider = provider.Name
+				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
 			}
-			lastSwitchReason = "network"
-			lastSwitchStatus = 0
-			lastFailedProvider = provider.Name
-			if nextName != "" {
-				cp.announceProviderSwitch(provider.Name, nextName, lastSwitchReason, lastSwitchStatus)
-			}
-			cp.setCurrentIndex(nextIndex)
-			continue
-		}
-
-		var (
-			action   failureAction
-			reason   string
-			msg      string
-			cooldown time.Duration
-		)
-		inspect := resp.StatusCode == http.StatusUnauthorized ||
-			resp.StatusCode == http.StatusForbidden ||
-			resp.StatusCode == http.StatusPaymentRequired ||
-			resp.StatusCode == http.StatusTooManyRequests ||
-			shouldRetry(resp.StatusCode)
-		if inspect {
-			body, truncated := readResponseBodyBytes(resp, 32*1024)
-			action, reason, msg, cooldown = classifyUpstreamFailure(resp.StatusCode, resp.Header, body, truncated)
-		} else {
-			action = failureReturnToClient
-		}
-
-		if action != failureReturnToClient {
-			cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, reason)
-			resp.Body.Close()
 			cancelAttempt(nil)
-			lastSwitchReason = reason
-			lastSwitchStatus = resp.StatusCode
-			lastFailedProvider = provider.Name
 			nextIndex, nextName := nextProviderName(cp, index)
-			summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
-			attemptSummaries = append(attemptSummaries, summary)
-			switch action {
-			case failureDeactivateAndRetryNext:
-				cp.deactivateFor(index, reason, resp.StatusCode, msg, cp.reactivateAfter)
-				if nextName != "" {
-					logger.Error("[%s] %s; marking provider unavailable and trying next=%s", cp.clientType, summary, nextName)
-				} else {
-					logger.Error("[%s] %s; marking provider unavailable and trying next provider", cp.clientType, summary)
-				}
-			case failureRetryNext:
-				summaryWithCooldown := summary
-				if cooldown > 0 {
-					cp.deactivateFor(index, reason, resp.StatusCode, msg, cooldown)
-					summaryWithCooldown = fmt.Sprintf("%s; cooling down for %s", summary, cooldown)
-				}
-				if nextName != "" {
-					logger.Warn("[%s] %s; trying next=%s", cp.clientType, summaryWithCooldown, nextName)
-				} else {
-					logger.Warn("[%s] %s; trying next provider", cp.clientType, summaryWithCooldown)
-				}
-			}
 			if nextName != "" {
 				cp.announceProviderSwitch(provider.Name, nextName, lastSwitchReason, lastSwitchStatus)
 			}
 			cp.setCurrentIndex(nextIndex)
+			providerFailed = true
+			break
+		}
+
+		if providerFailed {
 			continue
 		}
-
-		// Success (or pass-through response) - copy response to client. For streaming endpoints
-		// (SSE), wait for the first body bytes before sending headers so we can fail over cleanly
-		// if the upstream hangs after headers.
-		// Found a working provider.
-		onCommit := func() {
-			cp.setCurrentIndex(index)
-		}
-
-		result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
-		if result.kind == streamFinal {
-			cp.logRequestResult(provider.Name, resp.StatusCode, result, false)
-			return
-		}
-
-		// Failed before committing headers (e.g. idle timeout during first byte read).
-		// Failover to next provider.
-		if isUpstreamIdleTimeout(attemptCtx, attemptCtx.Err()) {
-			summary := describeAttemptFailure(provider.Name, "idle_timeout", 0, true)
-			attemptSummaries = append(attemptSummaries, summary)
-			logger.Warn("[%s] %s; trying next provider", cp.clientType, summary)
-			lastSwitchReason = "idle_timeout"
-			lastSwitchStatus = 0
+		if keyExhausted {
 			lastFailedProvider = provider.Name
-			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "idle_timeout")
-		} else {
-			summary := describeAttemptFailure(provider.Name, "network", 0, true)
-			attemptSummaries = append(attemptSummaries, summary)
-			logger.Warn("[%s] %s; trying next provider", cp.clientType, summary)
-			lastSwitchReason = "network"
-			lastSwitchStatus = 0
-			lastFailedProvider = provider.Name
-			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
+			lastSwitchReason = keyExhaustedReason
+			lastSwitchStatus = keyExhaustedStatus
+			nextIndex, nextName := nextProviderName(cp, index)
+			if nextName != "" {
+				logger.Warn("[%s] provider %s exhausted available keys; trying next=%s", cp.clientType, provider.Name, nextName)
+				cp.announceProviderSwitch(provider.Name, nextName, keyExhaustedReason, keyExhaustedStatus)
+			} else {
+				logger.Warn("[%s] provider %s exhausted available keys; trying next provider", cp.clientType, provider.Name)
+			}
+			cp.setCurrentIndex(nextIndex)
 		}
-		cancelAttempt(nil)
-		nextIndex, nextName := nextProviderName(cp, index)
-		if nextName != "" {
-			cp.announceProviderSwitch(provider.Name, nextName, lastSwitchReason, lastSwitchStatus)
-		}
-		cp.setCurrentIndex(nextIndex)
-		continue
 	}
 
 	// If we've cooled down all providers during this request, surface a Retry-After to the client.
@@ -359,7 +434,7 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 		}
 
 		index := (startIndex + offset) % len(cp.providers)
-		if cp.isDeactivated(index) {
+		if cp.isDeactivated(index) || cp.activeKeyCount(index) == 0 {
 			continue
 		}
 		now := time.Now()
@@ -369,138 +444,177 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 		}
 		attempted++
 		provider := cp.providers[index]
-
-		logger.Debug("[%s] forwarding to: %s (count_tokens attempt %d/%d)", cp.clientType, provider.Name, attempted, active)
-
-		attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
-		reqWithAttemptCtx := req.WithContext(attemptCtx)
-
-		proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, path, bodyBytes)
-		if err != nil {
-			summary := describeRequestBuildFailure(provider.Name, err)
-			attemptSummaries = append(attemptSummaries, summary)
-			logger.Error("[%s] %s during count_tokens", cp.clientType, summary)
-			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+		keyActive, keyStart := cp.getActiveKeyCountAndStartIndex(index, true)
+		if keyActive == 0 {
 			cp.releaseCircuitPermit(index, allow.usedProbe)
-			cancelAttempt(nil)
 			continue
 		}
-		hadUpstreamAttempt = true
 
-		proxyReq.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-		}
+		logger.Debug("[%s] forwarding to: %s (count_tokens attempt %d/%d, keys=%d)", cp.clientType, provider.Name, attempted, active, len(cp.providerKeys[index]))
 
-		resp, err := cp.httpClient.Do(proxyReq)
-		if err != nil {
-			if req.Context().Err() != nil {
+		providerFailed := false
+		keyExhausted := false
+
+		for keyOffset, keyTried := 0, 0; keyOffset < len(cp.providerKeys[index]) && keyTried < keyActive; keyOffset++ {
+			keyIndex := (keyStart + keyOffset) % len(cp.providerKeys[index])
+			if cp.isKeyDeactivated(index, keyIndex) {
+				continue
+			}
+			keyTried++
+			apiKey := cp.providerKeys[index][keyIndex]
+
+			attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
+			reqWithAttemptCtx := req.WithContext(attemptCtx)
+
+			proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, apiKey, path, bodyBytes)
+			if err != nil {
+				summary := describeRequestBuildFailure(provider.Name, err)
+				attemptSummaries = append(attemptSummaries, summary)
+				logger.Error("[%s] %s during count_tokens", cp.clientType, summary)
+				cp.setCountTokensIndex(cp.nextActiveIndex(index))
 				cp.releaseCircuitPermit(index, allow.usedProbe)
 				cancelAttempt(nil)
+				providerFailed = true
+				break
+			}
+			hadUpstreamAttempt = true
+
+			proxyReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+
+			resp, err := cp.httpClient.Do(proxyReq)
+			if err != nil {
+				if req.Context().Err() != nil {
+					cp.releaseCircuitPermit(index, allow.usedProbe)
+					cancelAttempt(nil)
+					return
+				}
+				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
+				cancelAttempt(nil)
+				nextIndex, nextName := nextProviderName(cp, index)
+				summary := describeAttemptFailure(provider.Name, "network", 0, true)
+				attemptSummaries = append(attemptSummaries, summary)
+				if nextName != "" {
+					logger.Warn("[%s] %s during count_tokens; trying next=%s", cp.clientType, summary, nextName)
+				} else {
+					logger.Warn("[%s] %s during count_tokens; trying next provider", cp.clientType, summary)
+				}
+				cp.setCountTokensIndex(nextIndex)
+				providerFailed = true
+				break
+			}
+
+			var (
+				action   failureAction
+				reason   string
+				msg      string
+				cooldown time.Duration
+			)
+			inspect := resp.StatusCode == http.StatusUnauthorized ||
+				resp.StatusCode == http.StatusForbidden ||
+				resp.StatusCode == http.StatusPaymentRequired ||
+				resp.StatusCode == http.StatusTooManyRequests ||
+				shouldRetry(resp.StatusCode)
+			if inspect {
+				body, truncated := readResponseBodyBytes(resp, 32*1024)
+				action, reason, msg, cooldown = classifyUpstreamFailure(resp.StatusCode, resp.Header, body, truncated)
+			} else {
+				action = failureReturnToClient
+			}
+
+			if action != failureReturnToClient {
+				resp.Body.Close()
+				cancelAttempt(nil)
+				summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
+				attemptSummaries = append(attemptSummaries, summary)
+				if isKeyScopedFailure(reason) {
+					d := keyFailureDuration(reason, cooldown, cp.reactivateAfter)
+					if d > 0 {
+						cp.deactivateKeyFor(index, keyIndex, reason, resp.StatusCode, msg, d)
+					}
+					if cp.activeKeyCount(index) > 0 {
+						nextKeyIndex := cp.nextActiveKeyIndex(index, keyIndex)
+						cp.setCountTokensKeyIndex(index, nextKeyIndex)
+						if action == failureDeactivateAndRetryNext {
+							logger.Error("[%s] %s during count_tokens; trying next key for provider=%s", cp.clientType, summary, provider.Name)
+						} else {
+							logger.Warn("[%s] %s during count_tokens; trying next key for provider=%s", cp.clientType, summary, provider.Name)
+						}
+						continue
+					}
+					if d > 0 {
+						cp.deactivateFor(index, reason, resp.StatusCode, msg, d)
+					}
+					cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, reason)
+					keyExhausted = true
+					break
+				}
+
+				cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, reason)
+				nextIndex, nextName := nextProviderName(cp, index)
+				cp.setCountTokensIndex(nextIndex)
+				switch action {
+				case failureDeactivateAndRetryNext:
+					cp.deactivateFor(index, reason, resp.StatusCode, msg, cp.reactivateAfter)
+					if nextName != "" {
+						logger.Error("[%s] %s during count_tokens; marking provider unavailable and trying next=%s", cp.clientType, summary, nextName)
+					} else {
+						logger.Error("[%s] %s during count_tokens; marking provider unavailable and trying next provider", cp.clientType, summary)
+					}
+				case failureRetryNext:
+					if nextName != "" {
+						logger.Warn("[%s] %s during count_tokens; trying next=%s", cp.clientType, summary, nextName)
+					} else {
+						logger.Warn("[%s] %s during count_tokens; trying next provider", cp.clientType, summary)
+					}
+				}
+				providerFailed = true
+				break
+			}
+
+			onCommit := func() {
+				cp.setCountTokensIndex(index)
+				cp.setCountTokensKeyIndex(index, keyIndex)
+			}
+
+			result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
+			if result.kind == streamFinal {
 				return
 			}
-			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
+
 			cancelAttempt(nil)
-			nextIndex, nextName := nextProviderName(cp, index)
-			summary := describeAttemptFailure(provider.Name, "network", 0, true)
-			attemptSummaries = append(attemptSummaries, summary)
-			if nextName != "" {
-				logger.Warn("[%s] %s during count_tokens; trying next=%s", cp.clientType, summary, nextName)
-			} else {
-				logger.Warn("[%s] %s during count_tokens; trying next provider", cp.clientType, summary)
+			if req.Context().Err() != nil {
+				cp.releaseCircuitPermit(index, allow.usedProbe)
+				return
 			}
-			cp.setCountTokensIndex(nextIndex)
-			continue
+			reason = "network"
+			if isUpstreamIdleTimeout(attemptCtx, attemptCtx.Err()) {
+				reason = "idle_timeout"
+				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "idle_timeout")
+			} else {
+				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
+			}
+			summary := describeAttemptFailure(provider.Name, reason, 0, true)
+			attemptSummaries = append(attemptSummaries, summary)
+			logger.Warn("[%s] %s during count_tokens; trying next provider", cp.clientType, summary)
+			cp.setCountTokensIndex(cp.nextActiveIndex(index))
+			providerFailed = true
+			break
 		}
 
-		// For count_tokens, only treat auth/billing failures as hard signals that can deactivate a provider.
-		// Other transient failures should not impact the main conversation stickiness (cp.currentIndex).
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			msg := readAndTruncateResponse(resp, 2048)
-			resp.Body.Close()
-			cp.deactivateFor(index, "auth", resp.StatusCode, msg, cp.reactivateAfter)
-			cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, "auth")
-			nextIndex, nextName := nextProviderName(cp, index)
-			cp.setCountTokensIndex(nextIndex)
-			summary := describeAttemptFailure(provider.Name, "auth", resp.StatusCode, false)
-			attemptSummaries = append(attemptSummaries, summary)
-			if nextName != "" {
-				logger.Error("[%s] %s during count_tokens; marking provider unavailable and trying next=%s", cp.clientType, summary, nextName)
-			} else {
-				logger.Error("[%s] %s during count_tokens; marking provider unavailable and trying next provider", cp.clientType, summary)
-			}
-			cancelAttempt(nil)
+		if providerFailed {
 			continue
 		}
-		if resp.StatusCode == http.StatusPaymentRequired {
-			msg := readAndTruncateResponse(resp, 2048)
-			resp.Body.Close()
-			cp.deactivateFor(index, "billing", resp.StatusCode, msg, cp.reactivateAfter)
-			cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, "billing")
+		if keyExhausted {
 			nextIndex, nextName := nextProviderName(cp, index)
 			cp.setCountTokensIndex(nextIndex)
-			summary := describeAttemptFailure(provider.Name, "billing", resp.StatusCode, false)
-			attemptSummaries = append(attemptSummaries, summary)
 			if nextName != "" {
-				logger.Error("[%s] %s during count_tokens; marking provider unavailable and trying next=%s", cp.clientType, summary, nextName)
+				logger.Warn("[%s] provider %s exhausted available keys during count_tokens; trying next=%s", cp.clientType, provider.Name, nextName)
 			} else {
-				logger.Error("[%s] %s during count_tokens; marking provider unavailable and trying next provider", cp.clientType, summary)
+				logger.Warn("[%s] provider %s exhausted available keys during count_tokens; trying next provider", cp.clientType, provider.Name)
 			}
-			cancelAttempt(nil)
-			continue
 		}
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
-			_ = readAndTruncateResponse(resp, 2048)
-			resp.Body.Close()
-			if resp.StatusCode >= 500 {
-				cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, "server")
-			} else {
-				cp.recordCircuitFailureFromClassification(time.Now(), index, allow.usedProbe, "rate_limit")
-			}
-			nextIndex, nextName := nextProviderName(cp, index)
-			cp.setCountTokensIndex(nextIndex)
-			reason := "rate_limit"
-			if resp.StatusCode >= 500 {
-				reason = "server"
-			}
-			summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
-			attemptSummaries = append(attemptSummaries, summary)
-			if nextName != "" {
-				logger.Warn("[%s] %s during count_tokens; trying next=%s", cp.clientType, summary, nextName)
-			} else {
-				logger.Warn("[%s] %s during count_tokens; trying next provider", cp.clientType, summary)
-			}
-			cancelAttempt(nil)
-			continue
-		}
-
-		// Success (or any non-retriable response) - return to client and make count_tokens sticky.
-		onCommit := func() {
-			cp.setCountTokensIndex(index)
-		}
-
-		result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
-		if result.kind == streamFinal {
-			return
-		}
-
-		// Failed before committing headers (count_tokens: try next provider).
-		cancelAttempt(nil)
-		if req.Context().Err() != nil {
-			cp.releaseCircuitPermit(index, allow.usedProbe)
-			return
-		}
-		reason := "network"
-		if isUpstreamIdleTimeout(attemptCtx, attemptCtx.Err()) {
-			reason = "idle_timeout"
-			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "idle_timeout")
-		} else {
-			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
-		}
-		summary := describeAttemptFailure(provider.Name, reason, 0, true)
-		attemptSummaries = append(attemptSummaries, summary)
-		logger.Warn("[%s] %s during count_tokens; trying next provider", cp.clientType, summary)
-		cp.setCountTokensIndex(cp.nextActiveIndex(index))
-		continue
 	}
 
 	if len(attemptSummaries) > 0 {

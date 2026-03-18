@@ -78,11 +78,15 @@ type ClientProxy struct {
 	pinnedProvider   string
 	pinnedIndex      int
 	providers        []config.Provider
+	providerKeys     [][]string
 	currentIndex     int
 	countTokensIndex int
+	currentKeyIndex      []int
+	countTokensKeyIndex  []int
 	mu               sync.RWMutex
 	httpClient       *http.Client
 	deactivated      []providerDeactivation
+	keyDeactivated   [][]providerDeactivation
 	reactivateAfter  time.Duration
 	upstreamIdle     time.Duration
 
@@ -160,8 +164,17 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 	}
 
 	breakers := make([]*circuitBreaker, len(providers))
+	providerKeys := make([][]string, len(providers))
+	currentKeyIndex := make([]int, len(providers))
+	countTokensKeyIndex := make([]int, len(providers))
+	keyDeactivated := make([][]providerDeactivation, len(providers))
 	for i := range providers {
 		breakers[i] = newCircuitBreaker(cbCfg)
+		providerKeys[i] = providers[i].NormalizedAPIKeys()
+		if len(providerKeys[i]) == 0 {
+			providerKeys[i] = []string{""}
+		}
+		keyDeactivated[i] = make([]providerDeactivation, len(providerKeys[i]))
 	}
 	return &ClientProxy{
 		clientType:     clientType,
@@ -169,6 +182,7 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 		pinnedProvider: pinnedProvider,
 		pinnedIndex:    pinnedIndex,
 		providers:      providers,
+		providerKeys:   providerKeys,
 		currentIndex: func() int {
 			if pinnedIndex >= 0 {
 				return pinnedIndex
@@ -181,10 +195,13 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 			}
 			return 0
 		}(),
-		deactivated:     make([]providerDeactivation, len(providers)),
-		reactivateAfter: reactivateAfter,
-		upstreamIdle:    upstreamIdle,
-		breakers:        breakers,
+		currentKeyIndex:     currentKeyIndex,
+		countTokensKeyIndex: countTokensKeyIndex,
+		deactivated:         make([]providerDeactivation, len(providers)),
+		keyDeactivated:      keyDeactivated,
+		reactivateAfter:     reactivateAfter,
+		upstreamIdle:        upstreamIdle,
+		breakers:            breakers,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -535,7 +552,7 @@ func isClaudeCountTokensPath(path string) bool {
 }
 
 // createProxyRequest creates a new request to forward to the provider
-func (cp *ClientProxy) createProxyRequest(original *http.Request, provider config.Provider, path string, body []byte) (*http.Request, error) {
+func (cp *ClientProxy) createProxyRequest(original *http.Request, provider config.Provider, apiKey string, path string, body []byte) (*http.Request, error) {
 	targetURL, err := buildTargetURL(provider.BaseURL, path, original.URL.RawQuery)
 	if err != nil {
 		return nil, err
@@ -564,13 +581,13 @@ func (cp *ClientProxy) createProxyRequest(original *http.Request, provider confi
 	// Set/override the API key based on the original header format
 	// Claude uses x-api-key or Authorization
 	// OpenAI uses Authorization: Bearer
-	if provider.APIKey != "" {
+	if apiKey != "" {
 		// Check if original request uses x-api-key (Claude style)
 		if original.Header.Get("x-api-key") != "" {
-			proxyReq.Header.Set("x-api-key", provider.APIKey)
+			proxyReq.Header.Set("x-api-key", apiKey)
 		} else {
 			// Default to Bearer token (OpenAI style)
-			proxyReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 	}
 

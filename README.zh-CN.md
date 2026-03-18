@@ -141,7 +141,9 @@ providers:
 
   - name: "openrouter"
     base_url: "https://openrouter.ai/api"
-    api_key: "sk-or-xxx"
+    api_keys:
+      - "sk-or-xxx"
+      - "sk-or-yyy"
     priority: 2
     enabled: true
 
@@ -151,6 +153,12 @@ providers:
     priority: 3
     enabled: false  # 禁用此供应商
 ```
+
+补充说明：
+
+- 每个 provider 必须二选一配置 `api_key` 或 `api_keys`。
+- `api_keys` 是有序列表；当遇到鉴权 / 配额 / 限流类失败时，clipal 会先尝试同一 provider 的下一个 key，再决定是否切换到下一个 provider。
+- 在 `manual` 模式下，clipal 仍会直接返回 pinned provider 的响应，不会自动切换到其他 key 或其他 provider。
 
 ### 配置字段说明
 
@@ -183,7 +191,8 @@ providers:
 | `providers` | array | 是 | API 供应商列表 |
 | `providers[].name` | string | 是 | 供应商名称（用于日志标识） |
 | `providers[].base_url` | string | 是 | API 供应商 Base URL |
-| `providers[].api_key` | string | 是 | API Key |
+| `providers[].api_key` | string | 否 | 单个 API Key；与 `providers[].api_keys` 二选一，至少配置一个 |
+| `providers[].api_keys` | array | 否 | 多个 API Key（有序列表）；与 `providers[].api_key` 二选一，至少配置一个 |
 | `providers[].priority` | int | 否 | 优先级（数字越小优先级越高，从 1 开始；省略或为 0 时默认 1） |
 | `providers[].enabled` | bool | 否 | 是否启用，默认 true |
 
@@ -241,7 +250,7 @@ cp examples/codex.yaml ~/.clipal/codex.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
-4) 编辑 `~/.clipal/*.yaml`，填入你的 `api_key`（以及需要的话 `base_url`）。
+4) 编辑 `~/.clipal/*.yaml`，填入你的 `api_key` 或 `api_keys`（以及需要的话 `base_url`）。
 
 5) 启动并检查健康：
 

@@ -116,10 +116,18 @@ providers:
 
   - name: "openrouter"
     base_url: "https://openrouter.ai/api"
-    api_key: "sk-or-xxx"
+    api_keys:
+      - "sk-or-xxx"
+      - "sk-or-yyy"
     priority: 2
     enabled: true
 ```
+
+Notes:
+
+- Each provider must set either `api_key` or `api_keys`.
+- `api_keys` is an ordered list. Clipal will try the next key on auth/quota/rate-limit style failures before moving to the next provider.
+- In `manual` mode, Clipal still returns the pinned provider response directly; it does not fail over to another key or provider.
 
 ## Provider selection & failover
 
@@ -167,7 +175,7 @@ cp examples/codex.yaml ~/.clipal/codex.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
-4) Edit `~/.clipal/*.yaml` and set `api_key` (and `base_url` if needed).
+4) Edit `~/.clipal/*.yaml` and set `api_key` or `api_keys` (and `base_url` if needed).
 
 5) Start and verify health:
 

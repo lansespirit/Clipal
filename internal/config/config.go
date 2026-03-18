@@ -74,11 +74,12 @@ const (
 
 // Provider represents an API provider configuration
 type Provider struct {
-	Name     string `yaml:"name"`
-	BaseURL  string `yaml:"base_url"`
-	APIKey   string `yaml:"api_key"`
-	Priority int    `yaml:"priority"`
-	Enabled  *bool  `yaml:"enabled,omitempty"`
+	Name     string   `yaml:"name"`
+	BaseURL  string   `yaml:"base_url"`
+	APIKey   string   `yaml:"api_key,omitempty"`
+	APIKeys  []string `yaml:"api_keys,omitempty"`
+	Priority int      `yaml:"priority"`
+	Enabled  *bool    `yaml:"enabled,omitempty"`
 }
 
 // IsEnabled returns whether the provider is enabled (default true)
@@ -87,6 +88,48 @@ func (p *Provider) IsEnabled() bool {
 		return true
 	}
 	return *p.Enabled
+}
+
+// NormalizedAPIKeys returns the configured API keys with whitespace removed,
+// empty entries dropped, and duplicates removed while preserving order.
+func (p *Provider) NormalizedAPIKeys() []string {
+	if p == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(p.APIKeys)+1)
+	seen := make(map[string]struct{}, len(p.APIKeys)+1)
+	appendKey := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		keys = append(keys, v)
+	}
+	if strings.TrimSpace(p.APIKey) != "" {
+		appendKey(p.APIKey)
+	}
+	for _, key := range p.APIKeys {
+		appendKey(key)
+	}
+	return keys
+}
+
+// PrimaryAPIKey returns the first normalized API key, or an empty string.
+func (p *Provider) PrimaryAPIKey() string {
+	keys := p.NormalizedAPIKeys()
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+// KeyCount returns the number of normalized API keys configured for the provider.
+func (p *Provider) KeyCount() int {
+	return len(p.NormalizedAPIKeys())
 }
 
 // ClientConfig represents a client-specific configuration
@@ -213,6 +256,14 @@ func applyClientDefaults(cc *ClientConfig) {
 	for i := range cc.Providers {
 		if cc.Providers[i].Priority == 0 {
 			cc.Providers[i].Priority = 1
+		}
+		cc.Providers[i].APIKey = strings.TrimSpace(cc.Providers[i].APIKey)
+		cc.Providers[i].APIKeys = cc.Providers[i].NormalizedAPIKeys()
+		if len(cc.Providers[i].APIKeys) == 1 {
+			cc.Providers[i].APIKey = cc.Providers[i].APIKeys[0]
+			cc.Providers[i].APIKeys = nil
+		} else {
+			cc.Providers[i].APIKey = ""
 		}
 	}
 }
@@ -373,8 +424,11 @@ func validateProviders(clientName string, providers []Provider) error {
 		if p.BaseURL == "" {
 			return fmt.Errorf("%s provider %s: base_url is required", clientName, p.Name)
 		}
-		if p.APIKey == "" {
-			return fmt.Errorf("%s provider %s: api_key is required", clientName, p.Name)
+		if strings.TrimSpace(p.APIKey) != "" && len(p.APIKeys) > 0 {
+			return fmt.Errorf("%s provider %s: api_key and api_keys cannot both be set", clientName, p.Name)
+		}
+		if len(p.NormalizedAPIKeys()) == 0 {
+			return fmt.Errorf("%s provider %s: api_key or api_keys is required", clientName, p.Name)
 		}
 		if p.Priority < 1 {
 			return fmt.Errorf("%s provider %s: priority must be >= 1", clientName, p.Name)

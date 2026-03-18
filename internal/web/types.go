@@ -78,9 +78,10 @@ type ClientConfigResponse struct {
 
 // ProviderRequest represents a request to create or update a provider
 type ProviderRequest struct {
-	Name    string `json:"name"`
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	Name    string   `json:"name"`
+	BaseURL string   `json:"base_url"`
+	APIKey  string   `json:"api_key,omitempty"`
+	APIKeys []string `json:"api_keys,omitempty"`
 	// Priority is 1-based. Omit to keep existing value (on updates) or to
 	// auto-assign the next priority (on create).
 	Priority *int  `json:"priority,omitempty"`
@@ -93,6 +94,7 @@ type ProviderResponse struct {
 	BaseURL  string `json:"base_url"`
 	Priority int    `json:"priority"`
 	Enabled  bool   `json:"enabled"`
+	KeyCount int    `json:"key_count"`
 }
 
 // ReorderRequest represents a request to reorder providers
@@ -116,11 +118,12 @@ type ClientConfigExport struct {
 }
 
 type ProviderExport struct {
-	Name     string `json:"name"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Priority int    `json:"priority"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Name     string   `json:"name"`
+	BaseURL  string   `json:"base_url"`
+	APIKey   string   `json:"api_key,omitempty"`
+	APIKeys  []string `json:"api_keys,omitempty"`
+	Priority int      `json:"priority"`
+	Enabled  *bool    `json:"enabled,omitempty"`
 }
 
 // StatusResponse represents the system status
@@ -156,12 +159,14 @@ type ProviderSwitchStatus struct {
 }
 
 type ProviderStatus struct {
-	Name     string `json:"name"`
-	Priority int    `json:"priority"`
-	Enabled  bool   `json:"enabled"`
-	State    string `json:"state,omitempty"`
-	Label    string `json:"label,omitempty"`
-	Detail   string `json:"detail,omitempty"`
+	Name              string `json:"name"`
+	Priority          int    `json:"priority"`
+	Enabled           bool   `json:"enabled"`
+	KeyCount          int    `json:"key_count"`
+	AvailableKeyCount int    `json:"available_key_count,omitempty"`
+	State             string `json:"state,omitempty"`
+	Label             string `json:"label,omitempty"`
+	Detail            string `json:"detail,omitempty"`
 
 	SkipReason string `json:"skip_reason,omitempty"` // disabled | deactivated | circuit_open
 
@@ -261,6 +266,7 @@ func toProviderResponses(providers []config.Provider) []ProviderResponse {
 			BaseURL:  p.BaseURL,
 			Priority: p.Priority,
 			Enabled:  p.IsEnabled(),
+			KeyCount: p.KeyCount(),
 		})
 	}
 	return out
@@ -273,6 +279,7 @@ func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {
 			Name:     p.Name,
 			BaseURL:  p.BaseURL,
 			APIKey:   p.APIKey,
+			APIKeys:  append([]string(nil), p.APIKeys...),
 			Priority: p.Priority,
 			Enabled:  p.Enabled,
 		})

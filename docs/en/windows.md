@@ -38,7 +38,7 @@ Copy-Item .\\examples\\codex.yaml "$env:USERPROFILE\\.clipal\\codex.yaml" -Force
 Copy-Item .\\examples\\gemini.yaml "$env:USERPROFILE\\.clipal\\gemini.yaml" -Force
 ```
 
-Edit `api_key` with your real value.
+Edit `api_key` or `api_keys` with your real value.
 
 ## 4. Foreground run (first-time verification)
 

@@ -251,7 +251,11 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 
 	name := strings.TrimSpace(req.Name)
 	baseURL := strings.TrimSpace(req.BaseURL)
-	apiKey := strings.TrimSpace(req.APIKey)
+	keys, err := normalizeProviderKeys(req)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Validate provider fields (name is used as a URL identifier).
 	if err := validateProviderName(name); err != nil {
@@ -262,8 +266,8 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if apiKey == "" {
-		writeError(w, "api_key is required", http.StatusBadRequest)
+	if len(keys) == 0 {
+		writeError(w, "api_key or api_keys is required", http.StatusBadRequest)
 		return
 	}
 
@@ -301,10 +305,10 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 	provider := config.Provider{
 		Name:     name,
 		BaseURL:  baseURL,
-		APIKey:   apiKey,
 		Priority: priority,
 		Enabled:  req.Enabled,
 	}
+	assignProviderKeys(&provider, keys)
 
 	cc.Providers = append(cc.Providers, provider)
 	if err := cfg.Validate(); err != nil {
@@ -356,8 +360,10 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if strings.TrimSpace(req.APIKey) != "" {
-		req.APIKey = strings.TrimSpace(req.APIKey)
+	keys, err := normalizeProviderKeys(req)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if req.Priority != nil {
 		if *req.Priority < 1 {
@@ -386,7 +392,7 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated := updateProviderInList(cc.Providers, providerName, req)
+	updated := updateProviderInList(cc.Providers, providerName, req, keys)
 	if updated {
 		if err := cfg.Validate(); err != nil {
 			writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
@@ -608,9 +614,11 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 	for _, p := range providers {
 		enabled := p.IsEnabled()
 		ps := ProviderStatus{
-			Name:     p.Name,
-			Priority: p.Priority,
-			Enabled:  enabled,
+			Name:              p.Name,
+			Priority:          p.Priority,
+			Enabled:           enabled,
+			KeyCount:          p.KeyCount(),
+			AvailableKeyCount: p.KeyCount(),
 		}
 		if !enabled {
 			ps.SkipReason = "disabled"
@@ -622,6 +630,13 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 			continue
 		}
 		if rtSnap, ok := rtByName[p.Name]; ok {
+			if rtSnap.KeyCount > 0 {
+				ps.KeyCount = rtSnap.KeyCount
+			}
+			ps.AvailableKeyCount = rtSnap.AvailableKeyCount
+			if ps.SkipReason == "" && rtSnap.KeyCount > 0 && rtSnap.AvailableKeyCount == 0 {
+				ps.SkipReason = "keys_exhausted"
+			}
 			if !rtSnap.DeactivatedUntil.IsZero() && now.Before(rtSnap.DeactivatedUntil) {
 				ps.SkipReason = "deactivated"
 				ps.DeactivatedReason = rtSnap.DeactivatedReason
@@ -756,6 +771,49 @@ func providerNameExists(providers []config.Provider, name string) bool {
 	return false
 }
 
+func normalizeProviderKeys(req ProviderRequest) ([]string, error) {
+	apiKey := strings.TrimSpace(req.APIKey)
+	keys := make([]string, 0, len(req.APIKeys)+1)
+	seen := make(map[string]struct{}, len(req.APIKeys)+1)
+	appendKey := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		keys = append(keys, v)
+	}
+	if apiKey != "" && len(req.APIKeys) > 0 {
+		return nil, fmt.Errorf("api_key and api_keys cannot both be set")
+	}
+	if apiKey != "" {
+		appendKey(apiKey)
+	}
+	for _, key := range req.APIKeys {
+		appendKey(key)
+	}
+	return keys, nil
+}
+
+func assignProviderKeys(provider *config.Provider, keys []string) {
+	if provider == nil {
+		return
+	}
+	provider.APIKey = ""
+	provider.APIKeys = nil
+	switch len(keys) {
+	case 0:
+		return
+	case 1:
+		provider.APIKey = keys[0]
+	default:
+		provider.APIKeys = append([]string(nil), keys...)
+	}
+}
+
 func nextPriority(providers []config.Provider) int {
 	max := 0
 	for _, p := range providers {
@@ -781,7 +839,7 @@ func extractClientAndProvider(path string) (string, string) {
 	return "", ""
 }
 
-func updateProviderInList(providers []config.Provider, name string, req ProviderRequest) bool {
+func updateProviderInList(providers []config.Provider, name string, req ProviderRequest, keys []string) bool {
 	for i := range providers {
 		if providers[i].Name == name {
 			if req.Name != "" {
@@ -790,8 +848,8 @@ func updateProviderInList(providers []config.Provider, name string, req Provider
 			if req.BaseURL != "" {
 				providers[i].BaseURL = req.BaseURL
 			}
-			if req.APIKey != "" {
-				providers[i].APIKey = req.APIKey
+			if req.APIKey != "" || len(req.APIKeys) > 0 {
+				assignProviderKeys(&providers[i], keys)
 			}
 			if req.Priority != nil {
 				providers[i].Priority = *req.Priority

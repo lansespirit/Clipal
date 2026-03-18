@@ -102,6 +102,9 @@ providers:
 	if _, ok := got[0]["base_url"]; !ok {
 		t.Fatalf("expected base_url in provider listing, got keys=%v", keys(got[0]))
 	}
+	if got[0]["key_count"] != float64(1) {
+		t.Fatalf("expected key_count=1, got %v", got[0]["key_count"])
+	}
 }
 
 func TestHandleExportConfig_IncludesAPIKey_SnakeCase(t *testing.T) {
@@ -200,6 +203,37 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
 	}
 	if !cfg.Global.IgnoreCountTokensFailover {
 		t.Fatalf("expected ignore_count_tokens_failover=true")
+	}
+}
+
+func TestHandleAddProvider_AcceptsAPIKeys(t *testing.T) {
+	dir := t.TempDir()
+	api := NewAPI(dir, "test", nil)
+
+	body := []byte(`{
+  "name": "p1",
+  "base_url": "https://example.com",
+  "api_keys": ["key1", "key2"],
+  "priority": 1,
+  "enabled": true
+}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/providers/codex", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	api.HandleAddProvider(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.Codex.Providers[0].KeyCount(); got != 2 {
+		t.Fatalf("key count: got %d want %d", got, 2)
+	}
+	if cfg.Codex.Providers[0].APIKey != "" {
+		t.Fatalf("expected multi-key provider to be persisted via api_keys")
 	}
 }
 
@@ -397,6 +431,39 @@ func TestBuildClientStatus_IncludesRequestRejectedOutcome(t *testing.T) {
 	}
 	if got.LastRequest.Label != "Request rejected by proxy" {
 		t.Fatalf("last_request.label: got %q want %q", got.LastRequest.Label, "Request rejected by proxy")
+	}
+}
+
+func TestBuildClientStatus_ReportsNoAvailableKeys(t *testing.T) {
+	cc := config.ClientConfig{
+		Mode: config.ClientModeManual,
+		Providers: []config.Provider{
+			{Name: "p1", Priority: 1, APIKeys: []string{"k1", "k2"}},
+		},
+	}
+	rt := proxy.ClientRuntimeSnapshot{
+		CurrentProvider: "p1",
+		Providers: []proxy.ProviderRuntimeSnapshot{
+			{
+				Name:              "p1",
+				KeyCount:          2,
+				AvailableKeyCount: 0,
+			},
+		},
+	}
+
+	got := buildClientStatus(cc, cc.Providers, rt)
+	if len(got.Providers) != 1 {
+		t.Fatalf("providers len: got %d want %d", len(got.Providers), 1)
+	}
+	if got.Providers[0].State != "unavailable" {
+		t.Fatalf("provider.state: got %q want %q", got.Providers[0].State, "unavailable")
+	}
+	if got.Providers[0].SkipReason != "keys_exhausted" {
+		t.Fatalf("provider.skip_reason: got %q want %q", got.Providers[0].SkipReason, "keys_exhausted")
+	}
+	if got.Providers[0].AvailableKeyCount != 0 {
+		t.Fatalf("provider.available_key_count: got %d want %d", got.Providers[0].AvailableKeyCount, 0)
 	}
 }
 

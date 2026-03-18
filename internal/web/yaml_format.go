@@ -58,7 +58,15 @@ func formatClientConfigYAML(clientType string, cc config.ClientConfig) []byte {
 
 		b.WriteString(fmt.Sprintf("  - name: %s\n", yamlDoubleQuote(p.Name)))
 		b.WriteString(fmt.Sprintf("    base_url: %s\n", yamlDoubleQuote(p.BaseURL)))
-		b.WriteString(fmt.Sprintf("    api_key: %s\n", yamlDoubleQuote(p.APIKey)))
+		keys := p.NormalizedAPIKeys()
+		if len(keys) <= 1 {
+			b.WriteString(fmt.Sprintf("    api_key: %s\n", yamlDoubleQuote(p.PrimaryAPIKey())))
+		} else {
+			b.WriteString("    api_keys:\n")
+			for _, key := range keys {
+				b.WriteString(fmt.Sprintf("      - %s\n", yamlDoubleQuote(key)))
+			}
+		}
 		b.WriteString(fmt.Sprintf("    priority: %d\n", p.Priority))
 		b.WriteString(fmt.Sprintf("    enabled: %v\n", p.IsEnabled()))
 	}

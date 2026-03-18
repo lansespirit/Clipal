@@ -48,6 +48,18 @@ func TestDescribeProviderAvailability_States(t *testing.T) {
 	if probe.Label != "qaq (recovery probe)" {
 		t.Fatalf("probe.Label: got %q want %q", probe.Label, "qaq (recovery probe)")
 	}
+
+	noKeys := DescribeProviderAvailability("qaq", true, ProviderRuntimeSnapshot{
+		Name:              "qaq",
+		KeyCount:          2,
+		AvailableKeyCount: 0,
+	})
+	if noKeys.State != "unavailable" {
+		t.Fatalf("noKeys.State: got %q want %q", noKeys.State, "unavailable")
+	}
+	if noKeys.Label != "qaq (no keys available)" {
+		t.Fatalf("noKeys.Label: got %q want %q", noKeys.Label, "qaq (no keys available)")
+	}
 }
 
 func TestDescribeRequestOutcome_ExplicitFailure(t *testing.T) {

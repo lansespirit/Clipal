@@ -51,10 +51,16 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 	}
 
 	provider := cp.providers[index]
+	countTokens := cp.clientType == ClientClaudeCode && isClaudeCountTokensPath(path)
+	if index < 0 || index >= len(cp.providerKeys) || len(cp.providerKeys[index]) == 0 {
+		cp.recordTerminalRequest(time.Now(), provider.Name, http.StatusServiceUnavailable, "all_providers_unavailable", "Pinned provider has no configured API keys.")
+		writeProxyError(w, "Pinned provider has no configured API keys", http.StatusServiceUnavailable)
+		return
+	}
+	keyIndex := cp.preferredKeyIndex(index, countTokens)
 	attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
-
 	reqWithAttemptCtx := req.WithContext(attemptCtx)
-	proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, path, bodyBytes)
+	proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, cp.providerKeys[index][keyIndex], path, bodyBytes)
 	if err != nil {
 		logger.Error("[%s] failed to create request for %s: %v", cp.clientType, provider.Name, err)
 		cancelAttempt(nil)
@@ -79,10 +85,14 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 		return
 	}
 
-	// Manual mode: always return the pinned provider's response (no failover, no cooldown,
-	// and no circuit breaker state changes).
-
-	onCommit := func() { cp.setCurrentIndex(index) }
+	onCommit := func() {
+		cp.setCurrentIndex(index)
+		if countTokens {
+			cp.setCountTokensKeyIndex(index, keyIndex)
+			return
+		}
+		cp.setCurrentKeyIndex(index, keyIndex)
+	}
 	allow := circuitAllowResult{}
 	result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
 	if result.kind == streamFinal {

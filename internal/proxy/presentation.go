@@ -153,6 +153,18 @@ func DescribeProviderAvailability(name string, enabled bool, snap ProviderRuntim
 		}
 	}
 
+	if snap.KeyCount > 0 && snap.AvailableKeyCount == 0 {
+		detail := "No API keys are currently available for this provider."
+		if snap.KeyCount == 1 {
+			detail = "The configured API key is currently unavailable."
+		}
+		return ProviderAvailabilityPresentation{
+			State:  "unavailable",
+			Label:  providerStateLabel(name, "no keys available"),
+			Detail: detail,
+		}
+	}
+
 	switch strings.TrimSpace(snap.CircuitState) {
 	case "open":
 		return ProviderAvailabilityPresentation{

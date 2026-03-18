@@ -73,11 +73,12 @@ function app() {
         providerForm: {
             name: '',
             base_url: '',
-            api_key: '',
+            api_keys_text: '',
             priority: 1,
             enabled: true
         },
         editingProviderName: '',
+        editingProviderKeyCount: 0,
 
         // Helpers
         withDefaultGlobalConfig(cfg) {
@@ -309,6 +310,11 @@ function app() {
                 const d = String(p.circuit_open_in || '').trim();
                 return d ? `${name} (circuit ${d})` : `${name} (circuit open)`;
             }
+            if (skip === 'keys_exhausted') {
+                const available = Number(p.available_key_count || 0);
+                const total = Number(p.key_count || 0);
+                return total > 0 ? `${name} (${available}/${total} keys available)` : `${name} (no keys available)`;
+            }
             if (skip === 'disabled') return `${name} (disabled)`;
 
             const st = String(p.circuit_state || '').trim();
@@ -326,6 +332,12 @@ function app() {
 
             const detail = String(p.detail || '').trim();
             let title = detail ? `${base}\n${detail}` : base;
+
+            const available = Number(p.available_key_count || 0);
+            const total = Number(p.key_count || 0);
+            if (total > 0) {
+                title = `${title}\nKeys available: ${available}/${total}`;
+            }
 
             const skip = String(p.skip_reason || '').trim();
             if (skip !== 'deactivated') return title;
@@ -456,13 +468,28 @@ function app() {
 
         async saveProvider() {
             try {
+                const payload = {
+                    name: this.providerForm.name,
+                    base_url: this.providerForm.base_url,
+                    priority: this.providerForm.priority,
+                    enabled: this.providerForm.enabled
+                };
+                const keys = String(this.providerForm.api_keys_text || '')
+                    .split('\n')
+                    .map(v => v.trim())
+                    .filter(Boolean);
+                if (keys.length === 1) {
+                    payload.api_key = keys[0];
+                } else if (keys.length > 1) {
+                    payload.api_keys = keys;
+                }
                 if (this.showEditProviderModal) {
                     // Update existing provider
                     await this.apiCall(
                         `/api/providers/${this.selectedClient}/${encodeURIComponent(this.editingProviderName)}`,
                         {
                             method: 'PUT',
-                            body: JSON.stringify(this.providerForm)
+                            body: JSON.stringify(payload)
                         }
                     );
                     this.showAlert('success', 'Provider updated successfully');
@@ -472,7 +499,7 @@ function app() {
                         `/api/providers/${this.selectedClient}`,
                         {
                             method: 'POST',
-                            body: JSON.stringify(this.providerForm)
+                            body: JSON.stringify(payload)
                         }
                     );
                     this.showAlert('success', 'Provider added successfully');
@@ -490,11 +517,12 @@ function app() {
             this.providerForm = {
                 name: provider.name,
                 base_url: provider.base_url,
-                api_key: '', // Don't populate for security
+                api_keys_text: '',
                 priority: provider.priority,
                 enabled: !!provider.enabled
             };
             this.editingProviderName = provider.name;
+            this.editingProviderKeyCount = Number(provider.key_count || 0);
             this.showEditProviderModal = true;
         },
 
@@ -524,11 +552,12 @@ function app() {
             this.providerForm = {
                 name: '',
                 base_url: '',
-                api_key: '',
+                api_keys_text: '',
                 priority: maxPriority + 1,
                 enabled: true
             };
             this.editingProviderName = '';
+            this.editingProviderKeyCount = 0;
             this.showAddProviderModal = true;
         },
 
@@ -594,11 +623,12 @@ function app() {
             this.providerForm = {
                 name: '',
                 base_url: '',
-                api_key: '',
+                api_keys_text: '',
                 priority: 1,
                 enabled: true
             };
             this.editingProviderName = '';
+            this.editingProviderKeyCount = 0;
         }
     };
 }

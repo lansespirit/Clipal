@@ -38,7 +38,7 @@ Copy-Item .\\examples\\codex.yaml "$env:USERPROFILE\\.clipal\\codex.yaml" -Force
 Copy-Item .\\examples\\gemini.yaml "$env:USERPROFILE\\.clipal\\gemini.yaml" -Force
 ```
 
-编辑 `api_key` 为你的真实值。
+编辑 `api_key` 或 `api_keys` 为你的真实值。
 
 ## 4. 前台启动（首次验证）
 

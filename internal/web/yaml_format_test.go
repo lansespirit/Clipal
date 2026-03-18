@@ -101,3 +101,22 @@ func TestFormatClientConfigYAML_SparsePriorities_CanSkipMiddleTier(t *testing.T)
 		t.Fatalf("did not expect tier 2 comment for sparse priorities\n%s", got)
 	}
 }
+
+func TestFormatClientConfigYAML_UsesAPIKeysForMultiKeyProvider(t *testing.T) {
+	cc := config.ClientConfig{
+		Providers: []config.Provider{
+			{Name: "p1", BaseURL: "https://a.example", APIKeys: []string{"k1", "k2"}, Priority: 1, Enabled: boolPtr(true)},
+		},
+	}
+
+	got := string(formatClientConfigYAML("codex", cc))
+	if !strings.Contains(got, "api_keys:\n") {
+		t.Fatalf("expected api_keys block, got:\n%s", got)
+	}
+	if strings.Contains(got, `api_key: "k1"`) {
+		t.Fatalf("did not expect single api_key field for multi-key provider, got:\n%s", got)
+	}
+	if !strings.Contains(got, `- "k1"`) || !strings.Contains(got, `- "k2"`) {
+		t.Fatalf("expected both keys in yaml, got:\n%s", got)
+	}
+}

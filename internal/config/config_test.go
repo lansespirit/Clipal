@@ -104,3 +104,61 @@ func TestValidate_ManualMode_RequiresEnabledPinnedProvider(t *testing.T) {
 		t.Fatalf("expected validation success, got: %v", err)
 	}
 }
+
+func TestValidate_ProviderAPIKeys_MultiKeySupported(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Global: DefaultGlobalConfig(),
+		Codex: ClientConfig{
+			Mode: ClientModeAuto,
+			Providers: []Provider{
+				{
+					Name:     "p1",
+					BaseURL:  "https://example.com",
+					APIKeys:  []string{" key1 ", "key2", "key1"},
+					Priority: 1,
+				},
+			},
+		},
+		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+		Gemini:     ClientConfig{Mode: ClientModeAuto},
+	}
+
+	applyClientDefaults(&cfg.Codex)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected validation success, got: %v", err)
+	}
+	if got := cfg.Codex.Providers[0].KeyCount(); got != 2 {
+		t.Fatalf("key count: got %d want %d", got, 2)
+	}
+	if cfg.Codex.Providers[0].APIKey != "" {
+		t.Fatalf("expected canonical multi-key provider to use api_keys, got api_key=%q", cfg.Codex.Providers[0].APIKey)
+	}
+}
+
+func TestValidate_ProviderAPIKeys_RejectsMixedForms(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Global: DefaultGlobalConfig(),
+		Codex: ClientConfig{
+			Mode: ClientModeAuto,
+			Providers: []Provider{
+				{
+					Name:     "p1",
+					BaseURL:  "https://example.com",
+					APIKey:   "key1",
+					APIKeys:  []string{"key2"},
+					Priority: 1,
+				},
+			},
+		},
+		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+		Gemini:     ClientConfig{Mode: ClientModeAuto},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected validation error when api_key and api_keys are both set")
+	}
+}

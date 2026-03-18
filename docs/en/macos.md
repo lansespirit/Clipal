@@ -47,7 +47,7 @@ cp examples/codex.yaml ~/.clipal/codex.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
-Edit `~/.clipal/*.yaml` and replace `api_key` (and `base_url` if needed) with your own.
+Edit `~/.clipal/*.yaml` and replace `api_key` or `api_keys` (and `base_url` if needed) with your own.
 
 ## 4. Foreground run (first-time verification)
 

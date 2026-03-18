@@ -21,6 +21,7 @@ http://127.0.0.1:3333/
 - **One-click Unpin/Auto**: Switch back to `auto` failover mode from the pinned section
 - **Add Provider**: Add new API providers with custom configurations
 - **Edit Provider**: Update existing provider settings
+- **Multiple API Keys**: Enter one key per line in the form; one key is saved as `api_key`, multiple keys are saved as `api_keys`
 - **Delete Provider**: Remove providers you no longer need
 - **Enable/Disable**: Toggle providers on/off without deleting them
 - **Priority Management**: Providers are ordered by priority (lower number = higher priority; priorities start at 1)
@@ -46,10 +47,11 @@ Monitor your Clipal instance:
 - Configuration directory location
 - Per-client routing info (mode / pinned / current)
 - Last provider switch event (when in auto mode and a failover occurs)
-- Per-provider runtime status and skip reason (used by auto routing):
+- Per-provider runtime status, configured key count, available key count, and skip reason (used by auto routing):
   - `disabled` (disabled in config)
   - `deactivated` (temporary cooldown; shows remaining time)
   - `circuit_open` (circuit breaker open; shows remaining time)
+  - `keys_exhausted` (provider has no currently available API keys)
 
 ### 4. Service Management
 Manage Clipal as an OS background service (same as `clipal service *`):
@@ -67,7 +69,7 @@ Export your entire configuration as JSON for backup or migration purposes.
 - The management API is unauthenticated by design (for local use)
 - State-changing API requests require `X-Clipal-UI: 1` and `Content-Type: application/json` (the bundled UI sets these automatically; include them if you're calling the API manually).
 - WebUI API request bodies are capped at 1 MiB.
-- API keys are never displayed in the interface (shown as ••••••••)
+- API keys are never displayed individually in the interface; the UI only shows how many keys are configured / available
 - All configuration changes are validated before being saved
 - Configuration files are saved with 0600 permissions (owner read/write only) and written atomically to avoid partial reads during hot reload
 

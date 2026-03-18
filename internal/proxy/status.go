@@ -6,6 +6,8 @@ import (
 
 type ProviderRuntimeSnapshot struct {
 	Name string
+	KeyCount          int
+	AvailableKeyCount int
 
 	DeactivatedReason  string
 	DeactivatedMessage string
@@ -61,7 +63,9 @@ func (cp *ClientProxy) runtimeSnapshot(now time.Time) ClientRuntimeSnapshot {
 	for i := range cp.providers {
 		ps := ProviderRuntimeSnapshot{
 			Name: cp.providers[i].Name,
+			KeyCount: len(cp.providerKeys[i]),
 		}
+		ps.AvailableKeyCount = cp.availableKeyCountLocked(i, now)
 		if i < len(cp.deactivated) {
 			d := cp.deactivated[i]
 			if !d.until.IsZero() && now.Before(d.until) {

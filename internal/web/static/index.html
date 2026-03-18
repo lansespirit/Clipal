@@ -163,8 +163,8 @@
                                 <span class="detail-value" x-text="provider.base_url"></span>
                             </div>
                             <div class="detail-item">
-                                <span class="detail-label">API Key</span>
-                                <span class="detail-value">••••••••</span>
+                                <span class="detail-label">API Keys</span>
+                                <span class="detail-value" x-text="(provider.key_count || 0) + ' configured'"></span>
                             </div>
                         </div>
                     </div>
@@ -592,10 +592,13 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label" x-text="showEditProviderModal ? 'API Key' : 'API Key *'"></label>
-                        <input type="password" x-model="providerForm.api_key" class="form-input"
+                        <label class="form-label" x-text="showEditProviderModal ? 'API Keys' : 'API Keys *'"></label>
+                        <textarea x-model="providerForm.api_keys_text" class="form-input" rows="5"
                             :required="!showEditProviderModal"
-                            :placeholder="showEditProviderModal ? 'Leave blank to keep existing' : ''">
+                            :placeholder="showEditProviderModal ? 'One key per line. Leave blank to keep existing.' : 'One key per line'"></textarea>
+                        <div class="form-hint">Enter one key per line. A single line is saved as <span class="mono-pill">api_key</span>; multiple lines are saved as <span class="mono-pill">api_keys</span>.</div>
+                        <div class="form-hint" x-show="showEditProviderModal && editingProviderKeyCount > 0"
+                            x-text="'Currently configured: ' + editingProviderKeyCount + ' key(s)'"></div>
                     </div>
 
                     <div class="form-group">
