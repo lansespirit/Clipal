@@ -6,7 +6,9 @@ English: [README.md](README.md) | 中文: [README.zh-CN.md](README.zh-CN.md)
 
 Clipal is a local LLM API reverse proxy and management tool.
 
-It consolidates multiple upstream providers behind local endpoints, with automatic failover, hot reload, a built-in Web UI, background service management, and multi-key support. It works well not only for Claude Code, Codex CLI, and Gemini CLI, but also for local clients that support a custom Base URL, such as Cherry Studio, Kelivo, Chatbox, and ChatWise.
+It consolidates multiple upstream providers behind local endpoints, with automatic failover, hot reload, a built-in Web UI, background service management, and multi-key support. 
+
+It works well not only for Claude Code, Codex CLI, and Gemini CLI, but also for local clients that support a custom Base URL, such as Cherry Studio, Kelivo, Chatbox, and ChatWise.
 
 ## What You Can Do With It
 

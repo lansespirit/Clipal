@@ -6,7 +6,9 @@ English: [README.md](README.md) | 中文: [README.zh-CN.md](README.zh-CN.md)
 
 Clipal 是一个本地 LLM API 反向代理与管理工具。
 
-它把多个上游 provider 统一收口到本机地址，支持自动切换、热重载、Web UI、后台服务和多 Key 管理。除了 Claude Code、Codex CLI、Gemini CLI，也适合接入支持自定义 Base URL 的本地客户端，例如 Cherry Studio、Kelivo、Chatbox、ChatWise 等。
+它把多个上游 provider 统一收口到本机地址，支持自动切换、热重载、Web UI、后台服务和多 Key 管理。
+
+除了 Claude Code、Codex CLI、Gemini CLI，也适合接入支持自定义 Base URL 的本地客户端，例如 Cherry Studio、Kelivo、Chatbox、ChatWise 等。
 
 ## 你可以用它做什么
 
