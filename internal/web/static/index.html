@@ -582,7 +582,7 @@
                         <label class="form-label">Name *</label>
                         <input type="text" x-model="providerForm.name" class="form-input" required
                             placeholder="e.g. provider-primary">
-                        <div class="form-hint">Allows letters, numbers, ., _, -</div>
+                        <div class="form-hint">Letters, numbers, dot (.), underscore (_), and hyphen (-).</div>
                     </div>
 
                     <div class="form-group">
@@ -592,25 +592,32 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label" x-text="showEditProviderModal ? 'API Keys' : 'API Keys *'"></label>
-                        <textarea x-model="providerForm.api_keys_text" class="form-input" rows="5"
+                        <div class="form-field-header">
+                            <label class="form-label" x-text="showEditProviderModal ? 'API Keys' : 'API Keys *'"></label>
+                            <span class="form-kicker">One API key per line</span>
+                        </div>
+                        <textarea x-model="providerForm.api_keys_text" class="form-input form-textarea" rows="4"
                             :required="!showEditProviderModal"
-                            :placeholder="showEditProviderModal ? 'One key per line. Leave blank to keep existing.' : 'One key per line'"></textarea>
-                        <div class="form-hint">Enter one key per line. A single line is saved as <span class="mono-pill">api_key</span>; multiple lines are saved as <span class="mono-pill">api_keys</span>.</div>
+                            placeholder="sk-xxx&#10;sk-yyy"></textarea>
+                        <div class="form-meta">
+                            <span class="form-meta-label">Saved as</span>
+                            <span class="mono-pill">1 line -> api_key</span>
+                            <span class="mono-pill">2+ lines -> api_keys</span>
+                        </div>
                         <div class="form-hint" x-show="showEditProviderModal && editingProviderKeyCount > 0"
-                            x-text="'Currently configured: ' + editingProviderKeyCount + ' key(s)'"></div>
+                            x-text="'Leave empty to keep the current ' + editingProviderKeyCount + ' configured key' + (editingProviderKeyCount === 1 ? '' : 's') + '.'"></div>
                     </div>
 
                     <div class="form-group">
                         <label class="form-label">Priority</label>
                         <input type="number" x-model.number="providerForm.priority" class="form-input" min="1">
-                        <div class="form-hint">Higher priority (lower number) is tried first</div>
+                        <div class="form-hint">Smaller numbers are tried first.</div>
                     </div>
 
                     <div class="form-group">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <label class="checkbox-label">
                             <input type="checkbox" x-model="providerForm.enabled">
-                            <span>Enabled</span>
+                            <span class="checkbox-text">Enabled</span>
                         </label>
                     </div>
                 </div>
