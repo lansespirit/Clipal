@@ -27,7 +27,7 @@ function app() {
             response_header_timeout: '',
             max_request_body_bytes: 0,
             log_dir: '',
-            log_retention_days: 0,
+            log_retention_days: 7,
             log_stdout: true,
             notifications: {
                 enabled: false,

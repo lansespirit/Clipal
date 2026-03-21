@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,13 +12,14 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/lansespirit/Clipal/internal/logger"
 	"github.com/lansespirit/Clipal/internal/service"
 )
 
 const serviceActionTimeout = 30 * time.Second
+
+var serviceGetStatusFunc = service.GetStatus
 
 // HandleServiceStatus returns best-effort service status.
 //
@@ -47,80 +47,30 @@ func (a *API) HandleServiceStatus(w http.ResponseWriter, r *http.Request) {
 
 	installCmd, installHint := buildInstallGuidance(opts.BinaryPath, opts.ConfigDir)
 
-	mgr := service.DefaultManager()
-	plan, err := mgr.Plan(service.ActionStatus, opts)
-	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "not supported") {
-			writeJSON(w, ServiceStatusResponse{
-				OS:        osName,
-				Supported: false,
-				Installed: false,
-				OK:        false,
-				Error:     errStr,
-			})
-			return
-		}
-		// Treat "not installed" as a normal state (no scary error string in UI).
-		if strings.Contains(errStr, "service not installed") || strings.Contains(errStr, "not installed") {
-			writeJSON(w, ServiceStatusResponse{
-				OS:             osName,
-				Supported:      true,
-				Installed:      false,
-				OK:             false,
-				InstallCommand: installCmd,
-				InstallHint:    installHint,
-			})
-			return
-		}
-		writeJSON(w, ServiceStatusResponse{
-			OS:        osName,
-			Supported: true,
-			Installed: false,
-			OK:        false,
-			Error:     errStr,
-		})
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), serviceActionTimeout)
 	defer cancel()
 
-	// On Windows, service.ExecutePlan intentionally inherits the parent console
-	// handles to avoid encoding issues, which would spam stderr when the service
-	// isn't installed and the UI polls status. Capture output instead.
-	var (
-		out     string
-		execErr error
-	)
-	if runtime.GOOS == "windows" {
-		out, execErr = executePlanCapture(ctx, plan)
-		if execErr != nil {
-			// Task doesn't exist (common) -> treat as "not installed" and avoid
-			// returning localized system error strings that would reappear every poll.
-			writeJSON(w, ServiceStatusResponse{
-				OS:             osName,
-				Supported:      true,
-				Installed:      false,
-				OK:             false,
-				InstallCommand: installCmd,
-				InstallHint:    installHint,
-			})
-			return
-		}
-	} else {
-		out, execErr = service.ExecutePlan(ctx, plan, false)
-	}
-
+	st, out, statusErr := serviceGetStatusFunc(ctx, opts)
+	supported := st.Manager != "unsupported"
 	resp := ServiceStatusResponse{
 		OS:        osName,
-		Supported: true,
-		Installed: true,
-		OK:        execErr == nil,
+		Supported: supported,
+		Installed: st.Installed,
+		OK:        st.Loaded && st.Running,
 		Output:    out,
 	}
-	if execErr != nil {
-		resp.Error = execErr.Error()
+
+	if !supported {
+		writeJSON(w, resp)
+		return
+	}
+	if !st.Installed {
+		resp.InstallCommand = installCmd
+		resp.InstallHint = installHint
+	}
+	if statusErr != nil {
+		resp.Error = statusErr.Error()
+		resp.OK = false
 	}
 	writeJSON(w, resp)
 }
@@ -200,30 +150,6 @@ func (a *API) spawnServiceHelper(action service.Action, req ServiceActionRequest
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Start()
-}
-
-func executePlanCapture(ctx context.Context, plan *service.Plan) (string, error) {
-	if plan == nil {
-		return "", fmt.Errorf("nil plan")
-	}
-	var out bytes.Buffer
-	for _, note := range plan.Notes {
-		fmt.Fprintf(&out, "%s\n", note)
-	}
-	for _, c := range plan.Commands {
-		cmd := exec.CommandContext(ctx, c.Path, c.Args...)
-		b, err := cmd.CombinedOutput()
-		if len(b) > 0 && utf8.Valid(b) {
-			out.Write(b)
-			if b[len(b)-1] != '\n' {
-				out.WriteByte('\n')
-			}
-		}
-		if err != nil && !c.IgnoreError {
-			return out.String(), err
-		}
-	}
-	return out.String(), nil
 }
 
 func buildInstallGuidance(binaryPath, configDir string) (installCommand, installHint string) {

@@ -2,7 +2,6 @@ package logger
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -153,20 +152,4 @@ func (w *RotatingFileWriter) cleanupLocked(today string) error {
 		_ = os.Remove(c.path)
 	}
 	return nil
-}
-
-func multiWriter(writers ...io.Writer) io.Writer {
-	var out []io.Writer
-	for _, w := range writers {
-		if w != nil {
-			out = append(out, w)
-		}
-	}
-	if len(out) == 0 {
-		return io.Discard
-	}
-	if len(out) == 1 {
-		return out[0]
-	}
-	return io.MultiWriter(out...)
 }

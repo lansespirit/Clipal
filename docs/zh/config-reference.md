@@ -62,7 +62,7 @@ providers:
 | `response_header_timeout` | duration | `2m` | 等待上游响应头的超时 |
 | `max_request_body_bytes` | int | `33554432` | 请求体大小上限，默认 32 MiB |
 | `log_dir` | string | `<config-dir>/logs` | 日志目录 |
-| `log_retention_days` | int | `7` | 日志保留天数；设为 `0` 表示不清理 |
+| `log_retention_days` | int | `7` | 日志保留天数；`0` 表示永久保留；默认保留 7 天 |
 | `log_stdout` | bool | `true` | 是否同时输出到 stdout；长期后台运行通常建议设为 `false` |
 | `ignore_count_tokens_failover` | bool | `false` | Claude Code 的 `count_tokens` 失败是否不影响主会话 provider 选择 |
 
@@ -155,7 +155,7 @@ providers:
 
 ```yaml
 log_stdout: false
-log_retention_days: 7
+log_retention_days: 7 # 0 表示永久保留
 ```
 
 - 面向局域网暴露代理前，请先明确安全边界；默认建议保持：

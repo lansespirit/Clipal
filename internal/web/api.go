@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
@@ -27,6 +28,7 @@ type API struct {
 	configDir string
 	version   string
 	runtime   *proxy.Router
+	configMu  sync.Mutex
 }
 
 // NewAPI creates a new API handler
@@ -38,11 +40,11 @@ func NewAPI(configDir, version string, runtime *proxy.Router) *API {
 	}
 }
 
-func (a *API) reloadRuntimeProviderConfigs() {
+func (a *API) reloadRuntimeProviderConfigs() error {
 	if a.runtime == nil {
-		return
+		return nil
 	}
-	a.runtime.ReloadProviderConfigs()
+	return a.runtime.ReloadProviderConfigs()
 }
 
 // HandleGetGlobalConfig returns the current global configuration
@@ -52,9 +54,8 @@ func (a *API) HandleGetGlobalConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -75,9 +76,11 @@ func (a *API) HandleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load current config
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -105,19 +108,9 @@ func (a *API) HandleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.Global.CircuitBreaker.HalfOpenMaxInFlight = req.CircuitBreaker.HalfOpenMaxInFlight
 	cfg.Global.IgnoreCountTokensFailover = req.IgnoreCountTokensFailover
 
-	// Validate
-	if err := cfg.Validate(); err != nil {
-		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+	if !a.saveGlobalConfigOrWriteError(w, cfg) {
 		return
 	}
-
-	// Save to file
-	if err := a.saveGlobalConfig(cfg.Global); err != nil {
-		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("global configuration updated via web interface")
 	writeJSON(w, SuccessResponse{Message: "configuration updated successfully"})
@@ -136,9 +129,8 @@ func (a *API) HandleGetProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -163,9 +155,8 @@ func (a *API) HandleGetClientConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -199,9 +190,11 @@ func (a *API) HandleUpdateClientConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -215,16 +208,9 @@ func (a *API) HandleUpdateClientConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cc.Mode = mode
 	cc.PinnedProvider = pin
-	if err := cfg.Validate(); err != nil {
-		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+	if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 		return
 	}
-	if err := a.saveClientConfig(clientType, *cc); err != nil {
-		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("client configuration updated for %s via web interface", clientType)
 	writeJSON(w, SuccessResponse{Message: "configuration updated successfully"})
@@ -271,9 +257,11 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -298,8 +286,7 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if priority == 0 {
-		// Priority is 1-based. If omitted, default to 1 (highest).
-		priority = 1
+		priority = nextProviderPriority(cc.Providers)
 	}
 
 	provider := config.Provider{
@@ -311,16 +298,9 @@ func (a *API) HandleAddProvider(w http.ResponseWriter, r *http.Request) {
 	assignProviderKeys(&provider, keys)
 
 	cc.Providers = append(cc.Providers, provider)
-	if err := cfg.Validate(); err != nil {
-		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+	if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 		return
 	}
-	if err := a.saveClientConfig(clientType, *cc); err != nil {
-		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("provider %s added to %s via web interface", name, clientType)
 	writeJSON(w, SuccessResponse{Message: "provider added successfully"})
@@ -372,9 +352,11 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -394,15 +376,9 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 
 	updated := updateProviderInList(cc.Providers, providerName, req, keys)
 	if updated {
-		if err := cfg.Validate(); err != nil {
-			writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 			return
 		}
-		if err := a.saveClientConfig(clientType, *cc); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-		a.reloadRuntimeProviderConfigs()
 	}
 
 	if !updated {
@@ -427,9 +403,11 @@ func (a *API) HandleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -442,15 +420,9 @@ func (a *API) HandleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	var deleted bool
 	cc.Providers, deleted = deleteProviderFromList(cc.Providers, providerName)
 	if deleted {
-		if err := cfg.Validate(); err != nil {
-			writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 			return
 		}
-		if err := a.saveClientConfig(clientType, *cc); err != nil {
-			writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-		a.reloadRuntimeProviderConfigs()
 	}
 
 	if !deleted {
@@ -481,9 +453,11 @@ func (a *API) HandleReorderProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -499,16 +473,9 @@ func (a *API) HandleReorderProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cc.Providers = reordered
-	if err := cfg.Validate(); err != nil {
-		writeError(w, fmt.Sprintf("invalid configuration: %v", err), http.StatusBadRequest)
+	if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 		return
 	}
-	if err := a.saveClientConfig(clientType, *cc); err != nil {
-		writeError(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	a.reloadRuntimeProviderConfigs()
 
 	logger.Info("providers reordered for %s via web interface", clientType)
 	writeJSON(w, SuccessResponse{Message: "providers reordered successfully"})
@@ -526,10 +493,8 @@ func (a *API) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
 		cfg = a.runtime.ConfigSnapshot()
 	}
 	if cfg == nil {
-		var err error
-		cfg, err = config.Load(a.configDir)
-		if err != nil {
-			writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+		cfg = a.loadConfigOrWriteError(w)
+		if cfg == nil {
 			return
 		}
 	}
@@ -560,9 +525,8 @@ func (a *API) HandleExportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := config.Load(a.configDir)
-	if err != nil {
-		writeError(w, fmt.Sprintf("failed to load config: %v", err), http.StatusInternalServerError)
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
 		return
 	}
 
@@ -575,7 +539,7 @@ func (a *API) HandleExportConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", "attachment; filename=clipal-config.json")
-	json.NewEncoder(w).Encode(exportData)
+	_ = json.NewEncoder(w).Encode(exportData)
 }
 
 // Helper functions
@@ -705,19 +669,6 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 	}
 }
 
-func (a *API) saveGlobalConfig(global config.GlobalConfig) error {
-	path := filepath.Join(a.configDir, "config.yaml")
-	data := formatGlobalConfigYAML(global)
-	return atomicWriteFile(path, data, 0600)
-}
-
-func (a *API) saveClientConfig(clientType string, clientCfg config.ClientConfig) error {
-	filename := fmt.Sprintf("%s.yaml", clientType)
-	path := filepath.Join(a.configDir, filename)
-	data := formatClientConfigYAML(clientType, clientCfg)
-	return atomicWriteFile(path, data, 0600)
-}
-
 func extractClientType(path string) string {
 	// Extract client type from path like /api/providers/claude-code
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -749,19 +700,6 @@ func getClientConfigRef(cfg *config.Config, clientType string) (*config.ClientCo
 	}
 }
 
-func getProvidersForClient(cfg *config.Config, clientType string) []config.Provider {
-	switch clientType {
-	case "claude-code":
-		return cfg.ClaudeCode.Providers
-	case "codex":
-		return cfg.Codex.Providers
-	case "gemini":
-		return cfg.Gemini.Providers
-	default:
-		return nil
-	}
-}
-
 func providerNameExists(providers []config.Provider, name string) bool {
 	for _, p := range providers {
 		if p.Name == name {
@@ -769,6 +707,16 @@ func providerNameExists(providers []config.Provider, name string) bool {
 		}
 	}
 	return false
+}
+
+func nextProviderPriority(providers []config.Provider) int {
+	maxPriority := 0
+	for _, p := range providers {
+		if p.Priority > maxPriority {
+			maxPriority = p.Priority
+		}
+	}
+	return maxPriority + 1
 }
 
 func normalizeProviderKeys(req ProviderRequest) ([]string, error) {
@@ -812,16 +760,6 @@ func assignProviderKeys(provider *config.Provider, keys []string) {
 	default:
 		provider.APIKeys = append([]string(nil), keys...)
 	}
-}
-
-func nextPriority(providers []config.Provider) int {
-	max := 0
-	for _, p := range providers {
-		if p.Priority > max {
-			max = p.Priority
-		}
-	}
-	return max + 1
 }
 
 func extractClientAndProvider(path string) (string, string) {
@@ -919,17 +857,6 @@ func getFirstEnabledProvider(providers []config.Provider) string {
 		return providers[0].Name
 	}
 	return ""
-}
-
-func writeJSON(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
-}
-
-func writeError(w http.ResponseWriter, message string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(ErrorResponse{Error: message})
 }
 
 func validateProviderName(name string) error {

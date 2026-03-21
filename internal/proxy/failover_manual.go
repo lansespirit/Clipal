@@ -29,7 +29,7 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 
 	index := cp.pinnedIndex
 	if index < 0 && cp.pinnedProvider != "" {

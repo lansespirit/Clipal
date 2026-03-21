@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+const exampleWindowsConfigDir = `C:\Users\example\.clipal`
+
 func TestSplitServiceArgs(t *testing.T) {
 	t.Parallel()
 
@@ -29,21 +31,21 @@ func TestSplitServiceArgs(t *testing.T) {
 		},
 		{
 			name:     "ValueFlagAfterAction",
-			args:     []string{"install", "--config-dir", `C:\Users\Sean\.clipal`},
+			args:     []string{"install", "--config-dir", exampleWindowsConfigDir},
 			wantAct:  "install",
-			wantFlag: []string{"--config-dir", `C:\Users\Sean\.clipal`},
+			wantFlag: []string{"--config-dir", exampleWindowsConfigDir},
 		},
 		{
 			name:     "ValueFlagBeforeAction",
-			args:     []string{"--config-dir", `C:\Users\Sean\.clipal`, "install"},
+			args:     []string{"--config-dir", exampleWindowsConfigDir, "install"},
 			wantAct:  "install",
-			wantFlag: []string{"--config-dir", `C:\Users\Sean\.clipal`},
+			wantFlag: []string{"--config-dir", exampleWindowsConfigDir},
 		},
 		{
 			name:     "InlineValueFlag",
-			args:     []string{"install", `--config-dir=C:\Users\Sean\.clipal`},
+			args:     []string{"install", "--config-dir=" + exampleWindowsConfigDir},
 			wantAct:  "install",
-			wantFlag: []string{`--config-dir=C:\Users\Sean\.clipal`},
+			wantFlag: []string{"--config-dir=" + exampleWindowsConfigDir},
 		},
 		{
 			name:     "Terminator",

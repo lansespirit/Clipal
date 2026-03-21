@@ -5,7 +5,7 @@ import (
 )
 
 type ProviderRuntimeSnapshot struct {
-	Name string
+	Name              string
 	KeyCount          int
 	AvailableKeyCount int
 
@@ -62,7 +62,7 @@ func (cp *ClientProxy) runtimeSnapshot(now time.Time) ClientRuntimeSnapshot {
 	providers := make([]ProviderRuntimeSnapshot, 0, len(cp.providers))
 	for i := range cp.providers {
 		ps := ProviderRuntimeSnapshot{
-			Name: cp.providers[i].Name,
+			Name:     cp.providers[i].Name,
 			KeyCount: len(cp.providerKeys[i]),
 		}
 		ps.AvailableKeyCount = cp.availableKeyCountLocked(i, now)

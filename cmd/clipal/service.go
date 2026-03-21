@@ -228,7 +228,8 @@ func splitServiceArgs(args []string) (action string, flagArgs []string, err erro
 			// Handle -flag=value / --flag=value.
 			if eq := strings.IndexByte(name, '='); eq >= 0 {
 				name = name[:eq]
-			} else if needsValue[name] {
+			}
+			if needsValue[name] && !strings.Contains(a, "=") {
 				// For value flags, consume the next arg as the value even if it begins with "-".
 				if i+1 >= len(args) {
 					return "", nil, fmt.Errorf("flag %s requires a value", a)

@@ -3,7 +3,6 @@
 package notify
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,8 +110,4 @@ func pathListContains(pathValue string, wantDir string) bool {
 		}
 	}
 	return false
-}
-
-func isExecNotFound(err error) bool {
-	return errors.Is(err, exec.ErrNotFound)
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -42,38 +41,5 @@ func getStatus(ctx context.Context, opts Options) (Status, string, error) {
 		return st, raw, cmdErr
 	}
 
-	// Parse key=value lines.
-	var (
-		loadState   string
-		activeState string
-		subState    string
-		mainPID     int
-	)
-	for _, line := range strings.Split(raw, "\n") {
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		switch k {
-		case "LoadState":
-			loadState = v
-		case "ActiveState":
-			activeState = v
-		case "SubState":
-			subState = v
-		case "MainPID":
-			if pid, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil {
-				mainPID = pid
-			}
-		}
-	}
-
-	st.Loaded = (loadState != "" && loadState != "not-found")
-	st.Running = (activeState == "active")
-	st.PID = mainPID
-	if activeState != "" || subState != "" {
-		st.Detail = "active=" + activeState + " sub=" + subState
-	}
-
-	return st, raw, nil
+	return parseSystemdShowStatus(st, raw), raw, nil
 }

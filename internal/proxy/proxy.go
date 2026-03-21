@@ -19,6 +19,11 @@ import (
 	"github.com/lansespirit/Clipal/internal/notify"
 )
 
+var (
+	loggerSetLevelFunc  = logger.SetLevel
+	notifyConfigureFunc = notify.Configure
+)
+
 // ClientType represents the type of CLI client
 type ClientType string
 
@@ -73,22 +78,22 @@ func (r *Router) ConfigSnapshot() *config.Config {
 
 // ClientProxy handles requests for a specific client type
 type ClientProxy struct {
-	clientType       ClientType
-	mode             config.ClientMode
-	pinnedProvider   string
-	pinnedIndex      int
-	providers        []config.Provider
-	providerKeys     [][]string
-	currentIndex     int
-	countTokensIndex int
-	currentKeyIndex      []int
-	countTokensKeyIndex  []int
-	mu               sync.RWMutex
-	httpClient       *http.Client
-	deactivated      []providerDeactivation
-	keyDeactivated   [][]providerDeactivation
-	reactivateAfter  time.Duration
-	upstreamIdle     time.Duration
+	clientType          ClientType
+	mode                config.ClientMode
+	pinnedProvider      string
+	pinnedIndex         int
+	providers           []config.Provider
+	providerKeys        [][]string
+	currentIndex        int
+	countTokensIndex    int
+	currentKeyIndex     []int
+	countTokensKeyIndex []int
+	mu                  sync.RWMutex
+	httpClient          *http.Client
+	deactivated         []providerDeactivation
+	keyDeactivated      [][]providerDeactivation
+	reactivateAfter     time.Duration
+	upstreamIdle        time.Duration
 
 	breakers    []*circuitBreaker
 	lastSwitch  ProviderSwitchEvent
@@ -104,20 +109,10 @@ func (cp *ClientProxy) Close() {
 
 // NewRouter creates a new Router instance
 func NewRouter(cfg *config.Config) *Router {
-	reactivateAfter, err := time.ParseDuration(cfg.Global.ReactivateAfter)
-	if err != nil || reactivateAfter < 0 {
-		reactivateAfter = time.Hour // Default to 1 hour if invalid.
-		logger.Warn("invalid reactivate_after %q, defaulting to 1h", cfg.Global.ReactivateAfter)
-	}
-	upstreamIdle, err := time.ParseDuration(cfg.Global.UpstreamIdleTimeout)
-	if err != nil || upstreamIdle < 0 {
-		upstreamIdle = 3 * time.Minute
-		logger.Warn("invalid upstream_idle_timeout %q, defaulting to 3m", cfg.Global.UpstreamIdleTimeout)
-	}
-	respHeaderTimeout, err := time.ParseDuration(cfg.Global.ResponseHeaderTimeout)
-	if err != nil || respHeaderTimeout < 0 {
-		respHeaderTimeout = 2 * time.Minute
-		logger.Warn("invalid response_header_timeout %q, defaulting to 2m", cfg.Global.ResponseHeaderTimeout)
+	durations, err := cfg.Global.RuntimeDurations()
+	if err != nil {
+		durations = config.DefaultRuntimeDurations()
+		logger.Warn("invalid runtime durations; defaulting to reactivate_after=1h upstream_idle_timeout=3m response_header_timeout=2m: %v", err)
 	}
 	cbCfg := normalizeCircuitBreakerConfig(cfg.Global.CircuitBreaker)
 	r := &Router{
@@ -131,17 +126,17 @@ func NewRouter(cfg *config.Config) *Router {
 	// Initialize client proxies
 	claudeProviders := config.GetEnabledProviders(cfg.ClaudeCode)
 	if len(claudeProviders) > 0 {
-		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, cfg.ClaudeCode.Mode, cfg.ClaudeCode.PinnedProvider, claudeProviders, reactivateAfter, upstreamIdle, respHeaderTimeout, cbCfg)
+		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, cfg.ClaudeCode.Mode, cfg.ClaudeCode.PinnedProvider, claudeProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
 	}
 
 	codexProviders := config.GetEnabledProviders(cfg.Codex)
 	if len(codexProviders) > 0 {
-		r.proxies[ClientCodex] = newClientProxy(ClientCodex, cfg.Codex.Mode, cfg.Codex.PinnedProvider, codexProviders, reactivateAfter, upstreamIdle, respHeaderTimeout, cbCfg)
+		r.proxies[ClientCodex] = newClientProxy(ClientCodex, cfg.Codex.Mode, cfg.Codex.PinnedProvider, codexProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
 	}
 
 	geminiProviders := config.GetEnabledProviders(cfg.Gemini)
 	if len(geminiProviders) > 0 {
-		r.proxies[ClientGemini] = newClientProxy(ClientGemini, cfg.Gemini.Mode, cfg.Gemini.PinnedProvider, geminiProviders, reactivateAfter, upstreamIdle, respHeaderTimeout, cbCfg)
+		r.proxies[ClientGemini] = newClientProxy(ClientGemini, cfg.Gemini.Mode, cfg.Gemini.PinnedProvider, geminiProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
 	}
 
 	return r
@@ -354,6 +349,7 @@ func (r *Router) providerConfigFiles() []string {
 }
 
 func (r *Router) snapshotProviderConfigModTimes() {
+	r.lastMod = make(map[string]time.Time, len(r.providerConfigFiles()))
 	for _, name := range r.providerConfigFiles() {
 		path := filepath.Join(r.configDir, name)
 		if fi, err := os.Stat(path); err == nil {
@@ -364,97 +360,102 @@ func (r *Router) snapshotProviderConfigModTimes() {
 	}
 }
 
+func (r *Router) providerConfigModTimesSnapshot() map[string]time.Time {
+	out := make(map[string]time.Time, len(r.providerConfigFiles()))
+	for _, name := range r.providerConfigFiles() {
+		path := filepath.Join(r.configDir, name)
+		if fi, err := os.Stat(path); err == nil {
+			out[path] = fi.ModTime()
+		}
+	}
+	return out
+}
+
+func configModTimesChanged(prev map[string]time.Time, next map[string]time.Time) bool {
+	if len(prev) != len(next) {
+		return true
+	}
+	for path, prevTime := range prev {
+		nextTime, ok := next[path]
+		if !ok || !nextTime.Equal(prevTime) {
+			return true
+		}
+	}
+	return false
+}
+
 // ReloadProviderConfigs forces a best-effort reload from disk.
 // Intended for the web UI, so changes apply immediately.
-func (r *Router) ReloadProviderConfigs() {
+func (r *Router) ReloadProviderConfigs() error {
 	r.reloadMu.Lock()
 	defer r.reloadMu.Unlock()
 
-	// Keep lastMod in sync so the watcher doesn't immediately reload again.
+	if err := r.reloadProviderConfigsLocked(); err != nil {
+		return err
+	}
 	r.snapshotProviderConfigModTimes()
-	r.reloadProviderConfigsLocked()
+	return nil
 }
 
 func (r *Router) reloadIfProviderConfigsChanged() {
 	r.reloadMu.Lock()
 	defer r.reloadMu.Unlock()
 
-	changed := false
-	for _, name := range r.providerConfigFiles() {
-		path := filepath.Join(r.configDir, name)
-		fi, err := os.Stat(path)
-		if err != nil {
-			if _, ok := r.lastMod[path]; ok {
-				delete(r.lastMod, path)
-				changed = true
-			}
-			continue
-		}
-		last, ok := r.lastMod[path]
-		if !ok || fi.ModTime().After(last) {
-			r.lastMod[path] = fi.ModTime()
-			changed = true
-		}
-	}
-	if !changed {
+	nextMod := r.providerConfigModTimesSnapshot()
+	if !configModTimesChanged(r.lastMod, nextMod) {
 		return
 	}
 
-	r.reloadProviderConfigsLocked()
-}
-
-func (r *Router) reloadProviderConfigsLocked() {
-	newCfg, err := config.Load(r.configDir)
-	if err != nil {
+	if err := r.reloadProviderConfigsLocked(); err != nil {
 		logger.Warn("provider config reload failed: %v", err)
 		return
+	}
+	r.lastMod = nextMod
+}
+
+func (r *Router) reloadProviderConfigsLocked() error {
+	newCfg, err := config.Load(r.configDir)
+	if err != nil {
+		return err
 	}
 
 	// Keep listen settings stable at runtime, but allow log level and failover policy changes.
 	r.mu.RLock()
 	currentGlobal := r.cfg.Global
+	oldProxies := make(map[ClientType]*ClientProxy, len(r.proxies))
+	for ct, p := range r.proxies {
+		oldProxies[ct] = p
+	}
 	r.mu.RUnlock()
 
 	newCfg.Global.ListenAddr = currentGlobal.ListenAddr
 	newCfg.Global.Port = currentGlobal.Port
 
 	if err := newCfg.Validate(); err != nil {
-		logger.Warn("provider config reload failed validation: %v", err)
-		return
+		return err
 	}
 
-	logger.SetLevel(newCfg.Global.LogLevel)
-	notify.Configure(newCfg.Global.Notifications)
-	reactivateAfter, err := time.ParseDuration(newCfg.Global.ReactivateAfter)
-	if err != nil || reactivateAfter < 0 {
-		reactivateAfter = time.Hour
-		logger.Warn("invalid reactivate_after %q, defaulting to 1h", newCfg.Global.ReactivateAfter)
-	}
-	upstreamIdle, err := time.ParseDuration(newCfg.Global.UpstreamIdleTimeout)
-	if err != nil || upstreamIdle < 0 {
-		upstreamIdle = 3 * time.Minute
-		logger.Warn("invalid upstream_idle_timeout %q, defaulting to 3m", newCfg.Global.UpstreamIdleTimeout)
-	}
-	respHeaderTimeout, err := time.ParseDuration(newCfg.Global.ResponseHeaderTimeout)
-	if err != nil || respHeaderTimeout < 0 {
-		respHeaderTimeout = 2 * time.Minute
-		logger.Warn("invalid response_header_timeout %q, defaulting to 2m", newCfg.Global.ResponseHeaderTimeout)
+	loggerSetLevelFunc(newCfg.Global.LogLevel)
+	notifyConfigureFunc(newCfg.Global.Notifications)
+	durations, err := newCfg.Global.RuntimeDurations()
+	if err != nil {
+		durations = config.DefaultRuntimeDurations()
+		logger.Warn("invalid runtime durations; defaulting to reactivate_after=1h upstream_idle_timeout=3m response_header_timeout=2m: %v", err)
 	}
 	cbCfg := normalizeCircuitBreakerConfig(newCfg.Global.CircuitBreaker)
 
 	newProxies := make(map[ClientType]*ClientProxy)
 	if ps := config.GetEnabledProviders(newCfg.ClaudeCode); len(ps) > 0 {
-		newProxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, newCfg.ClaudeCode.Mode, newCfg.ClaudeCode.PinnedProvider, ps, reactivateAfter, upstreamIdle, respHeaderTimeout, cbCfg)
+		newProxies[ClientClaudeCode] = newReloadedClientProxy(ClientClaudeCode, newCfg.ClaudeCode.Mode, newCfg.ClaudeCode.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, oldProxies[ClientClaudeCode])
 	}
 	if ps := config.GetEnabledProviders(newCfg.Codex); len(ps) > 0 {
-		newProxies[ClientCodex] = newClientProxy(ClientCodex, newCfg.Codex.Mode, newCfg.Codex.PinnedProvider, ps, reactivateAfter, upstreamIdle, respHeaderTimeout, cbCfg)
+		newProxies[ClientCodex] = newReloadedClientProxy(ClientCodex, newCfg.Codex.Mode, newCfg.Codex.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, oldProxies[ClientCodex])
 	}
 	if ps := config.GetEnabledProviders(newCfg.Gemini); len(ps) > 0 {
-		newProxies[ClientGemini] = newClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, reactivateAfter, upstreamIdle, respHeaderTimeout, cbCfg)
+		newProxies[ClientGemini] = newReloadedClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, oldProxies[ClientGemini])
 	}
 
 	r.mu.Lock()
-	oldProxies := r.proxies
 	r.cfg = newCfg
 	r.proxies = newProxies
 	r.mu.Unlock()
@@ -465,10 +466,141 @@ func (r *Router) reloadProviderConfigsLocked() {
 	}
 
 	logger.Info("configs reloaded from %s", r.configDir)
-	logger.Info("circuit breaker states reset due to config reload")
+	logger.Info("runtime provider state preserved where possible across config reload")
 	for ct, p := range newProxies {
 		logger.Info("loaded %d providers for %s", len(p.providers), ct)
 	}
+	return nil
+}
+
+func newReloadedClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig, old *ClientProxy) *ClientProxy {
+	cp := newClientProxy(clientType, mode, pinnedProvider, providers, reactivateAfter, upstreamIdle, responseHeaderTimeout, cbCfg)
+	if old != nil {
+		cp.inheritRuntimeState(old)
+	}
+	return cp
+}
+
+func (cp *ClientProxy) inheritRuntimeState(old *ClientProxy) {
+	if cp == nil || old == nil {
+		return
+	}
+
+	old.mu.RLock()
+	defer old.mu.RUnlock()
+
+	oldCurrentProvider := providerNameAtIndex(old.providers, old.currentIndex)
+	oldCountTokensProvider := providerNameAtIndex(old.providers, old.countTokensIndex)
+
+	oldByName := make(map[string]int, len(old.providers))
+	for i := range old.providers {
+		oldByName[old.providers[i].Name] = i
+	}
+
+	for newIdx := range cp.providers {
+		oldIdx, ok := oldByName[cp.providers[newIdx].Name]
+		if !ok {
+			continue
+		}
+		if !sameProviderRuntimeIdentity(cp.providers[newIdx], old.providers[oldIdx]) {
+			continue
+		}
+		cp.deactivated[newIdx] = old.deactivated[oldIdx]
+		inheritKeyState(cp, newIdx, old, oldIdx)
+		inheritBreakerState(cp.breakers[newIdx], old.breakers[oldIdx])
+	}
+
+	if oldCurrentProvider != "" && cp.mode != config.ClientModeManual {
+		if idx := providerIndexByName(cp.providers, oldCurrentProvider); idx >= 0 {
+			cp.currentIndex = idx
+		}
+	}
+	if oldCountTokensProvider != "" && cp.mode != config.ClientModeManual {
+		if idx := providerIndexByName(cp.providers, oldCountTokensProvider); idx >= 0 {
+			cp.countTokensIndex = idx
+		}
+	}
+
+	cp.lastSwitch = old.lastSwitch
+	cp.lastRequest = old.lastRequest
+}
+
+func inheritKeyState(dst *ClientProxy, dstProviderIndex int, src *ClientProxy, srcProviderIndex int) {
+	if dst == nil || src == nil {
+		return
+	}
+	if dstProviderIndex < 0 || dstProviderIndex >= len(dst.providerKeys) {
+		return
+	}
+	if srcProviderIndex < 0 || srcProviderIndex >= len(src.providerKeys) {
+		return
+	}
+
+	srcKeyIndexByValue := make(map[string]int, len(src.providerKeys[srcProviderIndex]))
+	for i, key := range src.providerKeys[srcProviderIndex] {
+		if _, ok := srcKeyIndexByValue[key]; !ok {
+			srcKeyIndexByValue[key] = i
+		}
+	}
+
+	for dstKeyIndex, key := range dst.providerKeys[dstProviderIndex] {
+		srcKeyIndex, ok := srcKeyIndexByValue[key]
+		if !ok {
+			continue
+		}
+		if srcProviderIndex < len(src.keyDeactivated) && srcKeyIndex < len(src.keyDeactivated[srcProviderIndex]) {
+			dst.keyDeactivated[dstProviderIndex][dstKeyIndex] = src.keyDeactivated[srcProviderIndex][srcKeyIndex]
+		}
+		if srcProviderIndex < len(src.currentKeyIndex) &&
+			src.currentKeyIndex[srcProviderIndex] == srcKeyIndex {
+			dst.currentKeyIndex[dstProviderIndex] = dstKeyIndex
+		}
+		if srcProviderIndex < len(src.countTokensKeyIndex) &&
+			src.countTokensKeyIndex[srcProviderIndex] == srcKeyIndex {
+			dst.countTokensKeyIndex[dstProviderIndex] = dstKeyIndex
+		}
+	}
+}
+
+func inheritBreakerState(dst *circuitBreaker, src *circuitBreaker) {
+	if dst == nil || src == nil {
+		return
+	}
+
+	src.mu.Lock()
+	defer src.mu.Unlock()
+
+	if dst.cfg != src.cfg {
+		return
+	}
+
+	dst.mu.Lock()
+	defer dst.mu.Unlock()
+	dst.state = src.state
+	dst.consecutiveFailures = src.consecutiveFailures
+	dst.consecutiveSuccesses = src.consecutiveSuccesses
+	dst.openedAt = src.openedAt
+	dst.halfOpenInFlight = src.halfOpenInFlight
+}
+
+func sameProviderRuntimeIdentity(a, b config.Provider) bool {
+	return a.Name == b.Name && strings.TrimSpace(a.BaseURL) == strings.TrimSpace(b.BaseURL)
+}
+
+func providerIndexByName(providers []config.Provider, name string) int {
+	for i := range providers {
+		if providers[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func providerNameAtIndex(providers []config.Provider, index int) string {
+	if index < 0 || index >= len(providers) {
+		return ""
+	}
+	return providers[index].Name
 }
 
 func (r *Router) sweepReactivations() {
@@ -488,7 +620,7 @@ func (r *Router) sweepReactivations() {
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"healthy"}`))
+	_, _ = w.Write([]byte(`{"status":"healthy"}`))
 }
 
 // handleRequest routes requests to the appropriate client proxy

@@ -81,16 +81,16 @@ func (linuxManager) Plan(action Action, opts Options) (*Plan, error) {
 
 func buildSystemdUnit(binaryPath, configDir string) string {
 	var b strings.Builder
-	b.WriteString("[Unit]\n")
-	b.WriteString("Description=clipal local proxy\n")
-	b.WriteString("After=network.target\n\n")
-	b.WriteString("[Service]\n")
-	b.WriteString("Type=simple\n")
-	b.WriteString("ExecStart=" + systemdEscape(binaryPath) + " --config-dir " + systemdEscape(configDir) + "\n")
-	b.WriteString("Restart=always\n")
-	b.WriteString("RestartSec=2\n\n")
-	b.WriteString("[Install]\n")
-	b.WriteString("WantedBy=default.target\n")
+	_, _ = b.WriteString("[Unit]\n")
+	_, _ = b.WriteString("Description=clipal local proxy\n")
+	_, _ = b.WriteString("After=network.target\n\n")
+	_, _ = b.WriteString("[Service]\n")
+	_, _ = b.WriteString("Type=simple\n")
+	_, _ = b.WriteString("ExecStart=" + systemdEscape(binaryPath) + " --config-dir " + systemdEscape(configDir) + "\n")
+	_, _ = b.WriteString("Restart=always\n")
+	_, _ = b.WriteString("RestartSec=2\n\n")
+	_, _ = b.WriteString("[Install]\n")
+	_, _ = b.WriteString("WantedBy=default.target\n")
 	return b.String()
 }
 

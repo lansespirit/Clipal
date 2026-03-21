@@ -5,7 +5,6 @@ package service
 import (
 	"context"
 	"os/exec"
-	"regexp"
 	"strings"
 )
 
@@ -28,17 +27,5 @@ func getStatus(ctx context.Context, opts Options) (Status, string, error) {
 		return st, raw, nil
 	}
 
-	st.Loaded = true
-
-	// Best-effort parse: "Status: Ready|Running|Disabled|..."
-	re := regexp.MustCompile(`(?mi)^\s*Status:\s*(.+?)\s*$`)
-	if m := re.FindStringSubmatch(raw); len(m) == 2 {
-		status := strings.TrimSpace(m[1])
-		st.Detail = "status=" + status
-		if strings.EqualFold(status, "Running") {
-			st.Running = true
-		}
-	}
-
-	return st, raw, nil
+	return parseWindowsTaskStatus(st, raw), raw, nil
 }

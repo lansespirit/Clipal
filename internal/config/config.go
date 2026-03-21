@@ -14,6 +14,13 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
+const (
+	defaultReactivateAfter       = time.Hour
+	defaultUpstreamIdleTimeout   = 3 * time.Minute
+	defaultResponseHeaderTimeout = 2 * time.Minute
+	defaultCircuitOpenTimeout    = 60 * time.Second
+)
+
 // LogLevel represents the log level
 type LogLevel string
 
@@ -41,6 +48,15 @@ type CircuitBreakerConfig struct {
 	HalfOpenMaxInFlight int `yaml:"half_open_max_inflight"`
 }
 
+// OpenTimeoutDuration parses the configured circuit breaker timeout.
+func (c CircuitBreakerConfig) OpenTimeoutDuration() (time.Duration, error) {
+	d, err := time.ParseDuration(strings.TrimSpace(c.OpenTimeout))
+	if err != nil {
+		return 0, fmt.Errorf("invalid circuit_breaker.open_timeout: %w", err)
+	}
+	return d, nil
+}
+
 // GlobalConfig represents the global configuration
 type GlobalConfig struct {
 	ListenAddr      string   `yaml:"listen_addr"`
@@ -50,19 +66,26 @@ type GlobalConfig struct {
 	// UpstreamIdleTimeout cancels an upstream attempt if no response body bytes are received
 	// for the duration (useful for SSE streams that may hang after headers).
 	// Set to "0" to disable.
-	UpstreamIdleTimeout string               `yaml:"upstream_idle_timeout"`
+	UpstreamIdleTimeout string `yaml:"upstream_idle_timeout"`
 	// ResponseHeaderTimeout controls how long we wait for the upstream to return
 	// response headers after the request is fully written. Set to "0" to disable.
-	ResponseHeaderTimeout string              `yaml:"response_header_timeout"`
-	MaxRequestBody      int64                `yaml:"max_request_body_bytes"`
-	LogDir              string               `yaml:"log_dir"`
-	LogRetentionDays    int                  `yaml:"log_retention_days"`
-	LogStdout           *bool                `yaml:"log_stdout"`
-	Notifications       NotificationsConfig  `yaml:"notifications"`
-	CircuitBreaker      CircuitBreakerConfig `yaml:"circuit_breaker"`
+	ResponseHeaderTimeout string               `yaml:"response_header_timeout"`
+	MaxRequestBody        int64                `yaml:"max_request_body_bytes"`
+	LogDir                string               `yaml:"log_dir"`
+	LogRetentionDays      int                  `yaml:"log_retention_days"`
+	LogStdout             *bool                `yaml:"log_stdout"`
+	Notifications         NotificationsConfig  `yaml:"notifications"`
+	CircuitBreaker        CircuitBreakerConfig `yaml:"circuit_breaker"`
 	// IgnoreCountTokensFailover disables provider switching for Claude Code
 	// /v1/messages/count_tokens requests, which helps keep context cache warm.
 	IgnoreCountTokensFailover bool `yaml:"ignore_count_tokens_failover"`
+}
+
+// RuntimeDurations contains the parsed global timing values used by the proxy runtime.
+type RuntimeDurations struct {
+	ReactivateAfter       time.Duration
+	UpstreamIdleTimeout   time.Duration
+	ResponseHeaderTimeout time.Duration
 }
 
 type ClientMode string
@@ -151,11 +174,11 @@ type Config struct {
 // DefaultGlobalConfig returns the default global configuration
 func DefaultGlobalConfig() GlobalConfig {
 	return GlobalConfig{
-		ListenAddr:          "127.0.0.1",
-		Port:                3333,
-		LogLevel:            LogLevelInfo,
-		ReactivateAfter:     "1h",
-		UpstreamIdleTimeout: "3m",
+		ListenAddr:            "127.0.0.1",
+		Port:                  3333,
+		LogLevel:              LogLevelInfo,
+		ReactivateAfter:       "1h",
+		UpstreamIdleTimeout:   "3m",
 		ResponseHeaderTimeout: "2m",
 		// Default body limit: 32 MiB. clipal buffers request bodies to support retries,
 		// so a hard cap prevents unbounded memory usage.
@@ -177,6 +200,15 @@ func DefaultGlobalConfig() GlobalConfig {
 		},
 		// Keep existing behavior by default.
 		IgnoreCountTokensFailover: false,
+	}
+}
+
+// DefaultRuntimeDurations returns the runtime timing defaults used by Clipal.
+func DefaultRuntimeDurations() RuntimeDurations {
+	return RuntimeDurations{
+		ReactivateAfter:       defaultReactivateAfter,
+		UpstreamIdleTimeout:   defaultUpstreamIdleTimeout,
+		ResponseHeaderTimeout: defaultResponseHeaderTimeout,
 	}
 }
 
@@ -266,6 +298,29 @@ func applyClientDefaults(cc *ClientConfig) {
 			cc.Providers[i].APIKey = ""
 		}
 	}
+}
+
+// RuntimeDurations parses the runtime timing values from global config.
+func (g GlobalConfig) RuntimeDurations() (RuntimeDurations, error) {
+	out := DefaultRuntimeDurations()
+
+	reactivateAfter, err := time.ParseDuration(strings.TrimSpace(g.ReactivateAfter))
+	if err != nil {
+		return RuntimeDurations{}, fmt.Errorf("invalid reactivate_after: %w", err)
+	}
+	upstreamIdle, err := time.ParseDuration(strings.TrimSpace(g.UpstreamIdleTimeout))
+	if err != nil {
+		return RuntimeDurations{}, fmt.Errorf("invalid upstream_idle_timeout: %w", err)
+	}
+	responseHeaderTimeout, err := time.ParseDuration(strings.TrimSpace(g.ResponseHeaderTimeout))
+	if err != nil {
+		return RuntimeDurations{}, fmt.Errorf("invalid response_header_timeout: %w", err)
+	}
+
+	out.ReactivateAfter = reactivateAfter
+	out.UpstreamIdleTimeout = upstreamIdle
+	out.ResponseHeaderTimeout = responseHeaderTimeout
+	return out, nil
 }
 
 // GetEnabledProviders returns only enabled providers for a client config
@@ -417,10 +472,15 @@ func validateClientConfig(name string, cc ClientConfig) error {
 }
 
 func validateProviders(clientName string, providers []Provider) error {
+	seenNames := make(map[string]int, len(providers))
 	for i, p := range providers {
 		if p.Name == "" {
 			return fmt.Errorf("%s provider %d: name is required", clientName, i+1)
 		}
+		if firstIdx, ok := seenNames[p.Name]; ok {
+			return fmt.Errorf("%s: duplicate provider name %q at positions %d and %d", clientName, p.Name, firstIdx+1, i+1)
+		}
+		seenNames[p.Name] = i
 		if p.BaseURL == "" {
 			return fmt.Errorf("%s provider %s: base_url is required", clientName, p.Name)
 		}

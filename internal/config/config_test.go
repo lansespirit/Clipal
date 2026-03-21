@@ -1,6 +1,12 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestValidate_CircuitBreakerDisabled_AllowsInvalidCBFields(t *testing.T) {
 	t.Parallel()
@@ -137,6 +143,37 @@ func TestValidate_ProviderAPIKeys_MultiKeySupported(t *testing.T) {
 	}
 }
 
+func TestGlobalConfigRuntimeDurations(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultGlobalConfig()
+	got, err := cfg.RuntimeDurations()
+	if err != nil {
+		t.Fatalf("RuntimeDurations: %v", err)
+	}
+	if got.ReactivateAfter != time.Hour {
+		t.Fatalf("ReactivateAfter = %s, want %s", got.ReactivateAfter, time.Hour)
+	}
+	if got.UpstreamIdleTimeout != 3*time.Minute {
+		t.Fatalf("UpstreamIdleTimeout = %s, want %s", got.UpstreamIdleTimeout, 3*time.Minute)
+	}
+	if got.ResponseHeaderTimeout != 2*time.Minute {
+		t.Fatalf("ResponseHeaderTimeout = %s, want %s", got.ResponseHeaderTimeout, 2*time.Minute)
+	}
+}
+
+func TestCircuitBreakerOpenTimeoutDuration(t *testing.T) {
+	t.Parallel()
+
+	d, err := CircuitBreakerConfig{OpenTimeout: "90s"}.OpenTimeoutDuration()
+	if err != nil {
+		t.Fatalf("OpenTimeoutDuration: %v", err)
+	}
+	if d != 90*time.Second {
+		t.Fatalf("OpenTimeoutDuration = %s, want %s", d, 90*time.Second)
+	}
+}
+
 func TestValidate_ProviderAPIKeys_RejectsMixedForms(t *testing.T) {
 	t.Parallel()
 
@@ -160,5 +197,134 @@ func TestValidate_ProviderAPIKeys_RejectsMixedForms(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected validation error when api_key and api_keys are both set")
+	}
+}
+
+func TestValidate_RejectsDuplicateProviderNamesPerClient(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Global: DefaultGlobalConfig(),
+		Codex: ClientConfig{
+			Mode: ClientModeAuto,
+			Providers: []Provider{
+				{Name: "p1", BaseURL: "https://one.example", APIKey: "key1", Priority: 1},
+				{Name: "p1", BaseURL: "https://two.example", APIKey: "key2", Priority: 2},
+			},
+		},
+		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+		Gemini:     ClientConfig{Mode: ClientModeAuto},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `duplicate provider name "p1"`) {
+		t.Fatalf("err = %v, want duplicate provider name error", err)
+	}
+}
+
+func TestGlobalConfigRuntimeDurations_ErrorsAndBoundaryValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(*GlobalConfig)
+		wantErr string
+		wantDur RuntimeDurations
+	}{
+		{
+			name: "MalformedReactivateAfter",
+			mutate: func(gc *GlobalConfig) {
+				gc.ReactivateAfter = "nope"
+			},
+			wantErr: "invalid reactivate_after",
+		},
+		{
+			name: "MalformedUpstreamIdleTimeout",
+			mutate: func(gc *GlobalConfig) {
+				gc.UpstreamIdleTimeout = "bad"
+			},
+			wantErr: "invalid upstream_idle_timeout",
+		},
+		{
+			name: "MalformedResponseHeaderTimeout",
+			mutate: func(gc *GlobalConfig) {
+				gc.ResponseHeaderTimeout = "bad"
+			},
+			wantErr: "invalid response_header_timeout",
+		},
+		{
+			name: "NegativeDurations",
+			mutate: func(gc *GlobalConfig) {
+				gc.ReactivateAfter = "-1h"
+				gc.UpstreamIdleTimeout = "-3m"
+				gc.ResponseHeaderTimeout = "-2m"
+			},
+			wantDur: RuntimeDurations{
+				ReactivateAfter:       -1 * time.Hour,
+				UpstreamIdleTimeout:   -3 * time.Minute,
+				ResponseHeaderTimeout: -2 * time.Minute,
+			},
+		},
+		{
+			name: "ZeroDurations",
+			mutate: func(gc *GlobalConfig) {
+				gc.ReactivateAfter = "0"
+				gc.UpstreamIdleTimeout = "0"
+				gc.ResponseHeaderTimeout = "0"
+			},
+			wantDur: RuntimeDurations{},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gc := DefaultGlobalConfig()
+			tt.mutate(&gc)
+			got, err := gc.RuntimeDurations()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RuntimeDurations: %v", err)
+			}
+			if got != tt.wantDur {
+				t.Fatalf("durations = %#v, want %#v", got, tt.wantDur)
+			}
+		})
+	}
+}
+
+func TestCircuitBreakerOpenTimeoutDuration_InvalidString(t *testing.T) {
+	t.Parallel()
+
+	if _, err := (CircuitBreakerConfig{OpenTimeout: "bad"}).OpenTimeoutDuration(); err == nil {
+		t.Fatalf("expected invalid duration error")
+	}
+}
+
+func TestLoad_RejectsUnknownYAMLFields(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("listen_addr: 127.0.0.1\nport: 3333\nunknown_field: true\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "unknown_field") {
+		t.Fatalf("Load error = %v, want unknown_field failure", err)
+	}
+}
+
+func TestGetConfigDir_RespectsEnvironmentOverride(t *testing.T) {
+	const want = "/tmp/clipal-config-override"
+	t.Setenv("CLIPAL_CONFIG_DIR", want)
+	if got := GetConfigDir(); got != want {
+		t.Fatalf("GetConfigDir = %q, want %q", got, want)
 	}
 }

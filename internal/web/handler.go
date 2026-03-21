@@ -164,7 +164,7 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // serveStatic serves static assets (CSS, JS)
@@ -194,7 +194,7 @@ func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", ct)
 	}
 
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // routeProviders routes provider-related requests to appropriate handlers

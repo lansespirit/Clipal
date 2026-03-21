@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 )
 
 // Status is a best-effort summary of the OS service state.
@@ -41,4 +44,87 @@ func (s Status) MarshalJSON() ([]byte, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func parseLaunchdStatus(st Status, raw string) Status {
+	st.Loaded = true
+
+	if m := regexp.MustCompile(`(?m)^\s*state\s*=\s*(\S+)`).FindStringSubmatch(raw); len(m) == 2 {
+		st.Detail = "state=" + m[1]
+		if m[1] == "running" {
+			st.Running = true
+		}
+	}
+	if m := regexp.MustCompile(`(?m)^\s*pid\s*=\s*(\d+)`).FindStringSubmatch(raw); len(m) == 2 {
+		if pid, err := strconv.Atoi(m[1]); err == nil {
+			st.PID = pid
+			if pid > 0 {
+				st.Running = true
+			}
+		}
+	}
+	if m := regexp.MustCompile(`(?m)^\s*program\s*=\s*(.+)$`).FindStringSubmatch(raw); len(m) == 2 {
+		st.BinaryPath = strings.TrimSpace(m[1])
+	}
+	if m := regexp.MustCompile(`(?m)^\s*stdout path\s*=\s*(.+)$`).FindStringSubmatch(raw); len(m) == 2 {
+		st.StdoutPath = strings.TrimSpace(m[1])
+	}
+	if m := regexp.MustCompile(`(?m)^\s*stderr path\s*=\s*(.+)$`).FindStringSubmatch(raw); len(m) == 2 {
+		st.StderrPath = strings.TrimSpace(m[1])
+	}
+	if m := regexp.MustCompile(`(?m)^\s*last exit reason\s*=\s*(.+)$`).FindStringSubmatch(raw); len(m) == 2 {
+		st.LastExit = strings.TrimSpace(m[1])
+	}
+
+	return st
+}
+
+func parseSystemdShowStatus(st Status, raw string) Status {
+	var (
+		loadState   string
+		activeState string
+		subState    string
+		mainPID     int
+	)
+	for _, line := range strings.Split(raw, "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "LoadState":
+			loadState = strings.TrimSpace(v)
+		case "ActiveState":
+			activeState = strings.TrimSpace(v)
+		case "SubState":
+			subState = strings.TrimSpace(v)
+		case "MainPID":
+			if pid, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				mainPID = pid
+			}
+		}
+	}
+
+	st.Loaded = (loadState != "" && loadState != "not-found")
+	st.Running = (activeState == "active")
+	st.PID = mainPID
+	if activeState != "" || subState != "" {
+		st.Detail = "active=" + activeState + " sub=" + subState
+	}
+	return st
+}
+
+func parseWindowsTaskStatus(st Status, raw string) Status {
+	st.Loaded = true
+
+	re := regexp.MustCompile(`(?mi)^\s*Status:\s*(.+?)\s*$`)
+	if m := re.FindStringSubmatch(raw); len(m) == 2 {
+		status := strings.TrimSpace(m[1])
+		st.Detail = "status=" + status
+		if strings.EqualFold(status, "Running") {
+			st.Running = true
+		}
+	}
+
+	return st
 }

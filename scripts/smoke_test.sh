@@ -35,7 +35,7 @@ PY
 
 wait_http_ok() {
   local url="$1"
-  local tries="${2:-50}"
+  local tries="${2:-100}"
   local delay="${3:-0.1}"
   for _ in $(seq 1 "$tries"); do
     if curl -fsS "$url" >/dev/null 2>&1; then
@@ -144,7 +144,11 @@ YAML
 export UPSTREAM_PORT="$upstream_port"
 go run "$tmpdir/upstream.go" >"$tmpdir/upstream.log" 2>&1 &
 upstream_pid="$!"
-wait_http_ok "http://127.0.0.1:$upstream_port/"
+if ! wait_http_ok "http://127.0.0.1:$upstream_port/"; then
+  echo "---- upstream.log ----" >&2
+  cat "$tmpdir/upstream.log" >&2 || true
+  exit 1
+fi
 
 echo "building clipal..."
 (cd "$repo_root" && go build -o "$tmpdir/clipal" ./cmd/clipal)
@@ -152,7 +156,11 @@ echo "building clipal..."
 echo "starting clipal on 127.0.0.1:$clipal_port ..."
 "$tmpdir/clipal" --config-dir "$cfgdir" --listen-addr 127.0.0.1 --port "$clipal_port" --log-level debug >"$tmpdir/clipal.log" 2>&1 &
 clipal_pid="$!"
-wait_http_ok "http://127.0.0.1:$clipal_port/health"
+if ! wait_http_ok "http://127.0.0.1:$clipal_port/health"; then
+  echo "---- clipal.log ----" >&2
+  cat "$tmpdir/clipal.log" >&2 || true
+  exit 1
+fi
 
 echo "test: /health"
 curl -fsS "http://127.0.0.1:$clipal_port/health" | "$PY" -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="healthy", d; print("ok")'
