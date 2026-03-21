@@ -108,9 +108,9 @@ func ExecutePlan(ctx context.Context, plan *Plan, dryRun bool) (string, error) {
 			continue
 		}
 		if len(b) > 0 {
-			out.Write(b)
+			_, _ = out.Write(b)
 			if b[len(b)-1] != '\n' {
-				out.WriteByte('\n')
+				_ = out.WriteByte('\n')
 			}
 		}
 		if err != nil {
@@ -125,9 +125,9 @@ func joinArgs(args []string) string {
 	var b bytes.Buffer
 	for i, a := range args {
 		if i > 0 {
-			b.WriteByte(' ')
+			_ = b.WriteByte(' ')
 		}
-		b.WriteString(shellEscape(a))
+		_, _ = b.WriteString(shellEscape(a))
 	}
 	return b.String()
 }

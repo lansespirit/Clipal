@@ -7,21 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
 	"github.com/lansespirit/Clipal/internal/proxy"
+	"github.com/lansespirit/Clipal/internal/testutil"
 )
-
-func decodeJSON(t *testing.T, body *bytes.Buffer) map[string]any {
-	t.Helper()
-	var v map[string]any
-	if err := json.Unmarshal(body.Bytes(), &v); err != nil {
-		t.Fatalf("decode json: %v\nbody=%s", err, body.String())
-	}
-	return v
-}
 
 func TestHandleGetGlobalConfig_ReturnsSnakeCase(t *testing.T) {
 	dir := t.TempDir()
@@ -35,7 +28,7 @@ func TestHandleGetGlobalConfig_ReturnsSnakeCase(t *testing.T) {
 		t.Fatalf("status=%d body=%s", res.StatusCode, w.Body.String())
 	}
 
-	got := decodeJSON(t, w.Body)
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
 	if _, ok := got["listen_addr"]; !ok {
 		t.Fatalf("expected listen_addr in response, got keys=%v", keys(got))
 	}
@@ -128,7 +121,7 @@ providers:
 		t.Fatalf("status=%d body=%s", res.StatusCode, w.Body.String())
 	}
 
-	got := decodeJSON(t, w.Body)
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
 	codexObj, ok := got["codex"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected codex object, got %T", got["codex"])
@@ -234,6 +227,321 @@ func TestHandleAddProvider_AcceptsAPIKeys(t *testing.T) {
 	}
 	if cfg.Codex.Providers[0].APIKey != "" {
 		t.Fatalf("expected multi-key provider to be persisted via api_keys")
+	}
+}
+
+func TestHandleAddProvider_AutoAssignsNextPriority(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+providers:
+  - name: p1
+    base_url: https://one.example
+    api_key: key1
+    priority: 1
+  - name: p2
+    base_url: https://two.example
+    api_key: key2
+    priority: 2
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	body := []byte(`{
+  "name": "p3",
+  "base_url": "https://three.example",
+  "api_key": "key3",
+  "enabled": true
+}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/providers/codex", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	api.HandleAddProvider(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.Codex.Providers) != 3 {
+		t.Fatalf("providers len = %d, want 3", len(cfg.Codex.Providers))
+	}
+	if got := cfg.Codex.Providers[2].Priority; got != 3 {
+		t.Fatalf("priority = %d, want 3", got)
+	}
+}
+
+func TestHandleGetClientConfig_ReturnsConfiguredModeAndPin(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+mode: manual
+pinned_provider: p1
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: secret
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/client-config/codex", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetClientConfig(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+	if got["mode"] != "manual" || got["pinned_provider"] != "p1" {
+		t.Fatalf("body=%#v", got)
+	}
+}
+
+func TestHandleUpdateClientConfig_SavesChanges(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+mode: auto
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: secret
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/client-config/codex", bytes.NewReader([]byte(`{"mode":"manual","pinned_provider":"p1"}`)))
+	w := httptest.NewRecorder()
+	api.HandleUpdateClientConfig(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if cfg.Codex.Mode != config.ClientModeManual || cfg.Codex.PinnedProvider != "p1" {
+		t.Fatalf("codex cfg = %#v", cfg.Codex)
+	}
+}
+
+func TestHandleUpdateProvider_Paths(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+mode: auto
+providers:
+  - name: p1
+    base_url: https://one.example
+    api_key: key1
+    priority: 1
+  - name: p2
+    base_url: https://two.example
+    api_key: key2
+    priority: 2
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := NewAPI(dir, "test", nil)
+
+	t.Run("rename conflict", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{"name":"p2"}`)))
+		w := httptest.NewRecorder()
+		api.HandleUpdateProvider(w, req)
+		if w.Result().StatusCode != http.StatusConflict {
+			t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/missing", bytes.NewReader([]byte(`{"base_url":"https://new.example"}`)))
+		w := httptest.NewRecorder()
+		api.HandleUpdateProvider(w, req)
+		if w.Result().StatusCode != http.StatusNotFound {
+			t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{
+  "name":"p3",
+  "base_url":"https://three.example",
+  "api_keys":["k3","k4"],
+  "priority":5,
+  "enabled":false
+}`)))
+		w := httptest.NewRecorder()
+		api.HandleUpdateProvider(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+
+		cfg, err := config.Load(dir)
+		if err != nil {
+			t.Fatalf("config.Load: %v", err)
+		}
+		var updated *config.Provider
+		for i := range cfg.Codex.Providers {
+			if cfg.Codex.Providers[i].Name == "p3" {
+				updated = &cfg.Codex.Providers[i]
+				break
+			}
+		}
+		if updated == nil {
+			t.Fatalf("providers=%#v", cfg.Codex.Providers)
+		}
+		if updated.BaseURL != "https://three.example" {
+			t.Fatalf("provider=%#v", updated)
+		}
+		if updated.Priority != 5 {
+			t.Fatalf("priority=%d", updated.Priority)
+		}
+		if updated.Enabled == nil || *updated.Enabled {
+			t.Fatalf("enabled=%v", updated.Enabled)
+		}
+		if got := updated.KeyCount(); got != 2 {
+			t.Fatalf("key count=%d", got)
+		}
+	})
+}
+
+func TestHandleDeleteProvider_Paths(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+mode: auto
+providers:
+  - name: p1
+    base_url: https://one.example
+    api_key: key1
+    priority: 1
+  - name: p2
+    base_url: https://two.example
+    api_key: key2
+    priority: 2
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := NewAPI(dir, "test", nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/providers/codex/missing", nil)
+	w := httptest.NewRecorder()
+	api.HandleDeleteProvider(w, req)
+	if w.Result().StatusCode != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/providers/codex/p1", nil)
+	w = httptest.NewRecorder()
+	api.HandleDeleteProvider(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(cfg.Codex.Providers) != 1 || cfg.Codex.Providers[0].Name != "p2" {
+		t.Fatalf("providers=%#v", cfg.Codex.Providers)
+	}
+}
+
+func TestHandleReorderProviders_Paths(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+mode: auto
+providers:
+  - name: p1
+    base_url: https://one.example
+    api_key: key1
+    priority: 1
+  - name: p2
+    base_url: https://two.example
+    api_key: key2
+    priority: 2
+  - name: p3
+    base_url: https://three.example
+    api_key: key3
+    priority: 3
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := NewAPI(dir, "test", nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/_reorder", bytes.NewReader([]byte(`{"providers":["missing"]}`)))
+	w := httptest.NewRecorder()
+	api.HandleReorderProviders(w, req)
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/providers/codex/_reorder", bytes.NewReader([]byte(`{"providers":["p3","p1"]}`)))
+	w = httptest.NewRecorder()
+	api.HandleReorderProviders(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if got := []string{cfg.Codex.Providers[0].Name, cfg.Codex.Providers[1].Name, cfg.Codex.Providers[2].Name}; strings.Join(got, ",") != "p3,p1,p2" {
+		t.Fatalf("providers order=%v", got)
+	}
+	if got := []int{cfg.Codex.Providers[0].Priority, cfg.Codex.Providers[1].Priority, cfg.Codex.Providers[2].Priority}; got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("priorities=%v", got)
+	}
+}
+
+func TestHandleGetStatus_FallsBackToFirstEnabledProviderWithoutRuntime(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+mode: auto
+providers:
+  - name: p1
+    base_url: https://one.example
+    api_key: key1
+    priority: 1
+  - name: p2
+    base_url: https://two.example
+    api_key: key2
+    priority: 2
+    enabled: false
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test-version", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetStatus(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+	if got["version"] != "test-version" {
+		t.Fatalf("body=%#v", got)
+	}
+	clients, ok := got["clients"].(map[string]any)
+	if !ok {
+		t.Fatalf("clients=%T %#v", got["clients"], got["clients"])
+	}
+	codex, ok := clients["codex"].(map[string]any)
+	if !ok {
+		t.Fatalf("codex=%T %#v", clients["codex"], clients["codex"])
+	}
+	if codex["current_provider"] != "p1" {
+		t.Fatalf("codex status=%#v", codex)
+	}
+	if codex["provider_count"] != float64(2) {
+		t.Fatalf("codex status=%#v", codex)
 	}
 }
 

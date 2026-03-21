@@ -9,22 +9,26 @@ import (
 	"github.com/lansespirit/Clipal/internal/config"
 )
 
+func writeBufferString(b *bytes.Buffer, s string) {
+	_, _ = b.WriteString(s)
+}
+
 func formatClientConfigYAML(clientType string, cc config.ClientConfig) []byte {
 	var b bytes.Buffer
 
 	header := clientConfigHeader(clientType)
-	b.WriteString("# " + header + "\n")
-	b.WriteString("# Providers are sorted by priority (lower number = higher priority)\n\n")
+	writeBufferString(&b, "# "+header+"\n")
+	writeBufferString(&b, "# Providers are sorted by priority (lower number = higher priority)\n\n")
 
 	mode := strings.TrimSpace(string(cc.Mode))
 	if mode == "" {
 		mode = string(config.ClientModeAuto)
 	}
-	b.WriteString(fmt.Sprintf("mode: %s # auto | manual\n", yamlMaybeQuoteEmpty(mode)))
-	b.WriteString(fmt.Sprintf("pinned_provider: %s # used when mode=manual\n\n", yamlMaybeQuoteEmpty(strings.TrimSpace(cc.PinnedProvider))))
+	writeBufferString(&b, fmt.Sprintf("mode: %s # auto | manual\n", yamlMaybeQuoteEmpty(mode)))
+	writeBufferString(&b, fmt.Sprintf("pinned_provider: %s # used when mode=manual\n\n", yamlMaybeQuoteEmpty(strings.TrimSpace(cc.PinnedProvider))))
 
 	if len(cc.Providers) == 0 {
-		b.WriteString("providers: []\n")
+		writeBufferString(&b, "providers: []\n")
 		return b.Bytes()
 	}
 
@@ -42,82 +46,82 @@ func formatClientConfigYAML(clientType string, cc config.ClientConfig) []byte {
 	}
 	cut1, cut2 := priorityTierCuts(uniquePriorities)
 
-	b.WriteString("providers:\n")
+	writeBufferString(&b, "providers:\n")
 
 	prevTier := 0
 	for i, p := range providers {
 		if i > 0 {
-			b.WriteString("\n")
+			writeBufferString(&b, "\n")
 		}
 
 		tier := priorityTier(p.Priority, cut1, cut2)
 		if tier != prevTier {
-			b.WriteString(fmt.Sprintf("  # Priority level %d: %s\n", tier, priorityTierLabel(tier, cut1, cut2)))
+			writeBufferString(&b, fmt.Sprintf("  # Priority level %d: %s\n", tier, priorityTierLabel(tier, cut1, cut2)))
 			prevTier = tier
 		}
 
-		b.WriteString(fmt.Sprintf("  - name: %s\n", yamlDoubleQuote(p.Name)))
-		b.WriteString(fmt.Sprintf("    base_url: %s\n", yamlDoubleQuote(p.BaseURL)))
+		writeBufferString(&b, fmt.Sprintf("  - name: %s\n", yamlDoubleQuote(p.Name)))
+		writeBufferString(&b, fmt.Sprintf("    base_url: %s\n", yamlDoubleQuote(p.BaseURL)))
 		keys := p.NormalizedAPIKeys()
 		if len(keys) <= 1 {
-			b.WriteString(fmt.Sprintf("    api_key: %s\n", yamlDoubleQuote(p.PrimaryAPIKey())))
+			writeBufferString(&b, fmt.Sprintf("    api_key: %s\n", yamlDoubleQuote(p.PrimaryAPIKey())))
 		} else {
-			b.WriteString("    api_keys:\n")
+			writeBufferString(&b, "    api_keys:\n")
 			for _, key := range keys {
-				b.WriteString(fmt.Sprintf("      - %s\n", yamlDoubleQuote(key)))
+				writeBufferString(&b, fmt.Sprintf("      - %s\n", yamlDoubleQuote(key)))
 			}
 		}
-		b.WriteString(fmt.Sprintf("    priority: %d\n", p.Priority))
-		b.WriteString(fmt.Sprintf("    enabled: %v\n", p.IsEnabled()))
+		writeBufferString(&b, fmt.Sprintf("    priority: %d\n", p.Priority))
+		writeBufferString(&b, fmt.Sprintf("    enabled: %v\n", p.IsEnabled()))
 	}
 
-	b.WriteString("\n")
+	writeBufferString(&b, "\n")
 	return b.Bytes()
 }
 
 func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 	var b bytes.Buffer
 
-	b.WriteString("# Global configuration for clipal\n")
-	b.WriteString("# Managed by the web UI (comments kept for readability)\n\n")
+	writeBufferString(&b, "# Global configuration for clipal\n")
+	writeBufferString(&b, "# Managed by the web UI (comments kept for readability)\n\n")
 
 	// Quote strings to avoid YAML injection via newlines/# and to keep the file
 	// parseable even if a value contains spaces or special characters.
-	b.WriteString(fmt.Sprintf("listen_addr: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.ListenAddr))))
-	b.WriteString(fmt.Sprintf("port: %d\n", gc.Port))
-	b.WriteString(fmt.Sprintf("log_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.LogLevel)))))
-	b.WriteString(fmt.Sprintf("reactivate_after: %s # set to 0 to disable temporary deactivation\n", yamlDoubleQuote(strings.TrimSpace(gc.ReactivateAfter))))
-	b.WriteString("# Cancel an upstream attempt if no response body bytes are received for this long.\n")
-	b.WriteString("# Useful for SSE streams that can hang after headers. Set to 0 to disable.\n")
-	b.WriteString(fmt.Sprintf("upstream_idle_timeout: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.UpstreamIdleTimeout))))
-	b.WriteString("# How long to wait for the upstream to return response headers.\n")
-	b.WriteString("# Set to 0 to disable.\n")
-	b.WriteString(fmt.Sprintf("response_header_timeout: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.ResponseHeaderTimeout))))
-	b.WriteString("# Max request body size in bytes (clipal buffers request bodies for retries).\n")
-	b.WriteString(fmt.Sprintf("max_request_body_bytes: %d\n\n", gc.MaxRequestBody))
+	writeBufferString(&b, fmt.Sprintf("listen_addr: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.ListenAddr))))
+	writeBufferString(&b, fmt.Sprintf("port: %d\n", gc.Port))
+	writeBufferString(&b, fmt.Sprintf("log_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.LogLevel)))))
+	writeBufferString(&b, fmt.Sprintf("reactivate_after: %s # set to 0 to disable temporary deactivation\n", yamlDoubleQuote(strings.TrimSpace(gc.ReactivateAfter))))
+	writeBufferString(&b, "# Cancel an upstream attempt if no response body bytes are received for this long.\n")
+	writeBufferString(&b, "# Useful for SSE streams that can hang after headers. Set to 0 to disable.\n")
+	writeBufferString(&b, fmt.Sprintf("upstream_idle_timeout: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.UpstreamIdleTimeout))))
+	writeBufferString(&b, "# How long to wait for the upstream to return response headers.\n")
+	writeBufferString(&b, "# Set to 0 to disable.\n")
+	writeBufferString(&b, fmt.Sprintf("response_header_timeout: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.ResponseHeaderTimeout))))
+	writeBufferString(&b, "# Max request body size in bytes (clipal buffers request bodies for retries).\n")
+	writeBufferString(&b, fmt.Sprintf("max_request_body_bytes: %d\n\n", gc.MaxRequestBody))
 
-	b.WriteString("# Default: <config-dir>/logs (e.g. ~/.clipal/logs)\n")
-	b.WriteString(fmt.Sprintf("log_dir: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.LogDir))))
-	b.WriteString(fmt.Sprintf("log_retention_days: %d # set to 0 to keep forever\n", gc.LogRetentionDays))
-	b.WriteString(fmt.Sprintf("log_stdout: %v\n\n", boolPtrOrTrue(gc.LogStdout)))
+	writeBufferString(&b, "# Default: <config-dir>/logs (e.g. ~/.clipal/logs)\n")
+	writeBufferString(&b, fmt.Sprintf("log_dir: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.LogDir))))
+	writeBufferString(&b, fmt.Sprintf("log_retention_days: %d # default 7 days\n", gc.LogRetentionDays))
+	writeBufferString(&b, fmt.Sprintf("log_stdout: %v\n\n", boolPtrOrTrue(gc.LogStdout)))
 
-	b.WriteString("# Claude Code: if true, /v1/messages/count_tokens failures won't affect the main conversation provider.\n")
-	b.WriteString(fmt.Sprintf("ignore_count_tokens_failover: %v\n\n", gc.IgnoreCountTokensFailover))
+	writeBufferString(&b, "# Claude Code: if true, /v1/messages/count_tokens failures won't affect the main conversation provider.\n")
+	writeBufferString(&b, fmt.Sprintf("ignore_count_tokens_failover: %v\n\n", gc.IgnoreCountTokensFailover))
 
-	b.WriteString("# Circuit breaker (prevents repeated requests to unhealthy providers)\n")
-	b.WriteString("circuit_breaker:\n")
-	b.WriteString(fmt.Sprintf("  failure_threshold: %d # consecutive failures before opening (set to 0 to disable)\n", gc.CircuitBreaker.FailureThreshold))
-	b.WriteString(fmt.Sprintf("  success_threshold: %d # consecutive successes in half-open before closing\n", gc.CircuitBreaker.SuccessThreshold))
-	b.WriteString(fmt.Sprintf("  open_timeout: %s # e.g. 60s, 2m\n", yamlDoubleQuote(strings.TrimSpace(gc.CircuitBreaker.OpenTimeout))))
-	b.WriteString(fmt.Sprintf("  half_open_max_inflight: %d # concurrent probe requests in half-open\n\n", gc.CircuitBreaker.HalfOpenMaxInFlight))
+	writeBufferString(&b, "# Circuit breaker (prevents repeated requests to unhealthy providers)\n")
+	writeBufferString(&b, "circuit_breaker:\n")
+	writeBufferString(&b, fmt.Sprintf("  failure_threshold: %d # consecutive failures before opening (set to 0 to disable)\n", gc.CircuitBreaker.FailureThreshold))
+	writeBufferString(&b, fmt.Sprintf("  success_threshold: %d # consecutive successes in half-open before closing\n", gc.CircuitBreaker.SuccessThreshold))
+	writeBufferString(&b, fmt.Sprintf("  open_timeout: %s # e.g. 60s, 2m\n", yamlDoubleQuote(strings.TrimSpace(gc.CircuitBreaker.OpenTimeout))))
+	writeBufferString(&b, fmt.Sprintf("  half_open_max_inflight: %d # concurrent probe requests in half-open\n\n", gc.CircuitBreaker.HalfOpenMaxInFlight))
 
-	b.WriteString("# Desktop notifications (best-effort, cross-platform via beeep)\n")
-	b.WriteString("notifications:\n")
-	b.WriteString(fmt.Sprintf("  enabled: %v\n", gc.Notifications.Enabled))
-	b.WriteString(fmt.Sprintf("  min_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.Notifications.MinLevel)))))
-	b.WriteString(fmt.Sprintf("  provider_switch: %v\n", boolPtrOrTrue(gc.Notifications.ProviderSwitch)))
+	writeBufferString(&b, "# Desktop notifications (best-effort, cross-platform via beeep)\n")
+	writeBufferString(&b, "notifications:\n")
+	writeBufferString(&b, fmt.Sprintf("  enabled: %v\n", gc.Notifications.Enabled))
+	writeBufferString(&b, fmt.Sprintf("  min_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.Notifications.MinLevel)))))
+	writeBufferString(&b, fmt.Sprintf("  provider_switch: %v\n", boolPtrOrTrue(gc.Notifications.ProviderSwitch)))
 
-	b.WriteString("\n")
+	writeBufferString(&b, "\n")
 	return b.Bytes()
 }
 
@@ -206,29 +210,29 @@ func yamlDoubleQuote(s string) string {
 	// YAML double-quoted scalar with minimal escaping.
 	var b strings.Builder
 	b.Grow(len(s) + 2)
-	b.WriteByte('"')
+	_ = b.WriteByte('"')
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch c {
 		case '\\':
-			b.WriteString(`\\`)
+			_, _ = b.WriteString(`\\`)
 		case '"':
-			b.WriteString(`\"`)
+			_, _ = b.WriteString(`\"`)
 		case '\n':
-			b.WriteString(`\n`)
+			_, _ = b.WriteString(`\n`)
 		case '\r':
-			b.WriteString(`\r`)
+			_, _ = b.WriteString(`\r`)
 		case '\t':
-			b.WriteString(`\t`)
+			_, _ = b.WriteString(`\t`)
 		default:
 			if c < 0x20 {
 				// Control characters should be escaped in YAML double quotes.
-				b.WriteString(fmt.Sprintf(`\x%02x`, c))
+				_, _ = b.WriteString(fmt.Sprintf(`\x%02x`, c))
 				continue
 			}
-			b.WriteByte(c)
+			_ = b.WriteByte(c)
 		}
 	}
-	b.WriteByte('"')
+	_ = b.WriteByte('"')
 	return b.String()
 }

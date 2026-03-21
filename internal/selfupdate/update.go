@@ -12,6 +12,20 @@ import (
 	"time"
 )
 
+var (
+	fetchLatestReleaseFunc = fetchLatestRelease
+	osExecutableFunc       = os.Executable
+	filepathAbsFunc        = filepath.Abs
+	newHTTPClientFunc      = func(timeout time.Duration) *http.Client {
+		return &http.Client{Timeout: timeout}
+	}
+	downloadToTempFileFunc = downloadToTempFile
+	sha256FileFunc         = sha256File
+	applyUnixFunc          = applyUnix
+	applyWindowsFunc       = applyWindows
+	copyFileContentsFunc   = io.Copy
+)
+
 type Plan struct {
 	CurrentVersion string
 	LatestVersion  string
@@ -21,7 +35,7 @@ type Plan struct {
 }
 
 func BuildPlan(ctx context.Context, client *http.Client, currentVersion string) (*Plan, error) {
-	rel, err := fetchLatestRelease(ctx, client)
+	rel, err := fetchLatestReleaseFunc(ctx, client)
 	if err != nil {
 		return nil, err
 	}
@@ -39,11 +53,11 @@ func BuildPlan(ctx context.Context, client *http.Client, currentVersion string) 
 		return nil, fmt.Errorf("release %s missing asset %q", rel.TagName, ChecksumsAssetName)
 	}
 
-	exe, err := os.Executable()
+	exe, err := osExecutableFunc()
 	if err != nil {
 		return nil, err
 	}
-	exe, err = filepath.Abs(exe)
+	exe, err = filepathAbsFunc(exe)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +95,7 @@ func Update(ctx context.Context, currentVersion string, opts Options) (*Plan, bo
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	client := &http.Client{Timeout: opts.Timeout}
+	client := newHTTPClientFunc(opts.Timeout)
 
 	plan, err := BuildPlan(ctx, client, currentVersion)
 	if err != nil {
@@ -102,11 +116,11 @@ func Update(ctx context.Context, currentVersion string, opts Options) (*Plan, bo
 		return plan, needs, nil
 	}
 
-	checksumsPath, err := downloadToTempFile(ctx, client, plan.ChecksumsAsset.BrowserDownloadURL, "clipal-checksums-")
+	checksumsPath, err := downloadToTempFileFunc(ctx, client, plan.ChecksumsAsset.BrowserDownloadURL, "clipal-checksums-")
 	if err != nil {
 		return plan, false, err
 	}
-	defer os.Remove(checksumsPath)
+	defer func() { _ = os.Remove(checksumsPath) }()
 
 	checksumsBytes, err := os.ReadFile(checksumsPath)
 	if err != nil {
@@ -122,7 +136,7 @@ func Update(ctx context.Context, currentVersion string, opts Options) (*Plan, bo
 		return plan, false, fmt.Errorf("checksums.txt missing entry for %q", plan.BinaryAsset.Name)
 	}
 
-	newBinPath, err := downloadToTempFile(ctx, client, plan.BinaryAsset.BrowserDownloadURL, "clipal-bin-")
+	newBinPath, err := downloadToTempFileFunc(ctx, client, plan.BinaryAsset.BrowserDownloadURL, "clipal-bin-")
 	if err != nil {
 		return plan, false, err
 	}
@@ -133,7 +147,7 @@ func Update(ctx context.Context, currentVersion string, opts Options) (*Plan, bo
 		}
 	}()
 
-	gotSum, err := sha256File(newBinPath)
+	gotSum, err := sha256FileFunc(newBinPath)
 	if err != nil {
 		return plan, false, err
 	}
@@ -143,11 +157,11 @@ func Update(ctx context.Context, currentVersion string, opts Options) (*Plan, bo
 
 	switch runtime.GOOS {
 	case "windows":
-		if err := applyWindows(plan.ExecutablePath, newBinPath, opts.Relaunch); err != nil {
+		if err := applyWindowsFunc(plan.ExecutablePath, newBinPath, opts.Relaunch); err != nil {
 			return plan, false, err
 		}
 	default:
-		if err := applyUnix(plan.ExecutablePath, newBinPath); err != nil {
+		if err := applyUnixFunc(plan.ExecutablePath, newBinPath); err != nil {
 			return plan, false, err
 		}
 	}
@@ -160,7 +174,7 @@ func copyFile(dst string, src string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
@@ -168,7 +182,7 @@ func copyFile(dst string, src string, mode os.FileMode) error {
 	}
 	defer func() { _ = out.Close() }()
 
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := copyFileContentsFunc(out, in); err != nil {
 		return err
 	}
 	if err := out.Sync(); err != nil {

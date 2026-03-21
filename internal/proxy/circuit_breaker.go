@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"strings"
 	"sync"
 	"time"
 
@@ -48,7 +47,7 @@ func normalizeCircuitBreakerConfig(cfg config.CircuitBreakerConfig) circuitBreak
 		return out
 	}
 
-	openTimeout, err := time.ParseDuration(strings.TrimSpace(cfg.OpenTimeout))
+	openTimeout, err := cfg.OpenTimeoutDuration()
 	if err != nil || openTimeout <= 0 {
 		openTimeout = time.Minute
 		logger.Warn("invalid circuit_breaker.open_timeout %q, defaulting to 60s", cfg.OpenTimeout)

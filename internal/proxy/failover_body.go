@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"io"
 	"net/http"
@@ -21,29 +20,6 @@ func sanitizeLogString(s string) string {
 	return s
 }
 
-func decodeResponseBodyBytes(h http.Header, raw []byte, maxBytes int64) (data []byte, truncated bool) {
-	if maxBytes <= 0 {
-		return nil, false
-	}
-	enc := strings.ToLower(strings.TrimSpace(h.Get("Content-Encoding")))
-	isGzip := strings.Contains(enc, "gzip") || (len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b)
-	if isGzip {
-		if gz, err := gzip.NewReader(bytes.NewReader(raw)); err == nil {
-			defer gz.Close()
-			data, _ = io.ReadAll(io.LimitReader(gz, maxBytes+1))
-			truncated = int64(len(data)) > maxBytes
-			if truncated {
-				data = data[:maxBytes]
-			}
-			return data, truncated
-		}
-	}
-	if int64(len(raw)) > maxBytes {
-		return raw[:maxBytes], true
-	}
-	return raw, false
-}
-
 func readResponseBodyBytes(resp *http.Response, maxBytes int64) (data []byte, truncated bool) {
 	if resp == nil || resp.Body == nil {
 		return nil, false
@@ -60,7 +36,7 @@ func readResponseBodyBytes(resp *http.Response, maxBytes int64) (data []byte, tr
 
 	if isGzip {
 		if gz, err := gzip.NewReader(br); err == nil {
-			defer gz.Close()
+			defer func() { _ = gz.Close() }()
 			data, _ = io.ReadAll(io.LimitReader(gz, maxBytes+1))
 			truncated = int64(len(data)) > maxBytes
 			if truncated {
@@ -79,18 +55,6 @@ func readResponseBodyBytes(resp *http.Response, maxBytes int64) (data []byte, tr
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(br, 512*1024))
 	return data, truncated
-}
-
-func readAndTruncateResponse(resp *http.Response, maxBytes int64) string {
-	if maxBytes <= 0 || resp == nil {
-		return ""
-	}
-	data, truncated := readResponseBodyBytes(resp, maxBytes)
-	out := sanitizeLogString(string(data))
-	if truncated {
-		return out + "..."
-	}
-	return out
 }
 
 func truncateString(s string, maxLen int) string {

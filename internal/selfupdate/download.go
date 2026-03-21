@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -24,7 +23,7 @@ func downloadToTempFile(ctx context.Context, client *http.Client, url string, pr
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return "", fmt.Errorf("download %s: %s", url, resp.Status)
 	}
@@ -48,10 +47,4 @@ func downloadToTempFile(ctx context.Context, client *http.Client, url string, pr
 		return "", err
 	}
 	return tmp, nil
-}
-
-func tempSiblingPath(dst string, suffix string) string {
-	dir := filepath.Dir(dst)
-	base := filepath.Base(dst)
-	return filepath.Join(dir, base+suffix)
 }

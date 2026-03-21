@@ -108,7 +108,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 
 	// Atomically get active count and start index to avoid TOCTOU race.
 	active, startIndex := cp.getActiveCountAndStartIndex()
@@ -237,7 +237,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 			}
 
 			if action != failureReturnToClient {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				cancelAttempt(nil)
 				lastFailedProvider = provider.Name
 				summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
@@ -343,8 +343,6 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		}
 		if keyExhausted {
 			lastFailedProvider = provider.Name
-			lastSwitchReason = keyExhaustedReason
-			lastSwitchStatus = keyExhaustedStatus
 			nextIndex, nextName := nextProviderName(cp, index)
 			if nextName != "" {
 				logger.Warn("[%s] provider %s exhausted available keys; trying next=%s", cp.clientType, provider.Name, nextName)
@@ -411,7 +409,7 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 
 	// Atomically get active count and start index to avoid TOCTOU race.
 	active, startIndex := cp.getActiveCountAndCountTokensStartIndex()
@@ -524,7 +522,7 @@ func (cp *ClientProxy) forwardCountTokensWithFailover(w http.ResponseWriter, req
 			}
 
 			if action != failureReturnToClient {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				cancelAttempt(nil)
 				summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
 				attemptSummaries = append(attemptSummaries, summary)

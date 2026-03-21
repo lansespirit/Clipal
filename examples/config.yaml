@@ -23,7 +23,7 @@ response_header_timeout: 2m
 
 # Default: <config-dir>/logs (for example ~/.clipal/logs)
 # log_dir: ""
-log_retention_days: 7 # set to 0 to keep logs forever
+log_retention_days: 7 # 0 keeps logs forever; default 7 days
 log_stdout: false # recommended for long-running background service; runtime default is true
 
 # Claude Code only: if true, /v1/messages/count_tokens failures won't affect the

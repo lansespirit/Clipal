@@ -336,42 +336,6 @@ func (cp *ClientProxy) deactivationUntil(index int) time.Time {
 	return cp.deactivated[index].until
 }
 
-func (cp *ClientProxy) timeUntilProviderAvailable(index int) (wait time.Duration, reason string, ok bool) {
-	now := time.Now()
-
-	cp.mu.RLock()
-	var d providerDeactivation
-	if index >= 0 && index < len(cp.deactivated) {
-		d = cp.deactivated[index]
-	}
-	var cb *circuitBreaker
-	if index >= 0 && index < len(cp.breakers) {
-		cb = cp.breakers[index]
-	}
-	cp.mu.RUnlock()
-
-	if !d.until.IsZero() && now.Before(d.until) {
-		return time.Until(d.until), d.reason, true
-	}
-	if keyWait, keyReason, keyOK := func() (time.Duration, string, bool) {
-		cp.mu.RLock()
-		defer cp.mu.RUnlock()
-		if cp.availableKeyCountLocked(index, now) > 0 {
-			return 0, "", false
-		}
-		return cp.timeUntilNextKeyAvailableLocked(index, now)
-	}(); keyOK {
-		return keyWait, keyReason, true
-	}
-	if cb != nil {
-		allow := cb.peekAllow(now)
-		if !allow.allowed && allow.wait > 0 {
-			return allow.wait, string(allow.reason), true
-		}
-	}
-	return 0, "", false
-}
-
 func (cp *ClientProxy) timeUntilNextAvailable() (wait time.Duration, reason string, ok bool) {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()
@@ -509,42 +473,6 @@ func (cp *ClientProxy) handleAllUnavailable(w http.ResponseWriter) bool {
 		http.Error(w, "All providers are temporarily unavailable; retry later", http.StatusServiceUnavailable)
 	}
 	return true
-}
-
-func (cp *ClientProxy) ensureActiveStartIndex() int {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-	now := time.Now()
-
-	if len(cp.providers) == 0 {
-		return 0
-	}
-	if cp.currentIndex < 0 || cp.currentIndex >= len(cp.providers) {
-		cp.currentIndex = 0
-	}
-	if cp.providerAvailableForRoutingLocked(cp.currentIndex, now) {
-		return cp.currentIndex
-	}
-	cp.currentIndex = cp.nextActiveIndexLocked(cp.currentIndex)
-	return cp.currentIndex
-}
-
-func (cp *ClientProxy) ensureActiveCountTokensStartIndex() int {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-	now := time.Now()
-
-	if len(cp.providers) == 0 {
-		return 0
-	}
-	if cp.countTokensIndex < 0 || cp.countTokensIndex >= len(cp.providers) {
-		cp.countTokensIndex = 0
-	}
-	if cp.providerAvailableForRoutingLocked(cp.countTokensIndex, now) {
-		return cp.countTokensIndex
-	}
-	cp.countTokensIndex = cp.nextActiveIndexLocked(cp.countTokensIndex)
-	return cp.countTokensIndex
 }
 
 func (cp *ClientProxy) setCountTokensIndex(index int) {

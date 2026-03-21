@@ -5,22 +5,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/lansespirit/Clipal/internal/app"
 	"github.com/lansespirit/Clipal/internal/config"
-	"github.com/lansespirit/Clipal/internal/logger"
-	"github.com/lansespirit/Clipal/internal/notify"
-	"github.com/lansespirit/Clipal/internal/proxy"
 	"github.com/lansespirit/Clipal/internal/selfupdate"
-	"github.com/lansespirit/Clipal/internal/web"
 )
 
 var (
@@ -93,29 +87,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set log level
-	logger.SetLevel(cfg.Global.LogLevel)
-	if err := configureFileLogging(cfgDir, cfg); err != nil {
-		// Log to stderr since file logging failed, but also log via logger
-		// in case stdout logging is still working.
-		fmt.Fprintf(os.Stderr, "Warning: log file setup failed: %v (logs will only go to stdout)\n", err)
-		logger.Warn("log file setup failed: %v", err)
+	application, err := app.New(cfgDir, cfg, app.BuildInfo{
+		Version: version,
+		Commit:  commit,
+		Date:    date,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clipal failed to initialize: %v\n", err)
+		os.Exit(1)
 	}
-
-	notify.Configure(cfg.Global.Notifications)
-	defer notify.Shutdown()
-	logger.SetHook(notify.LogHook)
-
-	// Create and start the router
-	router := proxy.NewRouter(cfg)
-
-	// Create web management handler (needs access to runtime state for status)
-	webHandler := web.NewHandler(cfgDir, version, router)
+	defer func() { _ = application.Shutdown(context.Background()) }()
 
 	// Handle shutdown signals
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- router.Start(version, webHandler)
+		errCh <- application.Start()
 	}()
 
 	sigCh := make(chan os.Signal, 1)
@@ -123,18 +109,20 @@ func main() {
 
 	select {
 	case sig := <-sigCh:
-		logger.Info("received signal %s, shutting down...", sig.String())
-		if err := router.Stop(); err != nil {
-			logger.Warn("graceful shutdown failed: %v", err)
+		application.LogSignalShutdown(sig.String())
+		fmt.Fprintf(os.Stderr, "clipal: received signal %s, shutting down...\n", sig.String())
+		if err := application.Shutdown(context.Background()); err != nil {
+			application.LogShutdownFailure(err)
+			fmt.Fprintf(os.Stderr, "clipal: graceful shutdown failed: %v\n", err)
 		}
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server stopped with error: %v", err)
+			application.LogServerError(err)
+			fmt.Fprintf(os.Stderr, "clipal: server stopped with error: %v\n", err)
 			os.Exit(1)
 		}
 	}
-
-	logger.Info("clipal stopped")
+	application.LogStopped()
 }
 
 func runUpdate(args []string) {
@@ -216,32 +204,4 @@ func runApplyUpdate(args []string) {
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stdout, "clipal: update applied")
-}
-
-func configureFileLogging(cfgDir string, cfg *config.Config) error {
-	logDir := strings.TrimSpace(cfg.Global.LogDir)
-	if logDir == "" {
-		logDir = filepath.Join(cfgDir, "logs")
-	}
-
-	retention := cfg.Global.LogRetentionDays
-	if retention <= 0 {
-		retention = 7
-	}
-
-	w, err := logger.NewRotatingFileWriter(logDir, "clipal", retention)
-	if err != nil {
-		return err
-	}
-
-	// Keep the file writer alive for the duration of the process.
-	// Closing on exit is optional; the OS will release the fd.
-	if cfg.Global.LogStdout == nil || *cfg.Global.LogStdout {
-		// Write to the file first so background runs without a valid stdout handle
-		// still keep the persistent logs.
-		logger.SetOutput(io.MultiWriter(w, os.Stdout))
-	} else {
-		logger.SetOutput(w)
-	}
-	return nil
 }

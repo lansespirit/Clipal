@@ -62,7 +62,7 @@ providers:
 | `response_header_timeout` | duration | `2m` | Timeout while waiting for upstream response headers |
 | `max_request_body_bytes` | int | `33554432` | Request body size limit, default 32 MiB |
 | `log_dir` | string | `<config-dir>/logs` | Log directory |
-| `log_retention_days` | int | `7` | Log retention days; set `0` to keep forever |
+| `log_retention_days` | int | `7` | Log retention days; `0` keeps logs forever; default is 7 days |
 | `log_stdout` | bool | `true` | Also log to stdout; long-running background setups usually prefer `false` |
 | `ignore_count_tokens_failover` | bool | `false` | Whether Claude Code `count_tokens` failures should avoid changing the main conversation provider |
 
@@ -155,7 +155,7 @@ providers:
 
 ```yaml
 log_stdout: false
-log_retention_days: 7
+log_retention_days: 7 # 0 keeps logs forever
 ```
 
 - For safety, keep this unless you explicitly need network exposure:

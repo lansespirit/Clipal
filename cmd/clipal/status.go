@@ -212,8 +212,8 @@ func checkHealth(ctx context.Context, urls []string) healthStatus {
 			lastErr = err
 			continue
 		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			return healthStatus{OK: true, URL: u, HTTPStatus: resp.StatusCode}
 		}
@@ -236,13 +236,13 @@ func portLooksInUse(ctx context.Context, port int) bool {
 	d := net.Dialer{Timeout: 200 * time.Millisecond}
 	c, err := d.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err == nil {
-		c.Close()
+		_ = c.Close()
 		return true
 	}
 	// Try IPv6 loopback too.
 	c, err = d.Dial("tcp", fmt.Sprintf("[::1]:%d", port))
 	if err == nil {
-		c.Close()
+		_ = c.Close()
 		return true
 	}
 	return false

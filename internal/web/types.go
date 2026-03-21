@@ -193,7 +193,9 @@ type RequestOutcomeStatus struct {
 
 // ErrorResponse represents an error response
 type ErrorResponse struct {
-	Error string `json:"error"`
+	Error  string `json:"error"`
+	Status int    `json:"status"`
+	Reason string `json:"reason"`
 }
 
 // SuccessResponse represents a success response

@@ -49,7 +49,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 	tracker.append(buf[:firstN])
 
 	if firstN == 0 && firstErr != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		stopTimer(idleTimer)
 		if errors.Is(firstErr, io.EOF) {
 			// Legitimately empty body; pass through as-is.
@@ -108,7 +108,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 	fw := newFlushWriter(w)
 	if firstN > 0 {
 		if _, err := fw.Write(buf[:firstN]); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			stopTimer(idleTimer)
 			cp.releaseCircuitPermit(index, allow.usedProbe)
 			cancelAttempt(nil)
@@ -134,7 +134,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 			total += nr
 			tracker.append(buf[:nr])
 			if _, ew := fw.Write(buf[:nr]); ew != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				stopTimer(idleTimer)
 				cp.releaseCircuitPermit(index, allow.usedProbe)
 				cancelAttempt(nil)
@@ -165,7 +165,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 		}
 	}
 
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	stopTimer(idleTimer)
 	if copyErr != nil && originalReq.Context().Err() != nil {
 		cp.releaseCircuitPermit(index, allow.usedProbe)
