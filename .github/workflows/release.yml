@@ -52,7 +52,7 @@ jobs:
           cat dist/checksums.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2.3.3
+        uses: softprops/action-gh-release@v2.6.1
         with:
           tag_name: ${{ github.ref_name }}
           body_path: release-notes/${{ github.ref_name }}.md
