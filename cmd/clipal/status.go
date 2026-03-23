@@ -110,8 +110,8 @@ func runStatus(args []string) {
 	}
 
 	report.Providers = []providerStatus{
-		summarizeProviders("claudecode", cfg.ClaudeCode),
-		summarizeProviders("codex", cfg.Codex),
+		summarizeProviders("claude", cfg.Claude),
+		summarizeProviders("openai", cfg.OpenAI),
 		summarizeProviders("gemini", cfg.Gemini),
 	}
 
@@ -273,7 +273,7 @@ func printStatusReport(r statusReport) {
 		if active == "" {
 			active = "(none)"
 		}
-		fmt.Fprintf(os.Stdout, "  %-10s enabled %d  (active: %s)\n", p.Client, p.Enabled, active)
+		fmt.Fprintf(os.Stdout, "  %-10s enabled %d  (active: %s)\n", displayClientLabel(p.Client), p.Enabled, active)
 	}
 
 	if r.Service != nil && r.Service.Manager != "" && r.Service.Manager != "unsupported" {
@@ -324,4 +324,17 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func displayClientLabel(client string) string {
+	switch strings.TrimSpace(strings.ToLower(client)) {
+	case "claude", "claudecode", "claude-code":
+		return "Claude"
+	case "openai", "codex":
+		return "OpenAI"
+	case "gemini":
+		return "Gemini"
+	default:
+		return client
+	}
 }

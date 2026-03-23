@@ -510,8 +510,8 @@ func (a *API) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
 		Clients:   make(map[string]ClientStatus),
 	}
 
-	status.Clients["claude-code"] = buildClientStatus(cfg.ClaudeCode, cfg.ClaudeCode.Providers, snap.Clients[proxy.ClientClaudeCode])
-	status.Clients["codex"] = buildClientStatus(cfg.Codex, cfg.Codex.Providers, snap.Clients[proxy.ClientCodex])
+	status.Clients["claude"] = buildClientStatus(cfg.Claude, cfg.Claude.Providers, snap.Clients[proxy.ClientClaude])
+	status.Clients["openai"] = buildClientStatus(cfg.OpenAI, cfg.OpenAI.Providers, snap.Clients[proxy.ClientOpenAI])
 	status.Clients["gemini"] = buildClientStatus(cfg.Gemini, cfg.Gemini.Providers, snap.Clients[proxy.ClientGemini])
 
 	writeJSON(w, status)
@@ -530,10 +530,10 @@ func (a *API) HandleExportConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	exportData := ExportConfigResponse{
-		Global:     toGlobalConfigResponse(cfg.Global),
-		ClaudeCode: toClientConfigExport(cfg.ClaudeCode),
-		Codex:      toClientConfigExport(cfg.Codex),
-		Gemini:     toClientConfigExport(cfg.Gemini),
+		Global: toGlobalConfigResponse(cfg.Global),
+		Claude: toClientConfigExport(cfg.Claude),
+		OpenAI: toClientConfigExport(cfg.OpenAI),
+		Gemini: toClientConfigExport(cfg.Gemini),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -693,33 +693,38 @@ func userVisibleCapability(capability string) string {
 }
 
 func extractClientType(path string) string {
-	// Extract client type from path like /api/providers/claude-code
+	// Extract canonical client type from path like /api/providers/claude
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "providers" {
-		return parts[2]
+		if clientType, ok := config.CanonicalClientType(parts[2]); ok {
+			return clientType
+		}
 	}
 	return ""
 }
 
 func extractClientTypeFromClientConfigPath(path string) string {
-	// Extract client type from path like /api/client-config/claude-code
+	// Extract canonical client type from path like /api/client-config/claude
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "client-config" {
-		return parts[2]
+		if clientType, ok := config.CanonicalClientType(parts[2]); ok {
+			return clientType
+		}
 	}
 	return ""
 }
 
 func getClientConfigRef(cfg *config.Config, clientType string) (*config.ClientConfig, error) {
+	clientType, _ = config.CanonicalClientType(clientType)
 	switch clientType {
-	case "claude-code":
-		return &cfg.ClaudeCode, nil
-	case "codex":
-		return &cfg.Codex, nil
+	case "claude":
+		return &cfg.Claude, nil
+	case "openai":
+		return &cfg.OpenAI, nil
 	case "gemini":
 		return &cfg.Gemini, nil
 	default:
-		return nil, fmt.Errorf("unknown client type")
+		return nil, fmt.Errorf("unknown client type: %q", clientType)
 	}
 }
 
@@ -786,7 +791,7 @@ func assignProviderKeys(provider *config.Provider, keys []string) {
 }
 
 func extractClientAndProvider(path string) (string, string) {
-	// Extract from path like /api/providers/claude-code/provider-name
+	// Extract from path like /api/providers/claude/provider-name
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) >= 4 && parts[0] == "api" && parts[1] == "providers" {
 		// net/http populates r.URL.Path in decoded form, but be defensive if callers

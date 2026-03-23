@@ -92,7 +92,7 @@ func TestClassifyUpstreamFailure_429AuthAndQuotaStillDeactivate(t *testing.T) {
 func TestMarkProviderBusy_MergesByMaxWindow(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 

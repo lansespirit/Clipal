@@ -8,13 +8,168 @@ import (
 	"time"
 )
 
+func writeClientConfigFile(t *testing.T, dir string, name string, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.TrimSpace(body)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile %s: %v", name, err)
+	}
+}
+
+func TestLoad_MigratesLegacyClientConfigFilenames(t *testing.T) {
+	t.Run("migrates legacy files when new files are missing", func(t *testing.T) {
+		dir := t.TempDir()
+		writeClientConfigFile(t, dir, "claude-code.yaml", `
+mode: manual
+pinned_provider: claude-primary
+providers:
+  - name: claude-primary
+    base_url: https://claude.example
+    api_key: claude-key
+    priority: 1
+`)
+		writeClientConfigFile(t, dir, "codex.yaml", `
+mode: manual
+pinned_provider: openai-primary
+providers:
+  - name: openai-primary
+    base_url: https://openai.example
+    api_key: openai-key
+    priority: 1
+`)
+
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Claude.PinnedProvider != "claude-primary" {
+			t.Fatalf("Claude.PinnedProvider = %q", cfg.Claude.PinnedProvider)
+		}
+		if cfg.OpenAI.PinnedProvider != "openai-primary" {
+			t.Fatalf("OpenAI.PinnedProvider = %q", cfg.OpenAI.PinnedProvider)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "claude-code.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("expected claude-code.yaml to be removed after migration, err=%v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "codex.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("expected codex.yaml to be removed after migration, err=%v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "claude.yaml")); err != nil {
+			t.Fatalf("expected claude.yaml to exist: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "openai.yaml")); err != nil {
+			t.Fatalf("expected openai.yaml to exist: %v", err)
+		}
+	})
+
+	t.Run("uses new filenames directly when present", func(t *testing.T) {
+		dir := t.TempDir()
+		writeClientConfigFile(t, dir, "claude.yaml", `
+mode: manual
+pinned_provider: claude-new
+providers:
+  - name: claude-new
+    base_url: https://claude.example
+    api_key: claude-key
+    priority: 1
+`)
+		writeClientConfigFile(t, dir, "openai.yaml", `
+mode: manual
+pinned_provider: openai-new
+providers:
+  - name: openai-new
+    base_url: https://openai.example
+    api_key: openai-key
+    priority: 1
+`)
+
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Claude.PinnedProvider != "claude-new" {
+			t.Fatalf("Claude.PinnedProvider = %q", cfg.Claude.PinnedProvider)
+		}
+		if cfg.OpenAI.PinnedProvider != "openai-new" {
+			t.Fatalf("OpenAI.PinnedProvider = %q", cfg.OpenAI.PinnedProvider)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "claude-code.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("did not expect claude-code.yaml to exist, err=%v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "codex.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("did not expect codex.yaml to exist, err=%v", err)
+		}
+	})
+
+	t.Run("treats missing new and legacy files as empty config", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(cfg.Claude.Providers) != 0 || len(cfg.OpenAI.Providers) != 0 || len(cfg.Gemini.Providers) != 0 {
+			t.Fatalf("expected empty client configs, got Claude=%d OpenAI=%d Gemini=%d",
+				len(cfg.Claude.Providers), len(cfg.OpenAI.Providers), len(cfg.Gemini.Providers))
+		}
+	})
+
+	t.Run("fails when new and legacy files both exist with different content", func(t *testing.T) {
+		dir := t.TempDir()
+		writeClientConfigFile(t, dir, "claude-code.yaml", `
+providers:
+  - name: legacy
+    base_url: https://legacy.example
+    api_key: legacy-key
+    priority: 1
+`)
+		writeClientConfigFile(t, dir, "claude.yaml", `
+providers:
+  - name: modern
+    base_url: https://modern.example
+    api_key: modern-key
+    priority: 1
+`)
+
+		_, err := Load(dir)
+		if err == nil || !strings.Contains(err.Error(), "both claude.yaml and claude-code.yaml exist with different content") {
+			t.Fatalf("Load err = %v", err)
+		}
+	})
+
+	t.Run("removes legacy file when both new and legacy files have identical content", func(t *testing.T) {
+		dir := t.TempDir()
+		body := `
+providers:
+  - name: shared
+    base_url: https://same.example
+    api_key: same-key
+    priority: 1
+`
+		writeClientConfigFile(t, dir, "openai.yaml", body)
+		writeClientConfigFile(t, dir, "codex.yaml", body)
+
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(cfg.OpenAI.Providers) != 1 || cfg.OpenAI.Providers[0].Name != "shared" {
+			t.Fatalf("OpenAI providers = %#v", cfg.OpenAI.Providers)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "openai.yaml")); err != nil {
+			t.Fatalf("expected openai.yaml to remain: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "codex.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("expected codex.yaml to be removed, err=%v", err)
+		}
+	})
+}
+
 func TestValidate_CircuitBreakerDisabled_AllowsInvalidCBFields(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
 		Global:     DefaultGlobalConfig(),
-		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
-		Codex:      ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
+		OpenAI:      ClientConfig{Mode: ClientModeAuto},
 		Gemini:     ClientConfig{Mode: ClientModeAuto},
 	}
 
@@ -48,8 +203,8 @@ func TestValidate_CircuitBreakerEnabled_StillValidatesCBFields(t *testing.T) {
 
 	cfg := &Config{
 		Global:     DefaultGlobalConfig(),
-		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
-		Codex:      ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
+		OpenAI:      ClientConfig{Mode: ClientModeAuto},
 		Gemini:     ClientConfig{Mode: ClientModeAuto},
 	}
 
@@ -66,8 +221,8 @@ func TestValidate_CircuitBreakerFailureThresholdNegative_IsRejected(t *testing.T
 
 	cfg := &Config{
 		Global:     DefaultGlobalConfig(),
-		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
-		Codex:      ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
+		OpenAI:      ClientConfig{Mode: ClientModeAuto},
 		Gemini:     ClientConfig{Mode: ClientModeAuto},
 	}
 
@@ -90,12 +245,12 @@ func TestValidate_ManualMode_RequiresEnabledPinnedProvider(t *testing.T) {
 
 	cfg := &Config{
 		Global: DefaultGlobalConfig(),
-		ClaudeCode: ClientConfig{
+		Claude: ClientConfig{
 			Mode:           ClientModeManual,
 			PinnedProvider: "p1",
 			Providers:      []Provider{provider},
 		},
-		Codex:  ClientConfig{Mode: ClientModeAuto},
+		OpenAI:  ClientConfig{Mode: ClientModeAuto},
 		Gemini: ClientConfig{Mode: ClientModeAuto},
 	}
 
@@ -105,20 +260,20 @@ func TestValidate_ManualMode_RequiresEnabledPinnedProvider(t *testing.T) {
 	}
 
 	// 2. Fails if pinned_provider is missing from list
-	cfg.ClaudeCode.PinnedProvider = "ghost"
+	cfg.Claude.PinnedProvider = "ghost"
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error for non-existent pinned_provider")
 	}
 
 	// 3. Fails if pinned_provider is empty
-	cfg.ClaudeCode.PinnedProvider = ""
+	cfg.Claude.PinnedProvider = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error for empty pinned_provider")
 	}
 
 	// 4. Passes if enabled and exists
-	cfg.ClaudeCode.PinnedProvider = "p1"
-	cfg.ClaudeCode.Providers[0].Enabled = ptr(true)
+	cfg.Claude.PinnedProvider = "p1"
+	cfg.Claude.Providers[0].Enabled = ptr(true)
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected validation success, got: %v", err)
 	}
@@ -129,7 +284,7 @@ func TestValidate_ProviderAPIKeys_MultiKeySupported(t *testing.T) {
 
 	cfg := &Config{
 		Global: DefaultGlobalConfig(),
-		Codex: ClientConfig{
+		OpenAI: ClientConfig{
 			Mode: ClientModeAuto,
 			Providers: []Provider{
 				{
@@ -140,19 +295,19 @@ func TestValidate_ProviderAPIKeys_MultiKeySupported(t *testing.T) {
 				},
 			},
 		},
-		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
 		Gemini:     ClientConfig{Mode: ClientModeAuto},
 	}
 
-	applyClientDefaults(&cfg.Codex)
+	applyClientDefaults(&cfg.OpenAI)
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected validation success, got: %v", err)
 	}
-	if got := cfg.Codex.Providers[0].KeyCount(); got != 2 {
+	if got := cfg.OpenAI.Providers[0].KeyCount(); got != 2 {
 		t.Fatalf("key count: got %d want %d", got, 2)
 	}
-	if cfg.Codex.Providers[0].APIKey != "" {
-		t.Fatalf("expected canonical multi-key provider to use api_keys, got api_key=%q", cfg.Codex.Providers[0].APIKey)
+	if cfg.OpenAI.Providers[0].APIKey != "" {
+		t.Fatalf("expected canonical multi-key provider to use api_keys, got api_key=%q", cfg.OpenAI.Providers[0].APIKey)
 	}
 }
 
@@ -192,7 +347,7 @@ func TestValidate_ProviderAPIKeys_RejectsMixedForms(t *testing.T) {
 
 	cfg := &Config{
 		Global: DefaultGlobalConfig(),
-		Codex: ClientConfig{
+		OpenAI: ClientConfig{
 			Mode: ClientModeAuto,
 			Providers: []Provider{
 				{
@@ -204,7 +359,7 @@ func TestValidate_ProviderAPIKeys_RejectsMixedForms(t *testing.T) {
 				},
 			},
 		},
-		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
 		Gemini:     ClientConfig{Mode: ClientModeAuto},
 	}
 
@@ -218,14 +373,14 @@ func TestValidate_RejectsDuplicateProviderNamesPerClient(t *testing.T) {
 
 	cfg := &Config{
 		Global: DefaultGlobalConfig(),
-		Codex: ClientConfig{
+		OpenAI: ClientConfig{
 			Mode: ClientModeAuto,
 			Providers: []Provider{
 				{Name: "p1", BaseURL: "https://one.example", APIKey: "key1", Priority: 1},
 				{Name: "p1", BaseURL: "https://two.example", APIKey: "key2", Priority: 2},
 			},
 		},
-		ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
 		Gemini:     ClientConfig{Mode: ClientModeAuto},
 	}
 
@@ -404,8 +559,8 @@ func TestValidate_RoutingConfigRejectsInvalidValues(t *testing.T) {
 
 			cfg := &Config{
 				Global:     DefaultGlobalConfig(),
-				ClaudeCode: ClientConfig{Mode: ClientModeAuto},
-				Codex:      ClientConfig{Mode: ClientModeAuto},
+				Claude: ClientConfig{Mode: ClientModeAuto},
+				OpenAI:      ClientConfig{Mode: ClientModeAuto},
 				Gemini:     ClientConfig{Mode: ClientModeAuto},
 			}
 			tt.mutate(cfg)

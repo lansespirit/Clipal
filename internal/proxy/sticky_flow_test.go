@@ -16,7 +16,7 @@ import (
 func TestForwardWithFailover_PreviousResponseBusyOverflowRebindsSession(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -63,7 +63,7 @@ func TestForwardWithFailover_PreviousResponseBusyOverflowRebindsSession(t *testi
 
 	firstRR := httptest.NewRecorder()
 	firstReq := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-4.1","input":"hello"}`)))
-	firstReq = withRequestContext(firstReq, requestContextForClientPath(ClientCodex, "/v1/responses", false))
+	firstReq = withRequestContext(firstReq, requestContextForClientPath(ClientOpenAI, "/v1/responses", false))
 	cp.forwardWithFailover(firstRR, firstReq, "/v1/responses")
 	if firstRR.Result().StatusCode != http.StatusOK {
 		t.Fatalf("first status: got %d want %d body=%s", firstRR.Result().StatusCode, http.StatusOK, firstRR.Body.String())
@@ -71,7 +71,7 @@ func TestForwardWithFailover_PreviousResponseBusyOverflowRebindsSession(t *testi
 
 	secondRR := httptest.NewRecorder()
 	secondReq := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-4.1","previous_response_id":"resp_1","input":"next"}`)))
-	secondReq = withRequestContext(secondReq, requestContextForClientPath(ClientCodex, "/v1/responses", false))
+	secondReq = withRequestContext(secondReq, requestContextForClientPath(ClientOpenAI, "/v1/responses", false))
 	cp.forwardWithFailover(secondRR, secondReq, "/v1/responses")
 	if secondRR.Result().StatusCode != http.StatusOK {
 		t.Fatalf("second status: got %d want %d body=%s", secondRR.Result().StatusCode, http.StatusOK, secondRR.Body.String())
@@ -85,7 +85,7 @@ func TestForwardWithFailover_PreviousResponseBusyOverflowRebindsSession(t *testi
 
 	thirdRR := httptest.NewRecorder()
 	thirdReq := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-4.1","previous_response_id":"resp_1","input":"third"}`)))
-	thirdReq = withRequestContext(thirdReq, requestContextForClientPath(ClientCodex, "/v1/responses", false))
+	thirdReq = withRequestContext(thirdReq, requestContextForClientPath(ClientOpenAI, "/v1/responses", false))
 	cp.forwardWithFailover(thirdRR, thirdReq, "/v1/responses")
 	if thirdRR.Result().StatusCode != http.StatusOK {
 		t.Fatalf("third status: got %d want %d body=%s", thirdRR.Result().StatusCode, http.StatusOK, thirdRR.Body.String())
@@ -101,7 +101,7 @@ func TestForwardWithFailover_PreviousResponseBusyOverflowRebindsSession(t *testi
 func TestForwardWithFailover_FirstTurnLearningSeedsSecondTurnL3Lookup(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -125,7 +125,7 @@ func TestForwardWithFailover_FirstTurnLearningSeedsSecondTurnL3Lookup(t *testing
 	cp.setCurrentIndexForScope(1, routingScopeDefault)
 	firstRR := httptest.NewRecorder()
 	firstReq := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/chat/completions", bytes.NewReader([]byte(`{"model":"gpt-4.1","messages":[{"role":"user","content":"How do I deploy to Cloudflare?"}]}`)))
-	firstReq = withRequestContext(firstReq, requestContextForClientPath(ClientCodex, "/v1/chat/completions", false))
+	firstReq = withRequestContext(firstReq, requestContextForClientPath(ClientOpenAI, "/v1/chat/completions", false))
 	cp.forwardWithFailover(firstRR, firstReq, "/v1/chat/completions")
 	if firstRR.Result().StatusCode != http.StatusOK {
 		t.Fatalf("first status: got %d want %d body=%s", firstRR.Result().StatusCode, http.StatusOK, firstRR.Body.String())
@@ -137,7 +137,7 @@ func TestForwardWithFailover_FirstTurnLearningSeedsSecondTurnL3Lookup(t *testing
 	cp.setCurrentIndexForScope(0, routingScopeDefault)
 	secondRR := httptest.NewRecorder()
 	secondReq := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/chat/completions", bytes.NewReader([]byte(`{"model":"gpt-4.1","messages":[{"role":"user","content":"How do I deploy to Cloudflare?"},{"role":"assistant","content":"Use Wrangler."},{"role":"user","content":"What about environment variables?"}]}`)))
-	secondReq = withRequestContext(secondReq, requestContextForClientPath(ClientCodex, "/v1/chat/completions", false))
+	secondReq = withRequestContext(secondReq, requestContextForClientPath(ClientOpenAI, "/v1/chat/completions", false))
 	cp.forwardWithFailover(secondRR, secondReq, "/v1/chat/completions")
 	if secondRR.Result().StatusCode != http.StatusOK {
 		t.Fatalf("second status: got %d want %d body=%s", secondRR.Result().StatusCode, http.StatusOK, secondRR.Body.String())

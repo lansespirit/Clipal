@@ -52,8 +52,8 @@ chmod +x clipal*
 ```bash
 mkdir -p ~/.clipal
 cp examples/config.yaml ~/.clipal/config.yaml
-cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
-cp examples/codex.yaml ~/.clipal/codex.yaml
+cp examples/claude.yaml ~/.clipal/claude.yaml
+cp examples/openai.yaml ~/.clipal/openai.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
@@ -76,8 +76,8 @@ clipal status
 ## 示例配置文件
 
 - [examples/config.yaml](examples/config.yaml)
-- [examples/claude-code.yaml](examples/claude-code.yaml)
-- [examples/codex.yaml](examples/codex.yaml)
+- [examples/claude.yaml](examples/claude.yaml)
+- [examples/openai.yaml](examples/openai.yaml)
 - [examples/gemini.yaml](examples/gemini.yaml)
 
 ## 常用命令
@@ -125,8 +125,8 @@ clipal update
 ```text
 ~/.clipal/
 ├── config.yaml
-├── claude-code.yaml
-├── codex.yaml
+├── claude.yaml
+├── openai.yaml
 └── gemini.yaml
 ```
 

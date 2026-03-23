@@ -3,7 +3,7 @@
 ## 1. Download and Install
 
 Download the right binary from [Releases](https://github.com/lansespirit/Clipal/releases) and place it on your `PATH`.
-Current stable release: [`v0.8.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.8.0)
+Current stable release: [`v0.9.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.9.0)
 
 Platform-specific notes:
 
@@ -29,16 +29,16 @@ Initialize from the repo templates:
 ```bash
 mkdir -p ~/.clipal
 cp examples/config.yaml ~/.clipal/config.yaml
-cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
-cp examples/codex.yaml ~/.clipal/codex.yaml
+cp examples/claude.yaml ~/.clipal/claude.yaml
+cp examples/openai.yaml ~/.clipal/openai.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
 Direct template links:
 
 - [../../examples/config.yaml](../../examples/config.yaml)
-- [../../examples/claude-code.yaml](../../examples/claude-code.yaml)
-- [../../examples/codex.yaml](../../examples/codex.yaml)
+- [../../examples/claude.yaml](../../examples/claude.yaml)
+- [../../examples/openai.yaml](../../examples/openai.yaml)
 - [../../examples/gemini.yaml](../../examples/gemini.yaml)
 
 Then edit those files and fill in your upstream `base_url`, `api_key`, or `api_keys`.

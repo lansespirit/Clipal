@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clipal Management</title>
+    <link rel="icon" type="image/svg+xml" href="/static/clipal-icon.svg">
     <link rel="stylesheet" href="/static/styles.css">
     <script defer src="/static/alpine.min.js"></script>
 </head>
@@ -19,9 +20,15 @@
     <div class="container">
         <!-- Header -->
         <header class="header">
-            <div class="flex items-center gap-3">
-                <h1>Clipal</h1>
-                <span class="version-pill" x-text="status.version"></span>
+            <div class="brand-lockup">
+                <img src="/static/clipal-icon.svg" alt="" class="brand-mark">
+                <div class="brand-copy">
+                    <div class="flex items-center gap-3">
+                        <h1>Clipal</h1>
+                        <span class="version-pill" x-text="status.version"></span>
+                    </div>
+                    <p class="brand-subtitle">Local ingress for Claude, OpenAI, and Gemini traffic</p>
+                </div>
             </div>
             <div class="header-info">
                 <span class="version-pill" x-text="'Uptime: ' + status.uptime"></span>

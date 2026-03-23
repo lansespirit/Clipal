@@ -79,7 +79,7 @@ ignore_count_tokens_failover: false
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o600); err != nil {
 		t.Fatalf("WriteFile config.yaml: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: auto
 providers:
   - name: p1
@@ -87,7 +87,7 @@ providers:
     api_key: key1
     priority: 1
 `), 0o600); err != nil {
-		t.Fatalf("WriteFile codex.yaml: %v", err)
+		t.Fatalf("WriteFile openai.yaml: %v", err)
 	}
 }
 

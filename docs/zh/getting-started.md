@@ -3,7 +3,7 @@
 ## 1. 下载与安装
 
 从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制，并放到你的 `PATH` 中。
-当前稳定版：[`v0.8.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.8.0)
+当前稳定版：[`v0.9.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.9.0)
 
 平台细节：
 
@@ -29,16 +29,16 @@ clipal --version
 ```bash
 mkdir -p ~/.clipal
 cp examples/config.yaml ~/.clipal/config.yaml
-cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
-cp examples/codex.yaml ~/.clipal/codex.yaml
+cp examples/claude.yaml ~/.clipal/claude.yaml
+cp examples/openai.yaml ~/.clipal/openai.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
 直接查看模板：
 
 - [../../examples/config.yaml](../../examples/config.yaml)
-- [../../examples/claude-code.yaml](../../examples/claude-code.yaml)
-- [../../examples/codex.yaml](../../examples/codex.yaml)
+- [../../examples/claude.yaml](../../examples/claude.yaml)
+- [../../examples/openai.yaml](../../examples/openai.yaml)
 - [../../examples/gemini.yaml](../../examples/gemini.yaml)
 
 然后编辑这些文件，填入你的上游 `base_url`、`api_key` 或 `api_keys`。

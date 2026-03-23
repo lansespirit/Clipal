@@ -159,10 +159,13 @@ func TestSummarizeProvidersAndPrintStatusReport(t *testing.T) {
 			Providers: []providerStatus{got},
 		})
 	})
-	for _, want := range []string{"OK  Running", "Health:", "Providers:", "codex", "active: p1"} {
+	for _, want := range []string{"OK  Running", "Health:", "Providers:", "OpenAI", "active: p1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in output:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "codex") {
+		t.Fatalf("did not expect legacy display label in output:\n%s", out)
 	}
 }
 

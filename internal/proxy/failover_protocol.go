@@ -67,9 +67,9 @@ func newProtocolTracker(clientType ClientType, req *http.Request, resp *http.Res
 	}
 
 	switch clientType {
-	case ClientCodex:
+	case ClientOpenAI:
 		return &protocolTracker{kind: streamProtocolOpenAI}
-	case ClientClaudeCode:
+	case ClientClaude:
 		return &protocolTracker{kind: streamProtocolClaude}
 	default:
 		// Gemini and other unknown streaming formats should not be forced into

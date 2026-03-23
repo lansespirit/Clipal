@@ -103,10 +103,10 @@ type ReorderRequest struct {
 // ExportConfigResponse represents the full configuration export.
 // NOTE: This includes API keys and should only be used for local backup/migration.
 type ExportConfigResponse struct {
-	Global     GlobalConfigResponse `json:"global"`
-	ClaudeCode ClientConfigExport   `json:"claude_code"`
-	Codex      ClientConfigExport   `json:"codex"`
-	Gemini     ClientConfigExport   `json:"gemini"`
+	Global GlobalConfigResponse `json:"global"`
+	Claude ClientConfigExport   `json:"claude"`
+	OpenAI ClientConfigExport   `json:"openai"`
+	Gemini ClientConfigExport   `json:"gemini"`
 }
 
 type ClientConfigExport struct {

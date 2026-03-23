@@ -56,7 +56,7 @@ func TestHandleGetGlobalConfig_ReturnsSnakeCase(t *testing.T) {
 
 func TestHandleGetProviders_RedactsAPIKey_AndReturnsArray(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 providers:
   - name: p1
     base_url: https://example.com
@@ -72,7 +72,7 @@ providers:
 	}
 
 	api := NewAPI(dir, "test", nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/providers/codex", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/openai", nil)
 	w := httptest.NewRecorder()
 	api.HandleGetProviders(w, req)
 	res := w.Result()
@@ -106,7 +106,7 @@ providers:
 
 func TestHandleExportConfig_IncludesAPIKey_SnakeCase(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 providers:
   - name: p1
     base_url: https://example.com
@@ -126,13 +126,13 @@ providers:
 	}
 
 	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
-	codexObj, ok := got["codex"].(map[string]any)
+	openAIObj, ok := got["openai"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected codex object, got %T", got["codex"])
+		t.Fatalf("expected openai object, got %T", got["openai"])
 	}
-	providers, ok := codexObj["providers"].([]any)
+	providers, ok := openAIObj["providers"].([]any)
 	if !ok || len(providers) != 1 {
-		t.Fatalf("expected codex.providers array of len 1, got %T len=%d", codexObj["providers"], len(providers))
+		t.Fatalf("expected openai.providers array of len 1, got %T len=%d", openAIObj["providers"], len(providers))
 	}
 	p0, ok := providers[0].(map[string]any)
 	if !ok {
@@ -222,17 +222,17 @@ func TestHandleAddProvider_AcceptsAPIKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if got := cfg.Codex.Providers[0].KeyCount(); got != 2 {
+	if got := cfg.OpenAI.Providers[0].KeyCount(); got != 2 {
 		t.Fatalf("key count: got %d want %d", got, 2)
 	}
-	if cfg.Codex.Providers[0].APIKey != "" {
+	if cfg.OpenAI.Providers[0].APIKey != "" {
 		t.Fatalf("expected multi-key provider to be persisted via api_keys")
 	}
 }
 
 func TestHandleAddProvider_AutoAssignsNextPriority(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 providers:
   - name: p1
     base_url: https://one.example
@@ -265,17 +265,17 @@ providers:
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if len(cfg.Codex.Providers) != 3 {
-		t.Fatalf("providers len = %d, want 3", len(cfg.Codex.Providers))
+	if len(cfg.OpenAI.Providers) != 3 {
+		t.Fatalf("providers len = %d, want 3", len(cfg.OpenAI.Providers))
 	}
-	if got := cfg.Codex.Providers[2].Priority; got != 3 {
+	if got := cfg.OpenAI.Providers[2].Priority; got != 3 {
 		t.Fatalf("priority = %d, want 3", got)
 	}
 }
 
 func TestHandleGetClientConfig_ReturnsConfiguredModeAndPin(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: manual
 pinned_provider: p1
 providers:
@@ -288,7 +288,7 @@ providers:
 	}
 
 	api := NewAPI(dir, "test", nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/client-config/codex", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/client-config/openai", nil)
 	w := httptest.NewRecorder()
 	api.HandleGetClientConfig(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -303,7 +303,7 @@ providers:
 
 func TestHandleUpdateClientConfig_SavesChanges(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: auto
 providers:
   - name: p1
@@ -326,14 +326,14 @@ providers:
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if cfg.Codex.Mode != config.ClientModeManual || cfg.Codex.PinnedProvider != "p1" {
-		t.Fatalf("codex cfg = %#v", cfg.Codex)
+	if cfg.OpenAI.Mode != config.ClientModeManual || cfg.OpenAI.PinnedProvider != "p1" {
+		t.Fatalf("codex cfg = %#v", cfg.OpenAI)
 	}
 }
 
 func TestHandleUpdateProvider_Paths(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: auto
 providers:
   - name: p1
@@ -386,14 +386,14 @@ providers:
 			t.Fatalf("config.Load: %v", err)
 		}
 		var updated *config.Provider
-		for i := range cfg.Codex.Providers {
-			if cfg.Codex.Providers[i].Name == "p3" {
-				updated = &cfg.Codex.Providers[i]
+		for i := range cfg.OpenAI.Providers {
+			if cfg.OpenAI.Providers[i].Name == "p3" {
+				updated = &cfg.OpenAI.Providers[i]
 				break
 			}
 		}
 		if updated == nil {
-			t.Fatalf("providers=%#v", cfg.Codex.Providers)
+			t.Fatalf("providers=%#v", cfg.OpenAI.Providers)
 		}
 		if updated.BaseURL != "https://three.example" {
 			t.Fatalf("provider=%#v", updated)
@@ -412,7 +412,7 @@ providers:
 
 func TestHandleDeleteProvider_Paths(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: auto
 providers:
   - name: p1
@@ -446,14 +446,14 @@ providers:
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if len(cfg.Codex.Providers) != 1 || cfg.Codex.Providers[0].Name != "p2" {
-		t.Fatalf("providers=%#v", cfg.Codex.Providers)
+	if len(cfg.OpenAI.Providers) != 1 || cfg.OpenAI.Providers[0].Name != "p2" {
+		t.Fatalf("providers=%#v", cfg.OpenAI.Providers)
 	}
 }
 
 func TestHandleReorderProviders_Paths(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: auto
 providers:
   - name: p1
@@ -491,17 +491,17 @@ providers:
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if got := []string{cfg.Codex.Providers[0].Name, cfg.Codex.Providers[1].Name, cfg.Codex.Providers[2].Name}; strings.Join(got, ",") != "p3,p1,p2" {
+	if got := []string{cfg.OpenAI.Providers[0].Name, cfg.OpenAI.Providers[1].Name, cfg.OpenAI.Providers[2].Name}; strings.Join(got, ",") != "p3,p1,p2" {
 		t.Fatalf("providers order=%v", got)
 	}
-	if got := []int{cfg.Codex.Providers[0].Priority, cfg.Codex.Providers[1].Priority, cfg.Codex.Providers[2].Priority}; got[0] != 1 || got[1] != 2 || got[2] != 3 {
+	if got := []int{cfg.OpenAI.Providers[0].Priority, cfg.OpenAI.Providers[1].Priority, cfg.OpenAI.Providers[2].Priority}; got[0] != 1 || got[1] != 2 || got[2] != 3 {
 		t.Fatalf("priorities=%v", got)
 	}
 }
 
 func TestHandleGetStatus_FallsBackToFirstEnabledProviderWithoutRuntime(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
 mode: auto
 providers:
   - name: p1
@@ -533,18 +533,18 @@ providers:
 	if !ok {
 		t.Fatalf("clients=%T %#v", got["clients"], got["clients"])
 	}
-	codex, ok := clients["codex"].(map[string]any)
+	openAI, ok := clients["openai"].(map[string]any)
 	if !ok {
-		t.Fatalf("codex=%T %#v", clients["codex"], clients["codex"])
+		t.Fatalf("openai=%T %#v", clients["openai"], clients["openai"])
 	}
-	if codex["current_provider"] != "p1" {
-		t.Fatalf("codex status=%#v", codex)
+	if openAI["current_provider"] != "p1" {
+		t.Fatalf("openai status=%#v", openAI)
 	}
-	if codex["provider_count"] != float64(2) {
-		t.Fatalf("codex status=%#v", codex)
+	if openAI["provider_count"] != float64(2) {
+		t.Fatalf("openai status=%#v", openAI)
 	}
-	if _, ok := codex["current_providers"].(map[string]any); !ok {
-		t.Fatalf("codex current_providers=%T %#v", codex["current_providers"], codex["current_providers"])
+	if _, ok := openAI["current_providers"].(map[string]any); !ok {
+		t.Fatalf("openai current_providers=%T %#v", openAI["current_providers"], openAI["current_providers"])
 	}
 }
 

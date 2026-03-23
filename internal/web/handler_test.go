@@ -110,6 +110,16 @@ func TestServeIndex_ContentTypeAndNotFound(t *testing.T) {
 	if got := w.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Fatalf("content-type=%q", got)
 	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`/static/styles.css`,
+		`/static/clipal-icon.svg`,
+		`rel="icon"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index body missing %q", want)
+		}
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "http://localhost/missing", nil)
 	w = httptest.NewRecorder()
@@ -137,6 +147,51 @@ func TestServeStatic_ContentTypeAndNotFound(t *testing.T) {
 	h.serveStatic(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("missing status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestServeStatic_ServesBrandIconAndUpdatedLabels(t *testing.T) {
+	h := NewHandler(t.TempDir(), "test", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/static/clipal-icon.svg", nil)
+	w := httptest.NewRecorder()
+	h.serveStatic(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("icon status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("icon content-type=%q", got)
+	}
+	iconBody := w.Body.String()
+	for _, want := range []string{`<svg`, `fill="#000000"`, `stroke="#FFFFFF"`} {
+		if !strings.Contains(iconBody, want) {
+			t.Fatalf("icon body missing %q", want)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/static/app.js", nil)
+	w = httptest.NewRecorder()
+	h.serveStatic(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("app.js status=%d body=%s", w.Code, w.Body.String())
+	}
+	js := w.Body.String()
+	for _, want := range []string{
+		`{ value: 'claude', label: 'Claude' }`,
+		`{ value: 'openai', label: 'OpenAI' }`,
+		`{ value: 'gemini', label: 'Gemini' }`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("app.js missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`{ value: 'claude-code', label: 'Claude Code' }`,
+		`{ value: 'codex', label: 'Codex' }`,
+	} {
+		if strings.Contains(js, unwanted) {
+			t.Fatalf("app.js still contains %q", unwanted)
+		}
 	}
 }
 

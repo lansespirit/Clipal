@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -187,11 +188,36 @@ type ClientConfig struct {
 
 // Config represents the complete application configuration
 type Config struct {
-	Global     GlobalConfig
-	ClaudeCode ClientConfig
-	Codex      ClientConfig
-	Gemini     ClientConfig
-	configDir  string
+	Global    GlobalConfig
+	Claude    ClientConfig
+	OpenAI    ClientConfig
+	Gemini    ClientConfig
+	configDir string
+}
+
+type clientConfigFileSpec struct {
+	clientType  string
+	currentName string
+	legacyName  string
+}
+
+var clientConfigFileSpecs = []clientConfigFileSpec{
+	{clientType: "claude", currentName: "claude.yaml", legacyName: "claude-code.yaml"},
+	{clientType: "openai", currentName: "openai.yaml", legacyName: "codex.yaml"},
+	{clientType: "gemini", currentName: "gemini.yaml", legacyName: ""},
+}
+
+func CanonicalClientType(clientType string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(clientType)) {
+	case "claude", "claude-code", "claudecode":
+		return "claude", true
+	case "openai", "codex":
+		return "openai", true
+	case "gemini":
+		return "gemini", true
+	default:
+		return "", false
+	}
 }
 
 // DefaultGlobalConfig returns the default global configuration
@@ -263,15 +289,19 @@ func Load(configDir string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load global config: %w", err)
 	}
 
-	// Load client configs
-	claudeCodePath := filepath.Join(configDir, "claude-code.yaml")
-	if err := loadYAML(claudeCodePath, &cfg.ClaudeCode); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to load claude-code config: %w", err)
+	if err := migrateLegacyClientConfigFiles(configDir); err != nil {
+		return nil, err
 	}
 
-	codexPath := filepath.Join(configDir, "codex.yaml")
-	if err := loadYAML(codexPath, &cfg.Codex); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to load codex config: %w", err)
+	// Load client configs
+	claudePath := filepath.Join(configDir, "claude.yaml")
+	if err := loadYAML(claudePath, &cfg.Claude); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to load claude config: %w", err)
+	}
+
+	openAIPath := filepath.Join(configDir, "openai.yaml")
+	if err := loadYAML(openAIPath, &cfg.OpenAI); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to load openai config: %w", err)
 	}
 
 	geminiPath := filepath.Join(configDir, "gemini.yaml")
@@ -279,16 +309,125 @@ func Load(configDir string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load gemini config: %w", err)
 	}
 
-	applyClientDefaults(&cfg.ClaudeCode)
-	applyClientDefaults(&cfg.Codex)
+	applyClientDefaults(&cfg.Claude)
+	applyClientDefaults(&cfg.OpenAI)
 	applyClientDefaults(&cfg.Gemini)
 
 	// Sort providers by priority
-	sortProviders(cfg.ClaudeCode.Providers)
-	sortProviders(cfg.Codex.Providers)
+	sortProviders(cfg.Claude.Providers)
+	sortProviders(cfg.OpenAI.Providers)
 	sortProviders(cfg.Gemini.Providers)
 
 	return cfg, nil
+}
+
+func clientConfigFileSpecForType(clientType string) (clientConfigFileSpec, bool) {
+	clientType, ok := CanonicalClientType(clientType)
+	if !ok {
+		return clientConfigFileSpec{}, false
+	}
+	for _, spec := range clientConfigFileSpecs {
+		if spec.clientType == clientType {
+			return spec, true
+		}
+	}
+	return clientConfigFileSpec{}, false
+}
+
+func ClientConfigFilename(clientType string) (string, error) {
+	spec, ok := clientConfigFileSpecForType(clientType)
+	if !ok {
+		return "", fmt.Errorf("unknown client type: %q", clientType)
+	}
+	return spec.currentName, nil
+}
+
+func WatchedConfigFilenames() []string {
+	names := []string{"config.yaml"}
+	seen := map[string]struct{}{"config.yaml": {}}
+	for _, spec := range clientConfigFileSpecs {
+		if spec.currentName != "" {
+			if _, ok := seen[spec.currentName]; !ok {
+				names = append(names, spec.currentName)
+				seen[spec.currentName] = struct{}{}
+			}
+		}
+	}
+	return names
+}
+
+func migrateLegacyClientConfigFiles(configDir string) error {
+	for _, spec := range clientConfigFileSpecs {
+		if err := migrateLegacyClientConfigFile(configDir, spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateLegacyClientConfigFile(configDir string, spec clientConfigFileSpec) error {
+	if spec.legacyName == "" || spec.currentName == spec.legacyName {
+		return nil
+	}
+
+	currentPath := filepath.Join(configDir, spec.currentName)
+	legacyPath := filepath.Join(configDir, spec.legacyName)
+
+	currentInfo, currentErr := os.Stat(currentPath)
+	legacyInfo, legacyErr := os.Stat(legacyPath)
+	currentExists := currentErr == nil
+	legacyExists := legacyErr == nil
+
+	if currentErr != nil && !os.IsNotExist(currentErr) {
+		return fmt.Errorf("failed to stat %s: %w", spec.currentName, currentErr)
+	}
+	if legacyErr != nil && !os.IsNotExist(legacyErr) {
+		return fmt.Errorf("failed to stat %s: %w", spec.legacyName, legacyErr)
+	}
+	if currentExists && currentInfo.IsDir() {
+		return fmt.Errorf("%s is a directory", spec.currentName)
+	}
+	if legacyExists && legacyInfo.IsDir() {
+		return fmt.Errorf("%s is a directory", spec.legacyName)
+	}
+
+	switch {
+	case !currentExists && !legacyExists:
+		return nil
+	case currentExists && !legacyExists:
+		return nil
+	case !currentExists && legacyExists:
+		if err := os.Rename(legacyPath, currentPath); err != nil {
+			return fmt.Errorf("failed to migrate %s to %s: %w", spec.legacyName, spec.currentName, err)
+		}
+		return nil
+	default:
+		same, err := clientConfigFilesEquivalent(currentPath, legacyPath)
+		if err != nil {
+			return err
+		}
+		if !same {
+			return fmt.Errorf("both %s and %s exist with different content", spec.currentName, spec.legacyName)
+		}
+		if err := os.Remove(legacyPath); err != nil {
+			return fmt.Errorf("failed to remove legacy config %s: %w", spec.legacyName, err)
+		}
+		return nil
+	}
+}
+
+func clientConfigFilesEquivalent(currentPath string, legacyPath string) (bool, error) {
+	var current ClientConfig
+	if err := loadYAML(currentPath, &current); err != nil {
+		return false, fmt.Errorf("failed to load %s: %w", filepath.Base(currentPath), err)
+	}
+	var legacy ClientConfig
+	if err := loadYAML(legacyPath, &legacy); err != nil {
+		return false, fmt.Errorf("failed to load %s: %w", filepath.Base(legacyPath), err)
+	}
+	applyClientDefaults(&current)
+	applyClientDefaults(&legacy)
+	return reflect.DeepEqual(current, legacy), nil
 }
 
 // loadYAML loads a YAML file into the target struct
@@ -456,10 +595,10 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if err := validateClientConfig("claude-code", c.ClaudeCode); err != nil {
+	if err := validateClientConfig("claude", c.Claude); err != nil {
 		return err
 	}
-	if err := validateClientConfig("codex", c.Codex); err != nil {
+	if err := validateClientConfig("openai", c.OpenAI); err != nil {
 		return err
 	}
 	if err := validateClientConfig("gemini", c.Gemini); err != nil {
@@ -467,10 +606,10 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate providers
-	if err := validateProviders("claude-code", c.ClaudeCode.Providers); err != nil {
+	if err := validateProviders("claude", c.Claude.Providers); err != nil {
 		return err
 	}
-	if err := validateProviders("codex", c.Codex.Providers); err != nil {
+	if err := validateProviders("openai", c.OpenAI.Providers); err != nil {
 		return err
 	}
 	if err := validateProviders("gemini", c.Gemini.Providers); err != nil {

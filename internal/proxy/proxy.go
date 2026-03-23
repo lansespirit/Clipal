@@ -43,9 +43,9 @@ func registerExactAndSubtree(mux *http.ServeMux, path string, h http.HandlerFunc
 type ClientType string
 
 const (
-	ClientClaudeCode ClientType = "claudecode"
-	ClientCodex      ClientType = "codex"
-	ClientGemini     ClientType = "gemini"
+	ClientClaude ClientType = "claude"
+	ClientOpenAI ClientType = "openai"
+	ClientGemini ClientType = "gemini"
 )
 
 type ProviderSwitchEvent struct {
@@ -173,16 +173,16 @@ func NewRouter(cfg *config.Config) *Router {
 	}
 
 	// Initialize client proxies
-	claudeProviders := config.GetEnabledProviders(cfg.ClaudeCode)
+	claudeProviders := config.GetEnabledProviders(cfg.Claude)
 	if len(claudeProviders) > 0 {
-		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, cfg.ClaudeCode.Mode, cfg.ClaudeCode.PinnedProvider, claudeProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
-		r.proxies[ClientClaudeCode].applyRoutingRuntimeSettings(routingCfg)
+		r.proxies[ClientClaude] = newClientProxy(ClientClaude, cfg.Claude.Mode, cfg.Claude.PinnedProvider, claudeProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientClaude].applyRoutingRuntimeSettings(routingCfg)
 	}
 
-	codexProviders := config.GetEnabledProviders(cfg.Codex)
+	codexProviders := config.GetEnabledProviders(cfg.OpenAI)
 	if len(codexProviders) > 0 {
-		r.proxies[ClientCodex] = newClientProxy(ClientCodex, cfg.Codex.Mode, cfg.Codex.PinnedProvider, codexProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
-		r.proxies[ClientCodex].applyRoutingRuntimeSettings(routingCfg)
+		r.proxies[ClientOpenAI] = newClientProxy(ClientOpenAI, cfg.OpenAI.Mode, cfg.OpenAI.PinnedProvider, codexProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientOpenAI].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	geminiProviders := config.GetEnabledProviders(cfg.Gemini)
@@ -370,9 +370,11 @@ func (r *Router) Start(version string, webHandler interface{}) error {
 
 	// Proxy endpoints
 	registerExactAndSubtree(mux, "/clipal", r.handleRequest)
+	registerExactAndSubtree(mux, "/claude", r.handleRequest)
+	registerExactAndSubtree(mux, "/openai", r.handleRequest)
+	registerExactAndSubtree(mux, "/gemini", r.handleRequest)
 	registerExactAndSubtree(mux, "/claudecode", r.handleRequest)
 	registerExactAndSubtree(mux, "/codex", r.handleRequest)
-	registerExactAndSubtree(mux, "/gemini", r.handleRequest)
 	mux.HandleFunc("/health", r.handleHealth)
 
 	addr := net.JoinHostPort(r.cfg.Global.ListenAddr, strconv.Itoa(port))
@@ -481,7 +483,7 @@ func (r *Router) stopProviderConfigWatcher() {
 func (r *Router) providerConfigFiles() []string {
 	// config.yaml carries global runtime knobs (log level, failover policy, body limit, etc.)
 	// and should be hot-reloaded together with provider configs.
-	return []string{"config.yaml", "claude-code.yaml", "codex.yaml", "gemini.yaml"}
+	return config.WatchedConfigFilenames()
 }
 
 func (r *Router) snapshotProviderConfigModTimes() {
@@ -581,11 +583,11 @@ func (r *Router) reloadProviderConfigsLocked() error {
 	cbCfg := normalizeCircuitBreakerConfig(newCfg.Global.CircuitBreaker)
 
 	newProxies := make(map[ClientType]*ClientProxy)
-	if ps := config.GetEnabledProviders(newCfg.ClaudeCode); len(ps) > 0 {
-		newProxies[ClientClaudeCode] = newReloadedClientProxy(ClientClaudeCode, newCfg.ClaudeCode.Mode, newCfg.ClaudeCode.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientClaudeCode])
+	if ps := config.GetEnabledProviders(newCfg.Claude); len(ps) > 0 {
+		newProxies[ClientClaude] = newReloadedClientProxy(ClientClaude, newCfg.Claude.Mode, newCfg.Claude.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientClaude])
 	}
-	if ps := config.GetEnabledProviders(newCfg.Codex); len(ps) > 0 {
-		newProxies[ClientCodex] = newReloadedClientProxy(ClientCodex, newCfg.Codex.Mode, newCfg.Codex.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientCodex])
+	if ps := config.GetEnabledProviders(newCfg.OpenAI); len(ps) > 0 {
+		newProxies[ClientOpenAI] = newReloadedClientProxy(ClientOpenAI, newCfg.OpenAI.Mode, newCfg.OpenAI.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientOpenAI])
 	}
 	if ps := config.GetEnabledProviders(newCfg.Gemini); len(ps) > 0 {
 		newProxies[ClientGemini] = newReloadedClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientGemini])
@@ -849,18 +851,24 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 	case pathMatchesPrefix(path, "/clipal"):
 		clipalPath = true
 		stripPrefix = "/clipal"
+	case pathMatchesPrefix(path, "/claude"):
+		clientType = ClientClaude
+		stripPrefix = "/claude"
+	case pathMatchesPrefix(path, "/openai"):
+		clientType = ClientOpenAI
+		stripPrefix = "/openai"
 	case pathMatchesPrefix(path, "/claudecode"):
-		clientType = ClientClaudeCode
+		clientType = ClientClaude
 		stripPrefix = "/claudecode"
 	case pathMatchesPrefix(path, "/codex"):
-		clientType = ClientCodex
+		clientType = ClientOpenAI
 		stripPrefix = "/codex"
 	case pathMatchesPrefix(path, "/gemini"):
 		clientType = ClientGemini
 		stripPrefix = "/gemini"
 	default:
 		logger.Warn("unknown path prefix: %s", path)
-		writeProxyError(w, "Unknown endpoint. Use /clipal (preferred) or compatibility aliases /claudecode, /codex, /gemini", http.StatusNotFound)
+		writeProxyError(w, "Unknown endpoint. Use /clipal (preferred), canonical aliases /claude, /openai, /gemini, or legacy aliases /claudecode, /codex", http.StatusNotFound)
 		return
 	}
 

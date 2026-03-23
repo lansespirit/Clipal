@@ -123,7 +123,10 @@ func (a *API) saveGlobalConfigWithRollback(global config.GlobalConfig) (func() e
 }
 
 func (a *API) saveClientConfigWithRollback(clientType string, clientCfg config.ClientConfig) (func() error, error) {
-	filename := fmt.Sprintf("%s.yaml", clientType)
+	filename, err := config.ClientConfigFilename(clientType)
+	if err != nil {
+		return nil, err
+	}
 	path := filepath.Join(a.configDir, filename)
 	data := formatClientConfigYAML(clientType, clientCfg)
 	return saveConfigFileWithRollback(path, data, 0o600)

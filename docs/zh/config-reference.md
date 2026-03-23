@@ -11,8 +11,8 @@
 
 ```text
 config.yaml
-claude-code.yaml
-codex.yaml
+claude.yaml
+openai.yaml
 gemini.yaml
 ```
 
@@ -21,8 +21,8 @@ gemini.yaml
 对应模板：
 
 - [../../examples/config.yaml](../../examples/config.yaml)
-- [../../examples/claude-code.yaml](../../examples/claude-code.yaml)
-- [../../examples/codex.yaml](../../examples/codex.yaml)
+- [../../examples/claude.yaml](../../examples/claude.yaml)
+- [../../examples/openai.yaml](../../examples/openai.yaml)
 - [../../examples/gemini.yaml](../../examples/gemini.yaml)
 
 ## 最小示例
@@ -36,7 +36,7 @@ log_level: info
 reactivate_after: 1h
 ```
 
-`codex.yaml`：
+`openai.yaml`：
 
 ```yaml
 mode: auto
@@ -137,8 +137,8 @@ routing:
 
 三个客户端文件结构相同：
 
-- `claude-code.yaml`
-- `codex.yaml`
+- `claude.yaml`
+- `openai.yaml`
 - `gemini.yaml`
 
 示例：

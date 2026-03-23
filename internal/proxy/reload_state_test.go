@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,8 +29,23 @@ func writeProxyReloadFixture(t *testing.T, dir string, global config.GlobalConfi
 	if err != nil {
 		t.Fatalf("yaml.Marshal codex: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), codexBytes, 0o600); err != nil {
-		t.Fatalf("WriteFile codex.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), codexBytes, 0o600); err != nil {
+		t.Fatalf("WriteFile openai.yaml: %v", err)
+	}
+}
+
+func TestProviderConfigFiles_WatchesCurrentNamesOnly(t *testing.T) {
+	router := &Router{}
+	got := strings.Join(router.providerConfigFiles(), ",")
+	for _, want := range []string{"config.yaml", "claude.yaml", "openai.yaml", "gemini.yaml"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("providerConfigFiles missing %q: %s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"claude-code.yaml", "codex.yaml"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("providerConfigFiles should not include legacy name %q: %s", unwanted, got)
+		}
 	}
 }
 
@@ -69,10 +85,10 @@ func TestReloadProviderConfigsLocked_KeepOldConfigOnLoadOrValidationFailure(t *t
 	t.Run("load failure", func(t *testing.T) {
 		router, dir := newReloadTestRouter(t)
 		oldCfg := router.ConfigSnapshot()
-		oldProxy := router.proxies[ClientCodex]
+		oldProxy := router.proxies[ClientOpenAI]
 
-		if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), []byte("providers: [\n"), 0o600); err != nil {
-			t.Fatalf("WriteFile codex.yaml: %v", err)
+		if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte("providers: [\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile openai.yaml: %v", err)
 		}
 
 		levelCalls := 0
@@ -93,7 +109,7 @@ func TestReloadProviderConfigsLocked_KeepOldConfigOnLoadOrValidationFailure(t *t
 		if router.ConfigSnapshot() != oldCfg {
 			t.Fatalf("expected config pointer to stay unchanged on load failure")
 		}
-		if router.proxies[ClientCodex] != oldProxy {
+		if router.proxies[ClientOpenAI] != oldProxy {
 			t.Fatalf("expected proxy pointer to stay unchanged on load failure")
 		}
 		if levelCalls != 0 || notifyCalls != 0 {
@@ -104,7 +120,7 @@ func TestReloadProviderConfigsLocked_KeepOldConfigOnLoadOrValidationFailure(t *t
 	t.Run("validation failure", func(t *testing.T) {
 		router, dir := newReloadTestRouter(t)
 		oldCfg := router.ConfigSnapshot()
-		oldProxy := router.proxies[ClientCodex]
+		oldProxy := router.proxies[ClientOpenAI]
 
 		writeProxyReloadFixture(t, dir, config.DefaultGlobalConfig(), config.ClientConfig{
 			Mode: config.ClientModeManual,
@@ -131,7 +147,7 @@ func TestReloadProviderConfigsLocked_KeepOldConfigOnLoadOrValidationFailure(t *t
 		if router.ConfigSnapshot() != oldCfg {
 			t.Fatalf("expected config pointer to stay unchanged on validation failure")
 		}
-		if router.proxies[ClientCodex] != oldProxy {
+		if router.proxies[ClientOpenAI] != oldProxy {
 			t.Fatalf("expected proxy pointer to stay unchanged on validation failure")
 		}
 		if levelCalls != 0 || notifyCalls != 0 {
@@ -142,7 +158,7 @@ func TestReloadProviderConfigsLocked_KeepOldConfigOnLoadOrValidationFailure(t *t
 
 func TestReloadProviderConfigsLocked_RebuildsLogLevelNotificationsAndBreakers(t *testing.T) {
 	router, dir := newReloadTestRouter(t)
-	oldProxy := router.proxies[ClientCodex]
+	oldProxy := router.proxies[ClientOpenAI]
 	oldBreaker := oldProxy.breakers[0]
 	oldBreaker.state = circuitOpen
 	oldBreaker.openedAt = time.Now().Add(-5 * time.Second)
@@ -212,7 +228,7 @@ func TestReloadProviderConfigsLocked_RebuildsLogLevelNotificationsAndBreakers(t 
 		t.Fatalf("provider_switch = %v, want false", notifyCalls[0].ProviderSwitch)
 	}
 
-	newProxy := router.proxies[ClientCodex]
+	newProxy := router.proxies[ClientOpenAI]
 	if newProxy == oldProxy {
 		t.Fatalf("expected codex proxy to be rebuilt")
 	}
@@ -242,7 +258,7 @@ func TestReloadProviderConfigsLocked_RebuildsLogLevelNotificationsAndBreakers(t 
 
 func TestReloadProviderConfigsLocked_PreservesRuntimeStateAcrossHarmlessReload(t *testing.T) {
 	router, dir := newReloadTestRouter(t)
-	oldProxy := router.proxies[ClientCodex]
+	oldProxy := router.proxies[ClientOpenAI]
 	now := time.Now()
 
 	oldProxy.currentIndex = 0
@@ -299,7 +315,7 @@ func TestReloadProviderConfigsLocked_PreservesRuntimeStateAcrossHarmlessReload(t
 		t.Fatalf("reloadProviderConfigsLocked: %v", err)
 	}
 
-	newProxy := router.proxies[ClientCodex]
+	newProxy := router.proxies[ClientOpenAI]
 	if newProxy == oldProxy {
 		t.Fatalf("expected proxy to be rebuilt")
 	}
@@ -325,7 +341,7 @@ func TestReloadProviderConfigsLocked_PreservesRuntimeStateAcrossHarmlessReload(t
 
 func TestReloadProviderConfigsLocked_DoesNotPreserveSuppressionStateWhenBaseURLChanges(t *testing.T) {
 	router, dir := newReloadTestRouter(t)
-	oldProxy := router.proxies[ClientCodex]
+	oldProxy := router.proxies[ClientOpenAI]
 	now := time.Now()
 
 	oldProxy.deactivated[0] = providerDeactivation{
@@ -359,7 +375,7 @@ func TestReloadProviderConfigsLocked_DoesNotPreserveSuppressionStateWhenBaseURLC
 		t.Fatalf("reloadProviderConfigsLocked: %v", err)
 	}
 
-	newProxy := router.proxies[ClientCodex]
+	newProxy := router.proxies[ClientOpenAI]
 	if !newProxy.deactivated[0].until.IsZero() || newProxy.deactivated[0].reason != "" {
 		t.Fatalf("provider cooldown should not carry across base_url change: %#v", newProxy.deactivated[0])
 	}
@@ -379,7 +395,7 @@ func TestTimeUntilNextAvailable_PicksEarliestBlockedSource(t *testing.T) {
 		openTimeout:         10 * time.Second,
 		halfOpenMaxInFlight: 1,
 	}
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "provider-cooldown", BaseURL: "https://p1.example", APIKey: "k1", Priority: 1},
 		{Name: "key-cooldown", BaseURL: "https://p2.example", APIKey: "k2", Priority: 2},
 		{Name: "breaker-open", BaseURL: "https://p3.example", APIKey: "k3", Priority: 3},
@@ -415,7 +431,7 @@ func TestHandleAllUnavailable_RetryAfterAndStatusBranches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+			cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 				{Name: "p1", BaseURL: "https://p1.example", APIKey: "k1", Priority: 1},
 			}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 			cp.deactivated[0] = providerDeactivation{

@@ -11,7 +11,7 @@ func TestExtractRequestStickyKey_OpenAIResponsesL1AndL2(t *testing.T) {
 	t.Parallel()
 
 	requestCtx := RequestContext{
-		ClientType:   ClientCodex,
+		ClientType:   ClientOpenAI,
 		Family:       ProtocolFamilyOpenAI,
 		Capability:   CapabilityOpenAIResponses,
 		UpstreamPath: "/v1/responses",
@@ -38,7 +38,7 @@ func TestExtractRequestStickyKey_L3UsesSecondToLastHumanMessage(t *testing.T) {
 	t.Parallel()
 
 	openAI := RequestContext{
-		ClientType:   ClientCodex,
+		ClientType:   ClientOpenAI,
 		Family:       ProtocolFamilyOpenAI,
 		Capability:   CapabilityOpenAIChatCompletions,
 		UpstreamPath: "/v1/chat/completions",
@@ -55,7 +55,7 @@ func TestExtractRequestStickyKey_L3UsesSecondToLastHumanMessage(t *testing.T) {
 	}
 
 	anthropic := RequestContext{
-		ClientType:   ClientClaudeCode,
+		ClientType:   ClientClaude,
 		Family:       ProtocolFamilyClaude,
 		Capability:   CapabilityClaudeMessages,
 		UpstreamPath: "/v1/messages",
@@ -81,7 +81,7 @@ func TestExtractRequestStickyKey_SingleHumanMessageDoesNotCreateL3(t *testing.T)
 	t.Parallel()
 
 	requestCtx := RequestContext{
-		ClientType:   ClientCodex,
+		ClientType:   ClientOpenAI,
 		Family:       ProtocolFamilyOpenAI,
 		Capability:   CapabilityOpenAIChatCompletions,
 		UpstreamPath: "/v1/chat/completions",
@@ -97,7 +97,7 @@ func TestExtractResponseLearningStickyKey_UsesLastHumanMessageIncludingFirstTurn
 	t.Parallel()
 
 	requestCtx := RequestContext{
-		ClientType:   ClientCodex,
+		ClientType:   ClientOpenAI,
 		Family:       ProtocolFamilyOpenAI,
 		Capability:   CapabilityOpenAIChatCompletions,
 		UpstreamPath: "/v1/chat/completions",
@@ -132,7 +132,7 @@ func TestPreviewStickyFeature_TruncatesToTwentyFourChars(t *testing.T) {
 func TestEnforceDynamicFeatureCapacityLocked_EvictsLeastRecentlySeenEntries(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.routing.dynamicFeatureCapacity = 2

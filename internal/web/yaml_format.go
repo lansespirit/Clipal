@@ -123,13 +123,16 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 }
 
 func clientConfigHeader(clientType string) string {
+	if canonical, ok := config.CanonicalClientType(clientType); ok {
+		clientType = canonical
+	}
 	switch clientType {
-	case "claude-code":
-		return "Claude Code API providers configuration"
-	case "codex":
-		return "Codex CLI API providers configuration"
+	case "claude":
+		return "Claude-style API providers configuration"
+	case "openai":
+		return "OpenAI-compatible API providers configuration"
 	case "gemini":
-		return "Gemini CLI API providers configuration"
+		return "Gemini-style API providers configuration"
 	default:
 		return fmt.Sprintf("%s providers configuration", clientType)
 	}

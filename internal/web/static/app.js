@@ -5,10 +5,10 @@ function app() {
         theme: localStorage.getItem('theme') || 'system',
         activeTab: 'providers',
         servicePoll: null,
-        selectedClient: 'claude-code',
+        selectedClient: 'claude',
         clientOptions: [
-            { value: 'claude-code', label: 'Claude Code' },
-            { value: 'codex', label: 'Codex' },
+            { value: 'claude', label: 'Claude' },
+            { value: 'openai', label: 'OpenAI' },
             { value: 'gemini', label: 'Gemini' }
         ],
         providers: [],

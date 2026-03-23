@@ -217,6 +217,32 @@ body {
     -webkit-text-fill-color: transparent;
 }
 
+.brand-lockup {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+}
+
+.brand-mark {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
+    flex: 0 0 auto;
+}
+
+.brand-copy {
+    min-width: 0;
+}
+
+.brand-subtitle {
+    margin-top: 4px;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    letter-spacing: 0.01em;
+}
+
 .header-info {
     display: flex;
     align-items: center;

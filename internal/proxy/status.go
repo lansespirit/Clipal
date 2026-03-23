@@ -140,7 +140,7 @@ func (cp *ClientProxy) currentProvidersSnapshotLocked() map[string]string {
 		out["default"] = name
 	}
 	switch cp.clientType {
-	case ClientCodex:
+	case ClientOpenAI:
 		if name := providerNameAtIndex(cp.providers, cp.responsesIndex); name != "" {
 			out[string(CapabilityOpenAIResponses)] = name
 		}

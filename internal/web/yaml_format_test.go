@@ -209,7 +209,7 @@ func TestFormatClientConfigYAML_RoundTripViaConfigLoadWithNormalizedKeys(t *test
 			{Name: "p2", BaseURL: "https://b.example", APIKeys: []string{"dup", "", "dup", " second "}, Priority: 1, Enabled: boolPtr(true)},
 		},
 	})
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), yamlBytes, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), yamlBytes, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -217,22 +217,22 @@ func TestFormatClientConfigYAML_RoundTripViaConfigLoadWithNormalizedKeys(t *test
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if loaded.Codex.Mode != config.ClientModeManual {
-		t.Fatalf("mode = %q, want %q", loaded.Codex.Mode, config.ClientModeManual)
+	if loaded.OpenAI.Mode != config.ClientModeManual {
+		t.Fatalf("mode = %q, want %q", loaded.OpenAI.Mode, config.ClientModeManual)
 	}
-	if loaded.Codex.PinnedProvider != "p2" {
-		t.Fatalf("pinned_provider = %q, want p2", loaded.Codex.PinnedProvider)
+	if loaded.OpenAI.PinnedProvider != "p2" {
+		t.Fatalf("pinned_provider = %q, want p2", loaded.OpenAI.PinnedProvider)
 	}
-	if len(loaded.Codex.Providers) != 2 {
-		t.Fatalf("providers len = %d, want 2", len(loaded.Codex.Providers))
+	if len(loaded.OpenAI.Providers) != 2 {
+		t.Fatalf("providers len = %d, want 2", len(loaded.OpenAI.Providers))
 	}
-	if loaded.Codex.Providers[0].Name != "p2" {
-		t.Fatalf("providers[0].name = %q, want p2", loaded.Codex.Providers[0].Name)
+	if loaded.OpenAI.Providers[0].Name != "p2" {
+		t.Fatalf("providers[0].name = %q, want p2", loaded.OpenAI.Providers[0].Name)
 	}
-	if got := strings.Join(loaded.Codex.Providers[0].NormalizedAPIKeys(), "|"); got != "dup|second" {
+	if got := strings.Join(loaded.OpenAI.Providers[0].NormalizedAPIKeys(), "|"); got != "dup|second" {
 		t.Fatalf("providers[0] normalized keys = %q, want dup|second", got)
 	}
-	if got := loaded.Codex.Providers[1].PrimaryAPIKey(); got != "key-1" {
+	if got := loaded.OpenAI.Providers[1].PrimaryAPIKey(); got != "key-1" {
 		t.Fatalf("providers[1] primary api key = %q, want key-1", got)
 	}
 }

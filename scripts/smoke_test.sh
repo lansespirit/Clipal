@@ -127,7 +127,7 @@ log_level: debug
 reactivate_after: 1h
 YAML
 
-cat >"$cfgdir/codex.yaml" <<YAML
+cat >"$cfgdir/openai.yaml" <<YAML
 providers:
   - name: "dead"
     base_url: "http://127.0.0.1:$dead_port"
@@ -181,7 +181,7 @@ if ! grep -Eq "trying next=|provider switched:" "$tmpdir/clipal.log" 2>/dev/null
 fi
 
 echo "test: hot reload provider api_key"
-cat >"$cfgdir/codex.yaml" <<YAML
+cat >"$cfgdir/openai.yaml" <<YAML
 providers:
   - name: "upstream"
     base_url: "http://127.0.0.1:$upstream_port"

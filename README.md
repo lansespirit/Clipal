@@ -39,7 +39,7 @@ For new setups, point clients at `/clipal` first. The older aliases remain avail
 ## Quick Start
 
 1. Download the right binary from [Releases](https://github.com/lansespirit/Clipal/releases).
-   Current stable release: [`v0.8.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.8.0)
+   Current stable release: [`v0.9.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.9.0)
 2. Put it on your `PATH` and verify the version:
 
 ```bash
@@ -52,8 +52,8 @@ chmod +x clipal*
 ```bash
 mkdir -p ~/.clipal
 cp examples/config.yaml ~/.clipal/config.yaml
-cp examples/claude-code.yaml ~/.clipal/claude-code.yaml
-cp examples/codex.yaml ~/.clipal/codex.yaml
+cp examples/claude.yaml ~/.clipal/claude.yaml
+cp examples/openai.yaml ~/.clipal/openai.yaml
 cp examples/gemini.yaml ~/.clipal/gemini.yaml
 ```
 
@@ -76,8 +76,8 @@ Then open `http://127.0.0.1:3333/` in your browser.
 ## Example Config Files
 
 - [examples/config.yaml](examples/config.yaml)
-- [examples/claude-code.yaml](examples/claude-code.yaml)
-- [examples/codex.yaml](examples/codex.yaml)
+- [examples/claude.yaml](examples/claude.yaml)
+- [examples/openai.yaml](examples/openai.yaml)
 - [examples/gemini.yaml](examples/gemini.yaml)
 
 ## Common Commands
@@ -125,8 +125,8 @@ Default files:
 ```text
 ~/.clipal/
 ├── config.yaml
-├── claude-code.yaml
-├── codex.yaml
+├── claude.yaml
+├── openai.yaml
 └── gemini.yaml
 ```
 

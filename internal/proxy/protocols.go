@@ -84,7 +84,7 @@ func detectClipalRequestContext(path string) (RequestContext, bool) {
 	case "":
 	default:
 		return RequestContext{
-			ClientType:     ClientClaudeCode,
+			ClientType:     ClientClaude,
 			Family:         ProtocolFamilyClaude,
 			Capability:     capability,
 			UpstreamPath:   path,
@@ -108,7 +108,7 @@ func detectClipalRequestContext(path string) (RequestContext, bool) {
 	case "":
 	default:
 		return RequestContext{
-			ClientType:     ClientCodex,
+			ClientType:     ClientOpenAI,
 			Family:         ProtocolFamilyOpenAI,
 			Capability:     capability,
 			UpstreamPath:   path,
@@ -128,10 +128,10 @@ func requestContextForClientPath(clientType ClientType, path string, unified boo
 	}
 
 	switch clientType {
-	case ClientClaudeCode:
+	case ClientClaude:
 		requestCtx.Family = ProtocolFamilyClaude
 		requestCtx.Capability = capabilityOrDefault(detectClaudeCapability(path), CapabilityClaudeCompatible)
-	case ClientCodex:
+	case ClientOpenAI:
 		requestCtx.Family = ProtocolFamilyOpenAI
 		requestCtx.Capability = capabilityOrDefault(detectOpenAICapability(path), CapabilityOpenAICompatible)
 	case ClientGemini:

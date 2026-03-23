@@ -17,8 +17,8 @@ func writeConfigFixture(t *testing.T, dir string, cfg *config.Config) {
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), formatGlobalConfigYAML(cfg.Global), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "codex.yaml"), formatClientConfigYAML("codex", cfg.Codex), 0o600); err != nil {
-		t.Fatalf("write codex.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), formatClientConfigYAML("codex", cfg.OpenAI), 0o600); err != nil {
+		t.Fatalf("write openai.yaml: %v", err)
 	}
 }
 
@@ -27,7 +27,7 @@ func newRuntimeAPI(t *testing.T) (*API, *proxy.Router, *config.Config, string) {
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Global: config.DefaultGlobalConfig(),
-		Codex: config.ClientConfig{
+		OpenAI: config.ClientConfig{
 			Mode: config.ClientModeAuto,
 			Providers: []config.Provider{
 				{Name: "p1", BaseURL: "https://example.com", APIKey: "k1", Priority: 1},
@@ -156,11 +156,11 @@ func TestSaveClientConfigOrWriteError_Paths(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	badCfg := *loaded
-	badCfg.Codex.Mode = config.ClientMode("invalid")
+	badCfg.OpenAI.Mode = config.ClientMode("invalid")
 	if api.saveClientConfigOrWriteError(rec, "codex", &badCfg) {
 		t.Fatalf("expected validation failure")
 	}
-	if got := router.ConfigSnapshot().Codex.Mode; got != loaded.Codex.Mode {
+	if got := router.ConfigSnapshot().OpenAI.Mode; got != loaded.OpenAI.Mode {
 		t.Fatalf("runtime mode changed on validation failure: %q", got)
 	}
 
@@ -168,7 +168,7 @@ func TestSaveClientConfigOrWriteError_Paths(t *testing.T) {
 	if api.saveClientConfigOrWriteError(rec, "unknown", loaded) {
 		t.Fatalf("expected unknown client failure")
 	}
-	if got := router.ConfigSnapshot().Codex.Mode; got != loaded.Codex.Mode {
+	if got := router.ConfigSnapshot().OpenAI.Mode; got != loaded.OpenAI.Mode {
 		t.Fatalf("runtime mode changed on unknown client: %q", got)
 	}
 
@@ -179,25 +179,31 @@ func TestSaveClientConfigOrWriteError_Paths(t *testing.T) {
 	api.configDir = filePath
 	rec = httptest.NewRecorder()
 	writeFailCfg := *loaded
-	writeFailCfg.Codex.Mode = config.ClientModeManual
-	writeFailCfg.Codex.PinnedProvider = "p1"
+	writeFailCfg.OpenAI.Mode = config.ClientModeManual
+	writeFailCfg.OpenAI.PinnedProvider = "p1"
 	if api.saveClientConfigOrWriteError(rec, "codex", &writeFailCfg) {
 		t.Fatalf("expected write failure")
 	}
-	if got := router.ConfigSnapshot().Codex.Mode; got != loaded.Codex.Mode {
+	if got := router.ConfigSnapshot().OpenAI.Mode; got != loaded.OpenAI.Mode {
 		t.Fatalf("runtime mode changed on write failure: %q", got)
 	}
 
 	api.configDir = dir
 	rec = httptest.NewRecorder()
 	okCfg := *loaded
-	okCfg.Codex.Mode = config.ClientModeManual
-	okCfg.Codex.PinnedProvider = "p1"
+	okCfg.OpenAI.Mode = config.ClientModeManual
+	okCfg.OpenAI.PinnedProvider = "p1"
 	if !api.saveClientConfigOrWriteError(rec, "codex", &okCfg) {
 		t.Fatalf("expected success: %s", rec.Body.String())
 	}
-	if got := router.ConfigSnapshot().Codex.Mode; got != config.ClientModeManual {
+	if got := router.ConfigSnapshot().OpenAI.Mode; got != config.ClientModeManual {
 		t.Fatalf("runtime mode = %q, want manual", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "openai.yaml")); err != nil {
+		t.Fatalf("expected openai.yaml to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "codex.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected codex.yaml to stay absent after save, err=%v", err)
 	}
 }
 
@@ -210,15 +216,15 @@ func TestSaveClientConfigOrWriteError_RollsBackWhenRuntimeReloadFails(t *testing
 
 	rec := httptest.NewRecorder()
 	cfg := *loaded
-	cfg.Codex.Mode = config.ClientModeManual
-	cfg.Codex.PinnedProvider = "p1"
+	cfg.OpenAI.Mode = config.ClientModeManual
+	cfg.OpenAI.PinnedProvider = "p1"
 	if api.saveClientConfigOrWriteError(rec, "codex", &cfg) {
 		t.Fatalf("expected reload failure")
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
-	if got := router.ConfigSnapshot().Codex.Mode; got != loaded.Codex.Mode {
+	if got := router.ConfigSnapshot().OpenAI.Mode; got != loaded.OpenAI.Mode {
 		t.Fatalf("runtime mode changed on reload failure: %q", got)
 	}
 	if err := os.Remove(filepath.Join(dir, "gemini.yaml")); err != nil {
@@ -228,7 +234,7 @@ func TestSaveClientConfigOrWriteError_RollsBackWhenRuntimeReloadFails(t *testing
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if got := reloaded.Codex.Mode; got != loaded.Codex.Mode {
-		t.Fatalf("saved mode = %q, want rollback to %q", got, loaded.Codex.Mode)
+	if got := reloaded.OpenAI.Mode; got != loaded.OpenAI.Mode {
+		t.Fatalf("saved mode = %q, want rollback to %q", got, loaded.OpenAI.Mode)
 	}
 }

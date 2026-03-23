@@ -167,14 +167,14 @@ func TestAddForwardedHeaders(t *testing.T) {
 func TestCreateProxyRequest_PreservesClaudeXAPIKeyStyle(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{
 		{Name: "claude", BaseURL: "https://api.anthropic.com", APIKey: "provider-key", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 
 	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", bytes.NewReader([]byte(`{"x":1}`)))
 	original.Header.Set("x-api-key", "client-key")
 	original = withRequestContext(original, RequestContext{
-		ClientType:     ClientClaudeCode,
+		ClientType:     ClientClaude,
 		Family:         ProtocolFamilyClaude,
 		Capability:     CapabilityClaudeMessages,
 		UpstreamPath:   "/v1/messages",
@@ -233,7 +233,7 @@ func TestApplyProviderAPIKey_UnknownCarrierFallsBackToProtocolDefault(t *testing
 
 	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", nil)
 	original = withRequestContext(original, RequestContext{
-		ClientType:     ClientClaudeCode,
+		ClientType:     ClientClaude,
 		Family:         ProtocolFamilyClaude,
 		Capability:     CapabilityClaudeMessages,
 		UpstreamPath:   "/v1/messages",
@@ -357,13 +357,13 @@ func TestCreateProxyRequest_OverridesGeminiQueryKey(t *testing.T) {
 func TestCreateProxyRequest_DefaultsClaudeAuthCarrierWithoutClientAuth(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{
 		{Name: "claude", BaseURL: "https://api.anthropic.com", APIKey: "provider-key", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 
 	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", bytes.NewReader([]byte(`{"x":1}`)))
 	original = withRequestContext(original, RequestContext{
-		ClientType:     ClientClaudeCode,
+		ClientType:     ClientClaude,
 		Family:         ProtocolFamilyClaude,
 		Capability:     CapabilityClaudeMessages,
 		UpstreamPath:   "/v1/messages",
@@ -444,7 +444,7 @@ func TestHandleRequest_MaxRequestBodyBytes(t *testing.T) {
 			ReactivateAfter: "1h",
 			MaxRequestBody:  8,
 		},
-		Codex: config.ClientConfig{
+		OpenAI: config.ClientConfig{
 			Providers: []config.Provider{
 				{Name: "p1", BaseURL: "http://example.com", APIKey: "k1", Priority: 1},
 			},
@@ -478,7 +478,7 @@ func TestForwardWithFailover_DeactivateOn401(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -517,7 +517,7 @@ func TestForwardWithFailover_RetryOn503DoesNotDeactivate(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -549,7 +549,7 @@ func TestForwardWithFailover_ContextCanceledDoesNotRetryOtherProviders(t *testin
 		return nil, r.Context().Err()
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 		{Name: "p3", BaseURL: "http://p3", APIKey: "k3", Priority: 3},
@@ -594,7 +594,7 @@ func TestForwardWithFailover_IdleTimeoutBeforeFirstByteRetriesNextProvider(t *te
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 10*time.Millisecond, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -654,7 +654,7 @@ func TestForwardWithFailover_PartialStreamDoesNotLogCompleted(t *testing.T) {
 		}, nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "streamerr", BaseURL: "http://streamerr", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -689,14 +689,14 @@ func TestForwardWithFailover_PartialStreamDoesNotLogCompleted(t *testing.T) {
 
 func TestProtocolTrackerDetectsCompletionMarkers(t *testing.T) {
 	openAIResp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
-	openAITracker := newProtocolTracker(ClientCodex, nil, openAIResp)
+	openAITracker := newProtocolTracker(ClientOpenAI, nil, openAIResp)
 	openAITracker.append([]byte("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"))
 	if got := openAITracker.finalStatus(); got != protocolCompleted {
 		t.Fatalf("openai finalStatus: got %s want %s", got, protocolCompleted)
 	}
 
 	claudeResp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
-	claudeTracker := newProtocolTracker(ClientClaudeCode, nil, claudeResp)
+	claudeTracker := newProtocolTracker(ClientClaude, nil, claudeResp)
 	claudeTracker.append([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 	if got := claudeTracker.finalStatus(); got != protocolCompleted {
 		t.Fatalf("claude finalStatus: got %s want %s", got, protocolCompleted)
@@ -746,7 +746,7 @@ func TestForwardWithFailover_CodexSSEDoneLogsCompleted(t *testing.T) {
 		}, nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "ssedone", BaseURL: "http://ssedone", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -809,7 +809,7 @@ func TestForwardWithFailover_CodexSSEEOFWithoutDoneLogsIncomplete(t *testing.T) 
 		}, nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "sseincomplete", BaseURL: "http://sseincomplete", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -865,7 +865,7 @@ func TestClaudeCountTokens_FailureDoesNotRetryOrAffectHealthState(t *testing.T) 
 			LogLevel:        config.LogLevelDebug,
 			ReactivateAfter: "1h",
 		},
-		ClaudeCode: config.ClientConfig{
+		Claude: config.ClientConfig{
 			Providers: []config.Provider{
 				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
@@ -874,7 +874,7 @@ func TestClaudeCountTokens_FailureDoesNotRetryOrAffectHealthState(t *testing.T) 
 	}
 
 	router := NewRouter(cfg)
-	cp := router.proxies[ClientClaudeCode]
+	cp := router.proxies[ClientClaude]
 	if cp == nil {
 		t.Fatalf("expected claudecode proxy to be initialized")
 	}
@@ -964,7 +964,7 @@ func TestClaudeCountTokens_NetworkFailureDoesNotRetryOrAffectHealthState(t *test
 			LogLevel:        config.LogLevelDebug,
 			ReactivateAfter: "1h",
 		},
-		ClaudeCode: config.ClientConfig{
+		Claude: config.ClientConfig{
 			Providers: []config.Provider{
 				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
@@ -973,7 +973,7 @@ func TestClaudeCountTokens_NetworkFailureDoesNotRetryOrAffectHealthState(t *test
 	}
 
 	router := NewRouter(cfg)
-	cp := router.proxies[ClientClaudeCode]
+	cp := router.proxies[ClientClaude]
 	if cp == nil {
 		t.Fatalf("expected claudecode proxy to be initialized")
 	}
@@ -1101,7 +1101,7 @@ func TestClaudeCountTokens_SkipsUnavailableCurrentProvider(t *testing.T) {
 				HalfOpenMaxInFlight: 1,
 			},
 		},
-		ClaudeCode: config.ClientConfig{
+		Claude: config.ClientConfig{
 			Providers: []config.Provider{
 				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
@@ -1110,7 +1110,7 @@ func TestClaudeCountTokens_SkipsUnavailableCurrentProvider(t *testing.T) {
 	}
 
 	router := NewRouter(cfg)
-	cp := router.proxies[ClientClaudeCode]
+	cp := router.proxies[ClientClaude]
 	if cp == nil {
 		t.Fatalf("expected claudecode proxy to be initialized")
 	}
@@ -1160,7 +1160,7 @@ func TestClaudeCountTokens_AllUnavailableReturnsRetryAfter(t *testing.T) {
 				HalfOpenMaxInFlight: 1,
 			},
 		},
-		ClaudeCode: config.ClientConfig{
+		Claude: config.ClientConfig{
 			Providers: []config.Provider{
 				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 			},
@@ -1168,7 +1168,7 @@ func TestClaudeCountTokens_AllUnavailableReturnsRetryAfter(t *testing.T) {
 	}
 
 	router := NewRouter(cfg)
-	cp := router.proxies[ClientClaudeCode]
+	cp := router.proxies[ClientClaude]
 	if cp == nil {
 		t.Fatalf("expected claudecode proxy to be initialized")
 	}
@@ -1205,7 +1205,7 @@ func TestClaudeCountTokens_AllUnavailableReturnsRetryAfter(t *testing.T) {
 func TestClaudeCountTokens_RuntimeSnapshotOmitsScopedProvider(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1239,7 +1239,7 @@ func TestForwardWithFailover_DeactivateOn429Quota(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1274,7 +1274,7 @@ func TestForwardWithFailover_429RateLimitDoesNotDeactivate(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1314,7 +1314,7 @@ func TestForwardWithFailover_RetriesNextKeyBeforeNextProvider(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "fallback", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1348,7 +1348,7 @@ func TestForwardWithFailover_ReleasesHalfOpenProbeWhenKeysExhausted(t *testing.T
 		return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{
 		enabled:             true,
@@ -1376,7 +1376,7 @@ func TestForwardManual_DoesNotDeactivateOn401(t *testing.T) {
 		return newResponse(http.StatusUnauthorized, nil, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1405,7 +1405,7 @@ func TestForwardManual_MultiKeyPassesThroughPinnedProviderResponse(t *testing.T)
 		return newResponse(http.StatusUnauthorized, h, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1441,7 +1441,7 @@ func TestForwardManual_MultiKeyPassesThrough402(t *testing.T) {
 		return newResponse(http.StatusPaymentRequired, nil, `{"error":{"type":"billing_error","message":"no money"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1477,7 +1477,7 @@ func TestForwardManual_MultiKeyPassesThrough429RetryAfter(t *testing.T) {
 		return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKeys: []string{"k1", "k2"}, Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1511,7 +1511,7 @@ func TestForwardManual_DoesNotDeactivateOn402(t *testing.T) {
 		return newResponse(http.StatusPaymentRequired, nil, `{"error":{"type":"billing_error","message":"no money"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1538,7 +1538,7 @@ func TestForwardManual_DoesNotDeactivateOn429Quota(t *testing.T) {
 		return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"quota","type":"insufficient_quota","code":"insufficient_quota"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1565,7 +1565,7 @@ func TestForwardManual_PassesThrough200(t *testing.T) {
 		return newResponse(http.StatusOK, h, "ok"), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1606,7 +1606,7 @@ func TestForwardWithFailover_AllProvidersHalfOpenBusy_ReturnsRetryAfter(t *testi
 		halfOpenMaxInFlight: 1,
 	}
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, cbCfg)
 	cp.httpClient.Transport = rt
@@ -1641,7 +1641,7 @@ func TestForwardWithFailover_ReactivateAfterTTL(t *testing.T) {
 		return newResponse(http.StatusOK, nil, "ok"), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1679,7 +1679,7 @@ func TestForwardWithFailover_LastSwitchTracksLastHop(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 		{Name: "p3", BaseURL: "http://p3", APIKey: "k3", Priority: 3},
@@ -1714,7 +1714,7 @@ func TestForwardWithFailover_AllProvidersFailedUpdatesLastRequest(t *testing.T) 
 		return newResponse(http.StatusServiceUnavailable, nil, "server busy"), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -1740,7 +1740,7 @@ func TestForwardWithFailover_AllProvidersFailedUpdatesLastRequest(t *testing.T) 
 func TestForwardWithFailover_RequestBuildFailureUpdatesLastRequest(t *testing.T) {
 	t.Parallel()
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "broken", BaseURL: "://bad-url", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 
@@ -1794,7 +1794,7 @@ func TestForwardWithFailover_403GzipBodyDecodedAndRetriesNextProvider(t *testing
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1841,7 +1841,7 @@ func TestForwardWithFailover_429AnthropicRateLimitDoesNotDeactivate(t *testing.T
 		}
 	})
 
-	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1876,7 +1876,7 @@ func TestForwardWithFailover_429RetryAfterCooldown(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1918,7 +1918,7 @@ func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -1964,7 +1964,7 @@ func TestForwardWithFailover_AllProvidersCooldownReturnsRetryAfter(t *testing.T)
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -2001,7 +2001,7 @@ func TestForwardManual_DoesNotFailover(t *testing.T) {
 		}
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
@@ -2033,7 +2033,7 @@ func TestForwardManual_PassesThroughRetryAfter(t *testing.T) {
 		return newResponse(http.StatusTooManyRequests, h, `{"error":{"type":"rate_limit_error","message":"slow down"}}`), nil
 	})
 
-	cp := newClientProxy(ClientCodex, config.ClientModeManual, "p1", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeManual, "p1", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
 	cp.httpClient.Transport = rt
@@ -2076,7 +2076,7 @@ func TestCircuitBreaker_OpensAndReturnsRetryAfter(t *testing.T) {
 		halfOpenMaxInFlight: 1,
 	}
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, cbCfg)
 	cp.httpClient.Transport = rt
@@ -2129,7 +2129,7 @@ func TestCircuitBreaker_DoesNotCountClientCancelAsFailure(t *testing.T) {
 		halfOpenMaxInFlight: 1,
 	}
 
-	cp := newClientProxy(ClientCodex, config.ClientModeAuto, "", []config.Provider{
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
 		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
 	}, time.Hour, 0, testResponseHeaderTimeout, cbCfg)
 	cp.httpClient.Transport = rt
