@@ -39,7 +39,7 @@ Clipal 现在将客户端入口统一规范到单一路由：
 ## 快速开始
 
 1. 从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制。
-   当前稳定版：[`v0.6.2`](https://github.com/lansespirit/Clipal/releases/tag/v0.6.2)
+   当前稳定版：[`v0.7.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.7.0)
 2. 放到 `PATH` 中并确认版本：
 
 ```bash

@@ -39,7 +39,7 @@ For new setups, point clients at `/clipal` first. The older aliases remain avail
 ## Quick Start
 
 1. Download the right binary from [Releases](https://github.com/lansespirit/Clipal/releases).
-   Current stable release: [`v0.6.2`](https://github.com/lansespirit/Clipal/releases/tag/v0.6.2)
+   Current stable release: [`v0.7.0`](https://github.com/lansespirit/Clipal/releases/tag/v0.7.0)
 2. Put it on your `PATH` and verify the version:
 
 ```bash
