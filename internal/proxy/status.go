@@ -8,6 +8,9 @@ type ProviderRuntimeSnapshot struct {
 	Name              string
 	KeyCount          int
 	AvailableKeyCount int
+	BusyUntil         time.Time
+	BusyBackoffStep   int
+	BusyProbeInFlight int
 
 	DeactivatedReason  string
 	DeactivatedMessage string
@@ -21,10 +24,13 @@ type ClientRuntimeSnapshot struct {
 	Mode           string
 	PinnedProvider string
 
-	CurrentProvider  string
-	CurrentProviders map[string]string
-	LastSwitch       *ProviderSwitchEvent
-	LastRequest      *RequestOutcomeEvent
+	CurrentProvider          string
+	CurrentProviders         map[string]string
+	LastSwitch               *ProviderSwitchEvent
+	LastRequest              *RequestOutcomeEvent
+	StickyBindingCount       int
+	ResponseLookupCount      int
+	DynamicFeatureCacheCount int
 
 	Providers []ProviderRuntimeSnapshot
 }
@@ -67,6 +73,11 @@ func (cp *ClientProxy) runtimeSnapshot(now time.Time) ClientRuntimeSnapshot {
 			KeyCount: len(cp.providerKeys[i]),
 		}
 		ps.AvailableKeyCount = cp.availableKeyCountLocked(i, now)
+		if i < len(cp.providerBusy) {
+			ps.BusyUntil = cp.providerBusy[i].Until
+			ps.BusyBackoffStep = cp.providerBusy[i].BackoffStep
+			ps.BusyProbeInFlight = cp.providerBusy[i].ProbeInFlight
+		}
 		if i < len(cp.deactivated) {
 			d := cp.deactivated[i]
 			if !d.until.IsZero() && now.Before(d.until) {
@@ -110,9 +121,12 @@ func (cp *ClientProxy) runtimeSnapshot(now time.Time) ClientRuntimeSnapshot {
 			}
 			return cp.providers[idx].Name
 		}(),
-		LastSwitch:  lastSwitch,
-		LastRequest: lastRequest,
-		Providers:   providers,
+		LastSwitch:               lastSwitch,
+		LastRequest:              lastRequest,
+		StickyBindingCount:       len(cp.stickyBindings),
+		ResponseLookupCount:      len(cp.responseLookup),
+		DynamicFeatureCacheCount: len(cp.dynamicFeatureBindings),
+		Providers:                providers,
 	}
 }
 

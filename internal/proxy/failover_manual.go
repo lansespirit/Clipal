@@ -90,7 +90,7 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 		cp.setCurrentKeyIndexForScope(index, keyIndex, scope)
 	}
 	allow := circuitAllowResult{}
-	result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
+	result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit, nil)
 	if result.kind == streamFinal {
 		cp.logRequestResult(req, provider.Name, resp.StatusCode, result, true)
 		return

@@ -3,6 +3,7 @@ package proxy
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
@@ -15,6 +16,13 @@ type providerDeactivation struct {
 	reason  string
 	status  int
 	message string
+}
+
+type providerBusyState struct {
+	Until         time.Time
+	BackoffStep   int
+	Reason        string
+	ProbeInFlight int
 }
 
 func setRetryAfterHeader(w http.ResponseWriter, wait time.Duration) {
@@ -120,6 +128,108 @@ func (cp *ClientProxy) deactivateFor(index int, reason string, status int, msg s
 	if cp.mode != config.ClientModeManual {
 		cp.advanceScopeIndicesLocked(index)
 	}
+}
+
+func (cp *ClientProxy) markProviderBusy(index int, reason string, backoffStep int, now time.Time, wait time.Duration) {
+	if wait <= 0 {
+		return
+	}
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if index < 0 || index >= len(cp.providerBusy) {
+		return
+	}
+	until := now.Add(wait)
+	busy := cp.providerBusy[index]
+	if backoffStep > busy.BackoffStep {
+		busy.BackoffStep = backoffStep
+	}
+	if until.After(busy.Until) {
+		busy.Until = until
+	}
+	if strings.TrimSpace(reason) != "" {
+		busy.Reason = reason
+	}
+	cp.providerBusy[index] = busy
+}
+
+func (cp *ClientProxy) providerBusySnapshot(index int) providerBusyState {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+	if index < 0 || index >= len(cp.providerBusy) {
+		return providerBusyState{}
+	}
+	return cp.providerBusy[index]
+}
+
+func (cp *ClientProxy) providerBusyWait(index int, now time.Time) (time.Duration, bool) {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+	if index < 0 || index >= len(cp.providerBusy) {
+		return 0, false
+	}
+	busy := cp.providerBusy[index]
+	if busy.Until.IsZero() || !now.Before(busy.Until) {
+		return 0, false
+	}
+	return time.Until(busy.Until), true
+}
+
+func (cp *ClientProxy) clearProviderBusy(index int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if index < 0 || index >= len(cp.providerBusy) {
+		return
+	}
+	cp.providerBusy[index] = providerBusyState{}
+}
+
+func (cp *ClientProxy) acquireProviderBusyProbe(index int) bool {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if index < 0 || index >= len(cp.providerBusy) {
+		return false
+	}
+	limit := cp.routing.busyProbeMaxInFlight
+	if limit <= 0 {
+		limit = 1
+	}
+	if cp.providerBusy[index].ProbeInFlight >= limit {
+		return false
+	}
+	cp.providerBusy[index].ProbeInFlight++
+	return true
+}
+
+func (cp *ClientProxy) releaseProviderBusyProbe(index int) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if index < 0 || index >= len(cp.providerBusy) {
+		return
+	}
+	if cp.providerBusy[index].ProbeInFlight > 0 {
+		cp.providerBusy[index].ProbeInFlight--
+	}
+}
+
+func (cp *ClientProxy) nextBusyBackoff(index int) (int, time.Duration) {
+	cp.mu.RLock()
+	defer cp.mu.RUnlock()
+
+	step := 0
+	if index >= 0 && index < len(cp.providerBusy) {
+		busy := cp.providerBusy[index]
+		if !busy.Until.IsZero() || busy.Reason != "" || busy.BackoffStep > 0 {
+			step = busy.BackoffStep + 1
+		}
+	}
+	if len(cp.routing.busyRetryDelays) == 0 {
+		return step, 0
+	}
+	if step >= len(cp.routing.busyRetryDelays) {
+		step = len(cp.routing.busyRetryDelays) - 1
+	}
+	return step, cp.routing.busyRetryDelays[step]
 }
 
 func (cp *ClientProxy) advanceScopeIndicesLocked(index int) {

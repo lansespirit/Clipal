@@ -97,6 +97,42 @@ circuit_breaker:
 | `open_timeout` | duration | `60s` | 熔断打开多久后进入半开探测 |
 | `half_open_max_inflight` | int | `1` | 半开探测并发上限 |
 
+### `routing`
+
+```yaml
+routing:
+  sticky_sessions:
+    enabled: true
+    explicit_ttl: 30m
+    cache_hint_ttl: 10m
+    dynamic_feature_ttl: 10m
+    dynamic_feature_capacity: 1024
+    response_lookup_ttl: 15m
+  busy_backpressure:
+    enabled: true
+    retry_delays:
+      - 5s
+      - 10s
+    probe_max_inflight: 1
+    short_retry_after_max: 3s
+    max_inline_wait: 8s
+```
+
+`sticky_sessions` 用来控制 Clipal 在内存里保留黏性线索的时间：
+
+- `explicit_ttl`：显式链路键，例如 OpenAI `previous_response_id`
+- `cache_hint_ttl`：缓存导向的显式 hint，例如 `prompt_cache_key`
+- `dynamic_feature_ttl`：根据人类消息历史提取的短期启发式黏性
+- `dynamic_feature_capacity`：动态 / cache-level 黏性缓存的容量上限，超出后按最近最少使用淘汰
+- `response_lookup_ttl`：response id 查询缓存的保留时间
+
+`busy_backpressure` 用来控制 Clipal 遇到并发限制类 `429` 时的处理方式：
+
+- `retry_delays`：overflow 之前的 inline wait / backoff 序列
+- `probe_max_inflight`：单个 busy provider 允许的恢复探测并发上限
+- `short_retry_after_max`：只有非常短的 retry hint 才会进入 busy 处理分支
+- `max_inline_wait`：单个请求在代理内等待的最长时间，超过后直接 overflow 到其他 provider
+
 ## 客户端配置
 
 三个客户端文件结构相同：

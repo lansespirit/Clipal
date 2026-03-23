@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/logger"
@@ -31,13 +33,15 @@ type streamResult struct {
 // committing headers, and streaming the body. It handles idle timeouts, circuit breaker recording,
 // and cleanup. It returns a terminal stream result so callers can distinguish a clean completion
 // from client disconnects and upstream aborts after the response has already been committed.
-func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.Response, originalReq *http.Request, attemptCtx context.Context, cancelAttempt context.CancelCauseFunc, index int, allow circuitAllowResult, onCommit func()) streamResult {
+func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.Response, originalReq *http.Request, attemptCtx context.Context, cancelAttempt context.CancelCauseFunc, index int, allow circuitAllowResult, onCommit func(), onSuccess func([]byte)) streamResult {
 	// Stream response to the client, with idle-timeout protection.
 	var idleTimer *time.Timer
 	if cp.upstreamIdle > 0 {
 		idleTimer = time.AfterFunc(cp.upstreamIdle, func() { cancelAttempt(errUpstreamIdleTimeout) })
 	}
 	tracker := newProtocolTracker(cp.clientType, originalReq, resp)
+	var capture bytes.Buffer
+	shouldCapture := !strings.Contains(strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type"))), "text/event-stream")
 
 	buf := make([]byte, 32*1024)
 	total := 0
@@ -47,6 +51,9 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 	}
 	total += firstN
 	tracker.append(buf[:firstN])
+	if shouldCapture && firstN > 0 && capture.Len() < protocolScanWindow {
+		_, _ = capture.Write(buf[:min(firstN, protocolScanWindow-capture.Len())])
+	}
 
 	if firstN == 0 && firstErr != nil {
 		_ = resp.Body.Close()
@@ -62,6 +69,9 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 			if protocol == protocolIncomplete {
 				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "protocol_incomplete")
 			} else {
+				if onSuccess != nil {
+					onSuccess(capture.Bytes())
+				}
 				cp.recordCircuitSuccess(time.Now(), index, allow.usedProbe)
 			}
 			cancelAttempt(nil)
@@ -133,6 +143,12 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 			}
 			total += nr
 			tracker.append(buf[:nr])
+			if shouldCapture && capture.Len() < protocolScanWindow {
+				limit := min(nr, protocolScanWindow-capture.Len())
+				if limit > 0 {
+					_, _ = capture.Write(buf[:limit])
+				}
+			}
 			if _, ew := fw.Write(buf[:nr]); ew != nil {
 				_ = resp.Body.Close()
 				stopTimer(idleTimer)
@@ -185,6 +201,9 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 		if protocol == protocolIncomplete {
 			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "protocol_incomplete")
 		} else {
+			if onSuccess != nil {
+				onSuccess(capture.Bytes())
+			}
 			cp.recordCircuitSuccess(time.Now(), index, allow.usedProbe)
 		}
 	} else if isUpstreamIdleTimeout(attemptCtx, copyErr) {
@@ -212,6 +231,13 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 		bytes:    total,
 		err:      copyErr,
 	}
+}
+
+func min(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 type flushWriter struct {

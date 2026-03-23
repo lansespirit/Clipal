@@ -9,12 +9,14 @@ import (
 )
 
 const maxRetryAfterCooldown = time.Hour
+const shortBusyRetryAfterMax = 3 * time.Second
 
 type failureAction int
 
 const (
 	failureReturnToClient failureAction = iota
 	failureRetryNext
+	failureBusyRetry
 	failureDeactivateAndRetryNext
 )
 
@@ -36,6 +38,11 @@ func classifyUpstreamFailure(status int, hdr http.Header, body []byte, truncated
 		switch action {
 		case failureDeactivateAndRetryNext:
 			return action, reason, snippet, 0
+		case failureBusyRetry:
+			if cooldown > 0 && cooldown <= shortBusyRetryAfterMax {
+				return action, reason, snippet, cooldown
+			}
+			return failureRetryNext, "rate_limit", snippet, cooldown
 		case failureRetryNext:
 			return action, reason, snippet, cooldown
 		default:
@@ -75,6 +82,10 @@ func classify429(body []byte) (action failureAction, reason string) {
 		return failureDeactivateAndRetryNext, "quota"
 	}
 
+	if hasConcurrencySignal(code, typ, msg) {
+		return failureBusyRetry, "busy"
+	}
+
 	// Soft failures: retry on next provider.
 	if inSet(code, "rate_limit_exceeded", "requests", "tokens") ||
 		inSet(typ, "rate_limit_exceeded", "rate_limit_error", "overloaded_error") ||
@@ -88,6 +99,18 @@ func classify429(body []byte) (action failureAction, reason string) {
 
 	// Default: treat as rate limit.
 	return failureRetryNext, "rate_limit"
+}
+
+func hasConcurrencySignal(code string, typ string, msg string) bool {
+	if strings.Contains(msg, "concurrent") ||
+		strings.Contains(msg, "capacity") ||
+		strings.Contains(msg, "too many active requests") {
+		return true
+	}
+	if inSet(code, "concurrency_limit_exceeded") || inSet(typ, "concurrency_error") {
+		return true
+	}
+	return false
 }
 
 func extractErrorFields(v any) (code string, typ string, msg string) {

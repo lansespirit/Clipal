@@ -80,6 +80,18 @@ type RequestOutcomeEvent struct {
 	Detail     string
 }
 
+type routingRuntimeSettings struct {
+	explicitTTL            time.Duration
+	cacheHintTTL           time.Duration
+	dynamicFeatureTTL      time.Duration
+	responseLookupTTL      time.Duration
+	dynamicFeatureCapacity int
+	busyRetryDelays        []time.Duration
+	busyProbeMaxInFlight   int
+	shortRetryAfterMax     time.Duration
+	maxInlineWait          time.Duration
+}
+
 // Router manages multiple client proxies
 type Router struct {
 	cfg        *config.Config
@@ -123,12 +135,17 @@ type ClientProxy struct {
 	httpClient           *http.Client
 	deactivated          []providerDeactivation
 	keyDeactivated       [][]providerDeactivation
+	providerBusy         []providerBusyState
 	reactivateAfter      time.Duration
 	upstreamIdle         time.Duration
 
-	breakers    []*circuitBreaker
-	lastSwitch  ProviderSwitchEvent
-	lastRequest RequestOutcomeEvent
+	stickyBindings         map[string]stickyBinding
+	responseLookup         map[string]stickyLookupEntry
+	dynamicFeatureBindings map[string]stickyLookupEntry
+	routing                routingRuntimeSettings
+	breakers               []*circuitBreaker
+	lastSwitch             ProviderSwitchEvent
+	lastRequest            RequestOutcomeEvent
 }
 
 // Close releases resources held by the ClientProxy.
@@ -146,6 +163,7 @@ func NewRouter(cfg *config.Config) *Router {
 		logger.Warn("invalid runtime durations; defaulting to reactivate_after=1h upstream_idle_timeout=3m response_header_timeout=2m: %v", err)
 	}
 	cbCfg := normalizeCircuitBreakerConfig(cfg.Global.CircuitBreaker)
+	routingCfg := routingRuntimeSettingsFromConfig(cfg.Global.Routing)
 	r := &Router{
 		cfg:        cfg,
 		configDir:  cfg.ConfigDir(),
@@ -158,16 +176,19 @@ func NewRouter(cfg *config.Config) *Router {
 	claudeProviders := config.GetEnabledProviders(cfg.ClaudeCode)
 	if len(claudeProviders) > 0 {
 		r.proxies[ClientClaudeCode] = newClientProxy(ClientClaudeCode, cfg.ClaudeCode.Mode, cfg.ClaudeCode.PinnedProvider, claudeProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientClaudeCode].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	codexProviders := config.GetEnabledProviders(cfg.Codex)
 	if len(codexProviders) > 0 {
 		r.proxies[ClientCodex] = newClientProxy(ClientCodex, cfg.Codex.Mode, cfg.Codex.PinnedProvider, codexProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientCodex].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	geminiProviders := config.GetEnabledProviders(cfg.Gemini)
 	if len(geminiProviders) > 0 {
 		r.proxies[ClientGemini] = newClientProxy(ClientGemini, cfg.Gemini.Mode, cfg.Gemini.PinnedProvider, geminiProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientGemini].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	return r
@@ -235,15 +256,20 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 			}
 			return 0
 		}(),
-		currentKeyIndex:      currentKeyIndex,
-		countTokensKeyIndex:  countTokensKeyIndex,
-		responsesKeyIndex:    responsesKeyIndex,
-		geminiStreamKeyIndex: geminiStreamKeyIndex,
-		deactivated:          make([]providerDeactivation, len(providers)),
-		keyDeactivated:       keyDeactivated,
-		reactivateAfter:      reactivateAfter,
-		upstreamIdle:         upstreamIdle,
-		breakers:             breakers,
+		currentKeyIndex:        currentKeyIndex,
+		countTokensKeyIndex:    countTokensKeyIndex,
+		responsesKeyIndex:      responsesKeyIndex,
+		geminiStreamKeyIndex:   geminiStreamKeyIndex,
+		deactivated:            make([]providerDeactivation, len(providers)),
+		keyDeactivated:         keyDeactivated,
+		providerBusy:           make([]providerBusyState, len(providers)),
+		reactivateAfter:        reactivateAfter,
+		upstreamIdle:           upstreamIdle,
+		stickyBindings:         make(map[string]stickyBinding),
+		responseLookup:         make(map[string]stickyLookupEntry),
+		dynamicFeatureBindings: make(map[string]stickyLookupEntry),
+		routing:                defaultRoutingRuntimeSettings(),
+		breakers:               breakers,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -260,6 +286,71 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 			},
 		},
 	}
+}
+
+func (cp *ClientProxy) applyRoutingRuntimeSettings(settings routingRuntimeSettings) {
+	if cp == nil {
+		return
+	}
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	cp.routing = settings
+}
+
+func defaultRoutingRuntimeSettings() routingRuntimeSettings {
+	return routingRuntimeSettings{
+		explicitTTL:            30 * time.Minute,
+		cacheHintTTL:           10 * time.Minute,
+		dynamicFeatureTTL:      10 * time.Minute,
+		responseLookupTTL:      15 * time.Minute,
+		dynamicFeatureCapacity: 1024,
+		busyRetryDelays:        []time.Duration{5 * time.Second, 10 * time.Second},
+		busyProbeMaxInFlight:   1,
+		shortRetryAfterMax:     shortBusyRetryAfterMax,
+		maxInlineWait:          8 * time.Second,
+	}
+}
+
+func routingRuntimeSettingsFromConfig(cfg config.RoutingConfig) routingRuntimeSettings {
+	out := defaultRoutingRuntimeSettings()
+
+	if d, err := time.ParseDuration(strings.TrimSpace(cfg.StickySessions.ExplicitTTL)); err == nil && d > 0 {
+		out.explicitTTL = d
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(cfg.StickySessions.CacheHintTTL)); err == nil && d > 0 {
+		out.cacheHintTTL = d
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(cfg.StickySessions.DynamicFeatureTTL)); err == nil && d > 0 {
+		out.dynamicFeatureTTL = d
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(cfg.StickySessions.ResponseLookupTTL)); err == nil && d > 0 {
+		out.responseLookupTTL = d
+	}
+	if cfg.StickySessions.DynamicFeatureCapacity > 0 {
+		out.dynamicFeatureCapacity = cfg.StickySessions.DynamicFeatureCapacity
+	}
+	if cfg.BusyBackpressure.ProbeMaxInFlight > 0 {
+		out.busyProbeMaxInFlight = cfg.BusyBackpressure.ProbeMaxInFlight
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(cfg.BusyBackpressure.ShortRetryAfterMax)); err == nil && d > 0 {
+		out.shortRetryAfterMax = d
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(cfg.BusyBackpressure.MaxInlineWait)); err == nil && d > 0 {
+		out.maxInlineWait = d
+	}
+	if len(cfg.BusyBackpressure.RetryDelays) > 0 {
+		delays := make([]time.Duration, 0, len(cfg.BusyBackpressure.RetryDelays))
+		for _, raw := range cfg.BusyBackpressure.RetryDelays {
+			if d, err := time.ParseDuration(strings.TrimSpace(raw)); err == nil && d > 0 {
+				delays = append(delays, d)
+			}
+		}
+		if len(delays) > 0 {
+			out.busyRetryDelays = delays
+		}
+	}
+
+	return out
 }
 
 // Start starts the proxy server
@@ -491,13 +582,13 @@ func (r *Router) reloadProviderConfigsLocked() error {
 
 	newProxies := make(map[ClientType]*ClientProxy)
 	if ps := config.GetEnabledProviders(newCfg.ClaudeCode); len(ps) > 0 {
-		newProxies[ClientClaudeCode] = newReloadedClientProxy(ClientClaudeCode, newCfg.ClaudeCode.Mode, newCfg.ClaudeCode.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, oldProxies[ClientClaudeCode])
+		newProxies[ClientClaudeCode] = newReloadedClientProxy(ClientClaudeCode, newCfg.ClaudeCode.Mode, newCfg.ClaudeCode.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientClaudeCode])
 	}
 	if ps := config.GetEnabledProviders(newCfg.Codex); len(ps) > 0 {
-		newProxies[ClientCodex] = newReloadedClientProxy(ClientCodex, newCfg.Codex.Mode, newCfg.Codex.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, oldProxies[ClientCodex])
+		newProxies[ClientCodex] = newReloadedClientProxy(ClientCodex, newCfg.Codex.Mode, newCfg.Codex.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientCodex])
 	}
 	if ps := config.GetEnabledProviders(newCfg.Gemini); len(ps) > 0 {
-		newProxies[ClientGemini] = newReloadedClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, oldProxies[ClientGemini])
+		newProxies[ClientGemini] = newReloadedClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientGemini])
 	}
 
 	r.mu.Lock()
@@ -518,8 +609,9 @@ func (r *Router) reloadProviderConfigsLocked() error {
 	return nil
 }
 
-func newReloadedClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig, old *ClientProxy) *ClientProxy {
+func newReloadedClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig, routing routingRuntimeSettings, old *ClientProxy) *ClientProxy {
 	cp := newClientProxy(clientType, mode, pinnedProvider, providers, reactivateAfter, upstreamIdle, responseHeaderTimeout, cbCfg)
+	cp.applyRoutingRuntimeSettings(routing)
 	if old != nil {
 		cp.inheritRuntimeState(old)
 	}
@@ -553,8 +645,21 @@ func (cp *ClientProxy) inheritRuntimeState(old *ClientProxy) {
 			continue
 		}
 		cp.deactivated[newIdx] = old.deactivated[oldIdx]
+		cp.providerBusy[newIdx] = old.providerBusy[oldIdx]
 		inheritKeyState(cp, newIdx, old, oldIdx)
 		inheritBreakerState(cp.breakers[newIdx], old.breakers[oldIdx])
+	}
+
+	newByOldIndex := make(map[int]int, len(cp.providers))
+	for newIdx := range cp.providers {
+		oldIdx, ok := oldByName[cp.providers[newIdx].Name]
+		if !ok {
+			continue
+		}
+		if !sameProviderRuntimeIdentity(cp.providers[newIdx], old.providers[oldIdx]) {
+			continue
+		}
+		newByOldIndex[oldIdx] = newIdx
 	}
 
 	if oldCurrentProvider != "" && cp.mode != config.ClientModeManual {
@@ -580,6 +685,7 @@ func (cp *ClientProxy) inheritRuntimeState(old *ClientProxy) {
 
 	cp.lastSwitch = old.lastSwitch
 	cp.lastRequest = old.lastRequest
+	inheritStickyRuntimeState(cp, old, newByOldIndex)
 }
 
 func inheritKeyState(dst *ClientProxy, dstProviderIndex int, src *ClientProxy, srcProviderIndex int) {
@@ -646,6 +752,47 @@ func inheritBreakerState(dst *circuitBreaker, src *circuitBreaker) {
 	dst.consecutiveSuccesses = src.consecutiveSuccesses
 	dst.openedAt = src.openedAt
 	dst.halfOpenInFlight = src.halfOpenInFlight
+}
+
+func inheritStickyRuntimeState(dst *ClientProxy, src *ClientProxy, indexMap map[int]int) {
+	if dst == nil || src == nil {
+		return
+	}
+	now := time.Now()
+
+	for key, binding := range src.stickyBindings {
+		newIndex, ok := indexMap[binding.ProviderIndex]
+		if !ok {
+			continue
+		}
+		binding.ProviderIndex = newIndex
+		if binding.LastSeenAt.IsZero() {
+			binding.LastSeenAt = now
+		}
+		dst.stickyBindings[key] = binding
+	}
+	for key, entry := range src.responseLookup {
+		newIndex, ok := indexMap[entry.ProviderIndex]
+		if !ok {
+			continue
+		}
+		entry.ProviderIndex = newIndex
+		if entry.LastSeenAt.IsZero() {
+			entry.LastSeenAt = now
+		}
+		dst.responseLookup[key] = entry
+	}
+	for key, entry := range src.dynamicFeatureBindings {
+		newIndex, ok := indexMap[entry.ProviderIndex]
+		if !ok {
+			continue
+		}
+		entry.ProviderIndex = newIndex
+		if entry.LastSeenAt.IsZero() {
+			entry.LastSeenAt = now
+		}
+		dst.dynamicFeatureBindings[key] = entry
+	}
 }
 
 func sameProviderRuntimeIdentity(a, b config.Provider) bool {

@@ -97,6 +97,42 @@ circuit_breaker:
 | `open_timeout` | duration | `60s` | How long the circuit stays open before probing again |
 | `half_open_max_inflight` | int | `1` | Max concurrent half-open probes |
 
+### `routing`
+
+```yaml
+routing:
+  sticky_sessions:
+    enabled: true
+    explicit_ttl: 30m
+    cache_hint_ttl: 10m
+    dynamic_feature_ttl: 10m
+    dynamic_feature_capacity: 1024
+    response_lookup_ttl: 15m
+  busy_backpressure:
+    enabled: true
+    retry_delays:
+      - 5s
+      - 10s
+    probe_max_inflight: 1
+    short_retry_after_max: 3s
+    max_inline_wait: 8s
+```
+
+`sticky_sessions` controls how long Clipal keeps affinity hints in memory:
+
+- `explicit_ttl`: durable linkage keys such as OpenAI `previous_response_id`
+- `cache_hint_ttl`: cache-oriented hints such as `prompt_cache_key`
+- `dynamic_feature_ttl`: short-lived heuristic bindings derived from human-message history
+- `dynamic_feature_capacity`: max in-memory dynamic/cache-level entries before least-recently-used eviction
+- `response_lookup_ttl`: response-id lookup cache lifetime
+
+`busy_backpressure` controls how Clipal reacts to concurrency-limit `429` responses:
+
+- `retry_delays`: inline wait/backoff schedule before overflow
+- `probe_max_inflight`: max concurrent recovery probes allowed per busy provider
+- `short_retry_after_max`: only very short retry hints are eligible for busy handling
+- `max_inline_wait`: hard cap for how long Clipal holds one request before overflowing to another provider
+
 ## Client Configs
 
 All three client files share the same structure:

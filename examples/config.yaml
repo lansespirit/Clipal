@@ -33,6 +33,24 @@ circuit_breaker:
   open_timeout: 60s
   half_open_max_inflight: 1
 
+# Sticky routing and busy backpressure
+routing:
+  sticky_sessions:
+    enabled: true
+    explicit_ttl: 30m
+    cache_hint_ttl: 10m
+    dynamic_feature_ttl: 10m
+    dynamic_feature_capacity: 1024
+    response_lookup_ttl: 15m
+  busy_backpressure:
+    enabled: true
+    retry_delays:
+      - 5s
+      - 10s
+    probe_max_inflight: 1
+    short_retry_after_max: 3s
+    max_inline_wait: 8s
+
 # Desktop notifications (best-effort, cross-platform via beeep)
 # notifications:
 #   enabled: false

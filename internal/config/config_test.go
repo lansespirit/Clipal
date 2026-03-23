@@ -313,6 +313,111 @@ func TestGlobalConfigRuntimeDurations_ErrorsAndBoundaryValues(t *testing.T) {
 	}
 }
 
+func TestDefaultGlobalConfig_IncludesRoutingDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultGlobalConfig()
+
+	if !cfg.Routing.StickySessions.Enabled {
+		t.Fatalf("sticky_sessions.enabled: got false want true")
+	}
+	if got := cfg.Routing.StickySessions.ExplicitTTL; got != "30m" {
+		t.Fatalf("sticky_sessions.explicit_ttl: got %q want %q", got, "30m")
+	}
+	if got := cfg.Routing.StickySessions.CacheHintTTL; got != "10m" {
+		t.Fatalf("sticky_sessions.cache_hint_ttl: got %q want %q", got, "10m")
+	}
+	if got := cfg.Routing.StickySessions.DynamicFeatureTTL; got != "10m" {
+		t.Fatalf("sticky_sessions.dynamic_feature_ttl: got %q want %q", got, "10m")
+	}
+	if got := cfg.Routing.StickySessions.DynamicFeatureCapacity; got != 1024 {
+		t.Fatalf("sticky_sessions.dynamic_feature_capacity: got %d want %d", got, 1024)
+	}
+	if got := cfg.Routing.StickySessions.ResponseLookupTTL; got != "15m" {
+		t.Fatalf("sticky_sessions.response_lookup_ttl: got %q want %q", got, "15m")
+	}
+	if !cfg.Routing.BusyBackpressure.Enabled {
+		t.Fatalf("busy_backpressure.enabled: got false want true")
+	}
+	if got := cfg.Routing.BusyBackpressure.RetryDelays; len(got) != 2 || got[0] != "5s" || got[1] != "10s" {
+		t.Fatalf("busy_backpressure.retry_delays: got %#v want [5s 10s]", got)
+	}
+	if got := cfg.Routing.BusyBackpressure.ProbeMaxInFlight; got != 1 {
+		t.Fatalf("busy_backpressure.probe_max_inflight: got %d want %d", got, 1)
+	}
+	if got := cfg.Routing.BusyBackpressure.ShortRetryAfterMax; got != "3s" {
+		t.Fatalf("busy_backpressure.short_retry_after_max: got %q want %q", got, "3s")
+	}
+	if got := cfg.Routing.BusyBackpressure.MaxInlineWait; got != "8s" {
+		t.Fatalf("busy_backpressure.max_inline_wait: got %q want %q", got, "8s")
+	}
+}
+
+func TestValidate_RoutingConfigRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{
+			name: "empty retry delays",
+			mutate: func(cfg *Config) {
+				cfg.Global.Routing.BusyBackpressure.RetryDelays = nil
+			},
+			wantErr: "routing.busy_backpressure.retry_delays",
+		},
+		{
+			name: "bad explicit ttl",
+			mutate: func(cfg *Config) {
+				cfg.Global.Routing.StickySessions.ExplicitTTL = "bad"
+			},
+			wantErr: "routing.sticky_sessions.explicit_ttl",
+		},
+		{
+			name: "non positive dynamic feature capacity",
+			mutate: func(cfg *Config) {
+				cfg.Global.Routing.StickySessions.DynamicFeatureCapacity = 0
+			},
+			wantErr: "routing.sticky_sessions.dynamic_feature_capacity",
+		},
+		{
+			name: "negative probe inflight",
+			mutate: func(cfg *Config) {
+				cfg.Global.Routing.BusyBackpressure.ProbeMaxInFlight = -1
+			},
+			wantErr: "routing.busy_backpressure.probe_max_inflight",
+		},
+		{
+			name: "bad max inline wait",
+			mutate: func(cfg *Config) {
+				cfg.Global.Routing.BusyBackpressure.MaxInlineWait = "later"
+			},
+			wantErr: "routing.busy_backpressure.max_inline_wait",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{
+				Global:     DefaultGlobalConfig(),
+				ClaudeCode: ClientConfig{Mode: ClientModeAuto},
+				Codex:      ClientConfig{Mode: ClientModeAuto},
+				Gemini:     ClientConfig{Mode: ClientModeAuto},
+			}
+			tt.mutate(cfg)
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestCircuitBreakerOpenTimeoutDuration_InvalidString(t *testing.T) {
 	t.Parallel()
 

@@ -48,6 +48,28 @@ type CircuitBreakerConfig struct {
 	HalfOpenMaxInFlight int `yaml:"half_open_max_inflight"`
 }
 
+type StickySessionsConfig struct {
+	Enabled                bool   `yaml:"enabled"`
+	ExplicitTTL            string `yaml:"explicit_ttl"`
+	CacheHintTTL           string `yaml:"cache_hint_ttl"`
+	DynamicFeatureTTL      string `yaml:"dynamic_feature_ttl"`
+	DynamicFeatureCapacity int    `yaml:"dynamic_feature_capacity"`
+	ResponseLookupTTL      string `yaml:"response_lookup_ttl"`
+}
+
+type BusyBackpressureConfig struct {
+	Enabled            bool     `yaml:"enabled"`
+	RetryDelays        []string `yaml:"retry_delays"`
+	ProbeMaxInFlight   int      `yaml:"probe_max_inflight"`
+	ShortRetryAfterMax string   `yaml:"short_retry_after_max"`
+	MaxInlineWait      string   `yaml:"max_inline_wait"`
+}
+
+type RoutingConfig struct {
+	StickySessions   StickySessionsConfig   `yaml:"sticky_sessions"`
+	BusyBackpressure BusyBackpressureConfig `yaml:"busy_backpressure"`
+}
+
 // OpenTimeoutDuration parses the configured circuit breaker timeout.
 func (c CircuitBreakerConfig) OpenTimeoutDuration() (time.Duration, error) {
 	d, err := time.ParseDuration(strings.TrimSpace(c.OpenTimeout))
@@ -76,6 +98,7 @@ type GlobalConfig struct {
 	LogStdout             *bool                `yaml:"log_stdout"`
 	Notifications         NotificationsConfig  `yaml:"notifications"`
 	CircuitBreaker        CircuitBreakerConfig `yaml:"circuit_breaker"`
+	Routing               RoutingConfig        `yaml:"routing"`
 	// Deprecated: retained only so older config.yaml files still load under
 	// strict KnownFields decoding. Runtime no longer reads this field.
 	IgnoreCountTokensFailover bool `yaml:"ignore_count_tokens_failover"`
@@ -197,6 +220,23 @@ func DefaultGlobalConfig() GlobalConfig {
 			SuccessThreshold:    2,
 			OpenTimeout:         "60s",
 			HalfOpenMaxInFlight: 1,
+		},
+		Routing: RoutingConfig{
+			StickySessions: StickySessionsConfig{
+				Enabled:                true,
+				ExplicitTTL:            "30m",
+				CacheHintTTL:           "10m",
+				DynamicFeatureTTL:      "10m",
+				DynamicFeatureCapacity: 1024,
+				ResponseLookupTTL:      "15m",
+			},
+			BusyBackpressure: BusyBackpressureConfig{
+				Enabled:            true,
+				RetryDelays:        []string{"5s", "10s"},
+				ProbeMaxInFlight:   1,
+				ShortRetryAfterMax: "3s",
+				MaxInlineWait:      "8s",
+			},
 		},
 	}
 }
@@ -412,6 +452,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := validateRoutingConfig(c.Global.Routing); err != nil {
+		return err
+	}
+
 	if err := validateClientConfig("claude-code", c.ClaudeCode); err != nil {
 		return err
 	}
@@ -491,6 +535,56 @@ func validateProviders(clientName string, providers []Provider) error {
 		if p.Priority < 1 {
 			return fmt.Errorf("%s provider %s: priority must be >= 1", clientName, p.Name)
 		}
+	}
+	return nil
+}
+
+func validateRoutingConfig(rc RoutingConfig) error {
+	if rc.StickySessions.Enabled {
+		if err := validatePositiveDuration("routing.sticky_sessions.explicit_ttl", rc.StickySessions.ExplicitTTL); err != nil {
+			return err
+		}
+		if err := validatePositiveDuration("routing.sticky_sessions.cache_hint_ttl", rc.StickySessions.CacheHintTTL); err != nil {
+			return err
+		}
+		if err := validatePositiveDuration("routing.sticky_sessions.dynamic_feature_ttl", rc.StickySessions.DynamicFeatureTTL); err != nil {
+			return err
+		}
+		if err := validatePositiveDuration("routing.sticky_sessions.response_lookup_ttl", rc.StickySessions.ResponseLookupTTL); err != nil {
+			return err
+		}
+		if rc.StickySessions.DynamicFeatureCapacity <= 0 {
+			return fmt.Errorf("invalid routing.sticky_sessions.dynamic_feature_capacity: %d", rc.StickySessions.DynamicFeatureCapacity)
+		}
+	}
+
+	if rc.BusyBackpressure.Enabled {
+		if len(rc.BusyBackpressure.RetryDelays) == 0 {
+			return fmt.Errorf("invalid routing.busy_backpressure.retry_delays: empty")
+		}
+		for i, delay := range rc.BusyBackpressure.RetryDelays {
+			if err := validatePositiveDuration(fmt.Sprintf("routing.busy_backpressure.retry_delays[%d]", i), delay); err != nil {
+				return err
+			}
+		}
+		if rc.BusyBackpressure.ProbeMaxInFlight < 0 {
+			return fmt.Errorf("invalid routing.busy_backpressure.probe_max_inflight: %d", rc.BusyBackpressure.ProbeMaxInFlight)
+		}
+		if err := validatePositiveDuration("routing.busy_backpressure.short_retry_after_max", rc.BusyBackpressure.ShortRetryAfterMax); err != nil {
+			return err
+		}
+		if err := validatePositiveDuration("routing.busy_backpressure.max_inline_wait", rc.BusyBackpressure.MaxInlineWait); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validatePositiveDuration(field string, value string) error {
+	d, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || d <= 0 {
+		return fmt.Errorf("invalid %s: %s", field, value)
 	}
 	return nil
 }

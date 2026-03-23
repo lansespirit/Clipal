@@ -98,6 +98,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		return
 	}
 	scope := routingScopeForRequest(req)
+	requestCtx, _ := requestContextFromRequest(req)
 
 	cp.reactivateExpired()
 
@@ -121,6 +122,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		return
 	}
 	defer func() { _ = req.Body.Close() }()
+	requestKey := extractRequestStickyKey(requestCtx, bodyBytes)
 
 	// Atomically get active count and start index to avoid TOCTOU race.
 	active, startIndex := cp.getActiveCountAndStartIndexForScope(scope)
@@ -138,6 +140,15 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		writeProxyError(w, "All providers are unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if preferredIndex, preferredKeyIndex, ok := cp.resolveStickyProvider(scope, requestKey, time.Now()); ok {
+		if !cp.isDeactivated(preferredIndex) && cp.activeKeyCount(preferredIndex) > 0 {
+			startIndex = preferredIndex
+			if preferredKeyIndex >= 0 {
+				cp.setCurrentKeyIndexForScope(preferredIndex, preferredKeyIndex, scope)
+			}
+		}
+	}
+	preferredIndex := startIndex
 
 	attempted := 0
 	lastSwitchReason := ""
@@ -171,9 +182,27 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		logger.Debug("[%s] forwarding to: %s (attempt %d/%d, keys=%d)", cp.clientType, provider.Name, attempted, active, len(cp.providerKeys[index]))
 
 		providerFailed := false
+		busyRetried := false
+		busyProbeHeld := false
 		keyExhausted := false
 		keyExhaustedReason := ""
 		keyExhaustedStatus := 0
+		if wait, ok := cp.providerBusyWait(index, time.Now()); ok {
+			if index != preferredIndex || wait > cp.routing.maxInlineWait {
+				cp.releaseCircuitPermit(index, allow.usedProbe)
+				continue
+			}
+			if !waitInline(req.Context(), wait) {
+				cp.releaseCircuitPermit(index, allow.usedProbe)
+				return
+			}
+			if !cp.acquireProviderBusyProbe(index) {
+				cp.releaseCircuitPermit(index, allow.usedProbe)
+				continue
+			}
+			busyProbeHeld = true
+			busyRetried = true
+		}
 
 		for keyOffset, keyTried := 0, 0; keyOffset < len(cp.providerKeys[index]) && keyTried < keyActive; keyOffset++ {
 			keyIndex := (keyStart + keyOffset) % len(cp.providerKeys[index])
@@ -191,6 +220,10 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 				attemptSummaries = append(attemptSummaries, summary)
 				lastFailedProvider = provider.Name
 				logger.Error("[%s] %s", cp.clientType, summary)
+				if busyProbeHeld {
+					cp.releaseProviderBusyProbe(index)
+					busyProbeHeld = false
+				}
 				cp.releaseCircuitPermit(index, allow.usedProbe)
 				cancelAttempt(nil)
 				providerFailed = true
@@ -205,9 +238,17 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 			resp, err := cp.httpClient.Do(proxyReq)
 			if err != nil {
 				if req.Context().Err() != nil {
+					if busyProbeHeld {
+						cp.releaseProviderBusyProbe(index)
+						busyProbeHeld = false
+					}
 					cp.releaseCircuitPermit(index, allow.usedProbe)
 					cancelAttempt(nil)
 					return
+				}
+				if busyProbeHeld {
+					cp.releaseProviderBusyProbe(index)
+					busyProbeHeld = false
 				}
 				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
 				cancelAttempt(nil)
@@ -254,6 +295,41 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 				lastFailedProvider = provider.Name
 				summary := describeAttemptFailure(provider.Name, reason, resp.StatusCode, false)
 				attemptSummaries = append(attemptSummaries, summary)
+				if action == failureBusyRetry {
+					if busyProbeHeld {
+						cp.releaseProviderBusyProbe(index)
+						busyProbeHeld = false
+					}
+					cp.releaseCircuitPermit(index, allow.usedProbe)
+					step, wait := cp.nextBusyBackoff(index)
+					cp.markProviderBusy(index, reason, step, time.Now(), wait)
+					if index == preferredIndex && !busyRetried && wait > 0 && wait <= cp.routing.maxInlineWait {
+						if !waitInline(req.Context(), wait) {
+							return
+						}
+						if cp.acquireProviderBusyProbe(index) {
+							busyProbeHeld = true
+							busyRetried = true
+							// Reset the inner key loop; the `for` post statement will
+							// increment keyOffset back to 0 before the next iteration.
+							keyOffset = -1
+							keyTried = 0
+							continue
+						}
+					}
+					lastSwitchReason = reason
+					lastSwitchStatus = resp.StatusCode
+					nextIndex, nextName := nextProviderName(cp, index)
+					if nextName != "" {
+						logger.Warn("[%s] %s; provider busy, overflowing to next=%s", cp.clientType, summary, nextName)
+						cp.announceProviderSwitch(provider.Name, nextName, lastSwitchReason, lastSwitchStatus)
+					} else {
+						logger.Warn("[%s] %s; provider busy, trying next provider", cp.clientType, summary)
+					}
+					cp.setCurrentIndexForScope(nextIndex, scope)
+					providerFailed = true
+					break
+				}
 				if isKeyScopedFailure(reason) {
 					d := keyFailureDuration(reason, cooldown, cp.reactivateAfter)
 					if d > 0 {
@@ -316,9 +392,20 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 				cp.setCurrentIndexForScope(index, scope)
 				cp.setCurrentKeyIndexForScope(index, keyIndex, scope)
 			}
+			onSuccess := func(responseBody []byte) {
+				if busyProbeHeld {
+					cp.releaseProviderBusyProbe(index)
+					busyProbeHeld = false
+				}
+				cp.clearProviderBusy(index)
+				cp.learnStickySuccess(scope, requestCtx, requestKey, bodyBytes, responseBody, index, keyIndex, time.Now())
+			}
 
-			result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit)
+			result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit, onSuccess)
 			if result.kind == streamFinal {
+				if result.delivery != deliveryCommittedComplete && busyProbeHeld {
+					cp.releaseProviderBusyProbe(index)
+				}
 				cp.logRequestResult(req, provider.Name, resp.StatusCode, result, false)
 				return
 			}
@@ -339,6 +426,10 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 				lastSwitchStatus = 0
 				lastFailedProvider = provider.Name
 				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "network")
+			}
+			if busyProbeHeld {
+				cp.releaseProviderBusyProbe(index)
+				busyProbeHeld = false
 			}
 			cancelAttempt(nil)
 			nextIndex, nextName := nextProviderName(cp, index)
@@ -391,6 +482,20 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		logger.Error("[%s] all providers failed", cp.clientType)
 	}
 	writeProxyError(w, "All providers failed", http.StatusServiceUnavailable)
+}
+
+func waitInline(ctx context.Context, wait time.Duration) bool {
+	if wait <= 0 {
+		return true
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // forwardCountTokensSingleShot forwards advisory count-token requests as a
