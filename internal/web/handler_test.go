@@ -71,8 +71,7 @@ func TestLocalOnly_APIStateChanging_RequiresUIHeader(t *testing.T) {
     "success_threshold": 2,
     "open_timeout": "60s",
     "half_open_max_inflight": 1
-  },
-  "ignore_count_tokens_failover": false
+  }
 }`)
 
 	req := httptest.NewRequest(http.MethodPut, "http://localhost/api/config/global/update", bytes.NewReader(body))

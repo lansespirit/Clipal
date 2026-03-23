@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,9 @@ func TestHandleGetGlobalConfig_ReturnsSnakeCase(t *testing.T) {
 	}
 	if v, ok := got["log_stdout"]; !ok || (v != true && v != false) {
 		t.Fatalf("expected log_stdout boolean, got %v (%T)", got["log_stdout"], got["log_stdout"])
+	}
+	if _, ok := got["ignore_count_tokens_failover"]; ok {
+		t.Fatalf("did not expect ignore_count_tokens_failover in response")
 	}
 }
 
@@ -169,8 +173,7 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
     "success_threshold": 2,
     "open_timeout": "60s",
     "half_open_max_inflight": 1
-  },
-  "ignore_count_tokens_failover": true
+  }
 }`)
 
 	req := httptest.NewRequest(http.MethodPut, "/api/config/global/update", bytes.NewReader(body))
@@ -193,9 +196,6 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
 	}
 	if cfg.Global.Notifications.ProviderSwitch == nil || *cfg.Global.Notifications.ProviderSwitch {
 		t.Fatalf("expected notifications.provider_switch=false, got %v", cfg.Global.Notifications.ProviderSwitch)
-	}
-	if !cfg.Global.IgnoreCountTokensFailover {
-		t.Fatalf("expected ignore_count_tokens_failover=true")
 	}
 }
 
@@ -543,6 +543,9 @@ providers:
 	if codex["provider_count"] != float64(2) {
 		t.Fatalf("codex status=%#v", codex)
 	}
+	if _, ok := codex["current_providers"].(map[string]any); !ok {
+		t.Fatalf("codex current_providers=%T %#v", codex["current_providers"], codex["current_providers"])
+	}
 }
 
 func TestReorderProviders_PreservesUnmentioned_AndRejectsUnknown(t *testing.T) {
@@ -615,6 +618,88 @@ func TestBuildClientStatus_IncludesLastRequestOutcome(t *testing.T) {
 	}
 	if got.LastRequest.Detail == "" {
 		t.Fatalf("expected last_request.detail to be populated")
+	}
+}
+
+func TestBuildClientStatus_ReflectsLastRequestCapability(t *testing.T) {
+	cc := config.ClientConfig{
+		Mode: config.ClientModeAuto,
+		Providers: []config.Provider{
+			{Name: "p1", Priority: 1},
+		},
+	}
+	now := time.Date(2026, 3, 18, 16, 32, 24, 0, time.UTC)
+	lastRequest := &proxy.RequestOutcomeEvent{
+		At:       now,
+		Provider: "p1",
+		Status:   200,
+		Delivery: "committed_complete",
+		Protocol: "completed",
+		Bytes:    123,
+	}
+	inputField := reflect.ValueOf(lastRequest).Elem().FieldByName("Capability")
+	if !inputField.IsValid() {
+		t.Fatalf("expected RequestOutcomeEvent to expose Capability")
+	}
+	inputField.SetString("openai_responses")
+
+	rt := proxy.ClientRuntimeSnapshot{
+		CurrentProvider: "p1",
+		LastRequest:     lastRequest,
+	}
+
+	got := buildClientStatus(cc, cc.Providers, rt)
+	if got.LastRequest == nil {
+		t.Fatalf("expected last_request to be populated")
+	}
+
+	outputField := reflect.ValueOf(*got.LastRequest).FieldByName("Capability")
+	if !outputField.IsValid() {
+		t.Fatalf("expected RequestOutcomeStatus to expose Capability")
+	}
+	if gotCapability := outputField.String(); gotCapability != "openai_responses" {
+		t.Fatalf("last_request.capability: got %q want %q", gotCapability, "openai_responses")
+	}
+}
+
+func TestBuildClientStatus_HidesCountTokensCapabilityFromUserFacingStatus(t *testing.T) {
+	cc := config.ClientConfig{
+		Mode: config.ClientModeAuto,
+		Providers: []config.Provider{
+			{Name: "p1", Priority: 1},
+		},
+	}
+	now := time.Date(2026, 3, 18, 16, 32, 24, 0, time.UTC)
+	lastRequest := &proxy.RequestOutcomeEvent{
+		At:       now,
+		Provider: "p1",
+		Status:   200,
+		Delivery: "committed_complete",
+		Protocol: "completed",
+		Bytes:    64,
+	}
+	inputField := reflect.ValueOf(lastRequest).Elem().FieldByName("Capability")
+	if !inputField.IsValid() {
+		t.Fatalf("expected RequestOutcomeEvent to expose Capability")
+	}
+	inputField.SetString("claude_count_tokens")
+
+	rt := proxy.ClientRuntimeSnapshot{
+		CurrentProvider: "p1",
+		LastRequest:     lastRequest,
+	}
+
+	got := buildClientStatus(cc, cc.Providers, rt)
+	if got.LastRequest == nil {
+		t.Fatalf("expected last_request to be populated")
+	}
+
+	outputField := reflect.ValueOf(*got.LastRequest).FieldByName("Capability")
+	if !outputField.IsValid() {
+		t.Fatalf("expected RequestOutcomeStatus to expose Capability")
+	}
+	if gotCapability := outputField.String(); gotCapability != "" {
+		t.Fatalf("last_request.capability: got %q want empty", gotCapability)
 	}
 }
 
@@ -772,6 +857,38 @@ func TestBuildClientStatus_ReportsNoAvailableKeys(t *testing.T) {
 	}
 	if got.Providers[0].AvailableKeyCount != 0 {
 		t.Fatalf("provider.available_key_count: got %d want %d", got.Providers[0].AvailableKeyCount, 0)
+	}
+}
+
+func TestBuildClientStatus_ExposesScopeSpecificCurrentProviders(t *testing.T) {
+	cc := config.ClientConfig{
+		Mode: config.ClientModeAuto,
+		Providers: []config.Provider{
+			{Name: "p1", Priority: 1},
+			{Name: "p2", Priority: 2},
+		},
+	}
+	rt := proxy.ClientRuntimeSnapshot{
+		CurrentProvider: "p1",
+		CurrentProviders: map[string]string{
+			"default":                        "p1",
+			"openai_responses":               "p2",
+			"gemini_stream_generate_content": "p2",
+		},
+	}
+
+	got := buildClientStatus(cc, cc.Providers, rt)
+	if got.CurrentProvider != "p1" {
+		t.Fatalf("current_provider: got %q want %q", got.CurrentProvider, "p1")
+	}
+	if len(got.CurrentProviders) != 3 {
+		t.Fatalf("current_providers len: got %d want %d", len(got.CurrentProviders), 3)
+	}
+	if got.CurrentProviders["default"] != "p1" {
+		t.Fatalf("current_providers[default]: got %q want %q", got.CurrentProviders["default"], "p1")
+	}
+	if got.CurrentProviders["openai_responses"] != "p2" {
+		t.Fatalf("current_providers[openai_responses]: got %q want %q", got.CurrentProviders["openai_responses"], "p2")
 	}
 }
 

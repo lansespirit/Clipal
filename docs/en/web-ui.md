@@ -26,7 +26,6 @@ If you changed the port, replace `3333` with your actual port.
 - Change listen address and port
 - Change log level
 - Configure reactivation, timeouts, and request body limits
-- Configure `ignore_count_tokens_failover`
 - Configure the circuit breaker
 - Configure log directory, retention, and stdout output
 - Configure desktop notifications

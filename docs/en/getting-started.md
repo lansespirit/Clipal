@@ -81,7 +81,11 @@ http://127.0.0.1:3333/
 
 ## 5. Connect Your Client
 
-Clipal exposes three local route groups:
+Clipal standardizes client ingress on:
+
+- `/clipal`
+
+Compatibility aliases remain available for older setups:
 
 - `/claudecode`
 - `/codex`

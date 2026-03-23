@@ -2,172 +2,173 @@
 
 ## 主要风险
 
-## 风险 1：旧路由兼容回归
+### 风险 1：兼容入口被过度收紧
 
-### 描述
+#### 描述
 
-当前已有用户直接依赖：
+如果把 `/clipal` 的严格协议识别逻辑原样套到：
 
-- `/codex`
-- `/claudecode`
-- `/gemini`
+- `/claudecode/*`
+- `/codex/*`
+- `/gemini/*`
 
-如果统一入口改造影响旧别名处理，现有客户端会失效。
+会导致已有客户端使用的合法子路径被 404 拦掉。
 
-### 缓解
+#### 缓解
 
-- 旧入口长期保留
-- 旧入口内部只做前缀去除，不保留独立逻辑分支
-- 为旧入口增加回归测试
+- 区分 `/clipal` 与 compatibility alias 的处理策略
+- 为 alias 增加回归测试
+- 至少覆盖现有已知 OpenAI family endpoints
 
-## 风险 2：配置迁移误合并
+### 风险 2：配置边界再次漂移
 
-### 描述
+#### 描述
 
-旧三份配置可能存在：
+如果实现时又把 runtime 或 Web 层偷偷依赖统一 provider 投影，会再次出现：
 
-- 同名 provider 不同 base_url
-- 不同文件中相同 key 的重复或冲突
+- 权重混淆
+- key 池误合并
+- UI 与真实配置不一致
 
-自动迁移可能错误合并。
+#### 缓解
 
-### 缓解
+- 明确三份配置文件是唯一持久化真相
+- unified projection 不进入默认实现
+- code review 时重点检查 persistence path
 
-- 合并规则对 `base_url` 冲突保守处理
-- 提供迁移预览
-- 导出迁移结果供用户确认
+### 风险 3：legacy mode / pinned_provider 语义丢失
 
-## 风险 3：probe 误判
+#### 描述
 
-### 描述
+如果恢复分离配置时没有明确处理：
 
-某些 provider：
+- `mode`
+- `pinned_provider`
 
-- endpoint 行为不标准
-- models API 权限不足
-- 认证方式兼容但不完整
+老用户升级后会遇到静默行为变化。
 
-可能导致 probe 结果不稳定。
+#### 缓解
 
-### 缓解
+- 保持原语义
+- 或明确报错，不允许静默降级
+- 增加配置加载测试
 
-- 区分“未验证”“验证失败”“验证成功”
-- models probe 失败不应直接判定主协议不可用
-- 保留请求时按需惰性验证
+### 风险 4：runtime state 虽细化了 capability，但越过 pool 边界
 
-## 风险 4：同一 provider 不同协议状态相互污染
+#### 描述
 
-### 描述
+比如：
 
-如果 runtime state 仍残留旧设计，很容易出现：
+- OpenAI Responses 的失败影响了 Claude provider 选择
+- Gemini 的 circuit breaker 影响了 Codex 路由
 
-- OpenAI Responses 失败导致 Claude 也被判不可用
+#### 缓解
 
-### 缓解
+- runtime state 只能在 backend pool 内细化
+- reload state 继承按 pool 校验
+- 增加 cross-pool isolation 测试
 
-- 运行态键统一改为 `provider + protocol`
-- 测试覆盖 cross-protocol isolation
+### 风险 5：协议与鉴权方式被错误绑定
 
-## 风险 5：Web UI 心智切换过大
+#### 描述
 
-### 描述
+如果 adapter 把协议直接等同于固定 auth style，会让部分兼容网关无法接入。
 
-现有 UI 是三分组视图，统一 provider 后展示方式变化较大。
+#### 缓解
 
-### 缓解
+- 当前实现可保留常见默认值
+- 但必须预留 provider-level auth 扩展缝
+- 文档中明确兼容性边界
 
-- 第一版允许保留兼容视图
-- 新视图强调“provider 支持哪些协议”
-- 不暴露内部 variants 概念
+### 风险 6：Web UI 继续输出无意义的统一视图
 
-## 风险 6：未知自定义 provider 的真实 endpoint 不可自动推断
+#### 描述
 
-### 描述
+如果前端保留 unified provider 混排展示，用户会看到一个并不能帮助操作的界面，反而更难理解：
 
-用户只给一个 `base_url` 时，若实际不同协议需要不同 host，程序无法无损推断。
+- 这条 provider 属于哪组
+- 权重到底跟哪组比
+- 为什么同名 provider 会出现在多个协议里
 
-### 缓解
+#### 缓解
 
-- 常见 provider 用 preset 覆盖
-- 未知 provider 使用单 base_url 假设
-- 探测失败时给出明确提示
-- 必要时允许用户拆成多个 provider
+- Web UI 恢复三分组
+- 状态页按三组展示
+- 不保留统一混排视图
 
 ## 测试策略
 
-## 单元测试
+### 单元测试
 
-应新增或重构以下测试：
+至少覆盖：
 
-- 入站协议识别
-- 旧别名入口到统一链路的前缀处理
-- provider 合并与迁移
-- `protocols[]` 校验
-- capability cache 读写
-- 按 `provider + protocol` 的 key 轮转与 circuit breaker
+- `/clipal` 协议识别
+- compatibility alias 宽松透传
+- 分离配置加载与校验
+- manual / pinned_provider 保留
+- reload state 在各 pool 内继承
+- runtime state 隔离
+- adapter auth 注入边界
 
-## 集成测试
+### 集成测试
 
 至少覆盖：
 
 - `/clipal/v1/messages`
+- `/clipal/v1/messages/count_tokens`
 - `/clipal/v1/chat/completions`
 - `/clipal/v1/responses`
-- `/clipal/...gemini...`
-- `/codex/*` 旧兼容入口
-- `/claudecode/*` 旧兼容入口
-- `/gemini/*` 旧兼容入口
+- `/clipal/v1beta/models/...:generateContent`
+- `/codex/*` 兼容入口
+- `/claudecode/*` 兼容入口
+- `/gemini/*` 兼容入口
 
-## 手工验收场景
+### 手工验收场景
 
-### 场景 1：统一入口接 Claude
+#### 场景 1：统一入口接 Claude
 
 - 客户端指向 `/clipal`
 - 发 `/v1/messages`
-- 系统能正确识别为 `claude`
-- 路由到支持 Claude 的 provider
+- 系统识别为 Claude
+- 在 Claude pool 内完成路由
 
-### 场景 2：统一入口接 Codex Chat
-
-- 客户端指向 `/clipal`
-- 发 `/v1/chat/completions`
-- 系统识别为 `openai_chat`
-- 路由到支持 OpenAI Chat 的 provider
-
-### 场景 3：统一入口接 Codex Responses
+#### 场景 2：统一入口接 OpenAI Responses
 
 - 客户端指向 `/clipal`
 - 发 `/v1/responses`
-- 系统识别为 `openai_responses`
-- 路由到支持该协议的 provider
+- 系统识别为 OpenAI Responses
+- 在 Codex pool 内完成路由
 
-### 场景 4：provider 多 key 轮转
+#### 场景 3：兼容入口不被误伤
 
-- 同一 provider 下多个 key
-- 一个 key 429 或 401
-- 先切同 provider 的下一个 key
-- 再在必要时切 provider
+- 现有 `/codex/*` 客户端配置不改
+- 非最小白名单端点仍可继续工作
 
-### 场景 5：同 provider 不同协议隔离
+#### 场景 4：manual 模式保留
 
-- `provider A + openai_responses` 连续失败
-- `provider A + openai_chat` 仍可正常工作
+- 某组 backend 配置使用 `mode: manual`
+- 升级后仍保持 pinned provider 语义
 
-### 场景 6：旧入口兼容
+#### 场景 5：同组内 capability 隔离
 
-- 现有 `/codex`、`/claudecode`、`/gemini` 客户端配置不改
-- 行为与迁移前保持一致
+- `openai_responses` 连续失败
+- `openai_chat` 仍可工作
+- 但它们都仍属于 Codex backend pool
+
+#### 场景 6：UI 分组恢复
+
+- Web UI 继续展示 Claude / Codex / Gemini 三组
+- 用户无需理解统一 provider 视图
 
 ## 最终验收标准
 
-当以下条件全部满足时，可认为该重构完成：
+当以下条件都满足时，本轮修正才算完成：
 
-- `/clipal` 统一入口可稳定处理 Claude、OpenAI Chat、OpenAI Responses、Gemini 请求
-- 旧入口仍可工作
-- 用户侧 provider 配置不需要理解 variants
-- 用户侧 provider 配置不需要填写多个 base_url
-- 不引入模型 alias 和模型映射
-- capability cache 能正确显示协议支持状态
-- failover 粒度已切换为 `provider + protocol`
-- Web UI 可管理统一 provider 与协议支持
-- 文档、配置、运行时行为保持一致
+- `/clipal` 统一入口可稳定处理 Claude、OpenAI、Gemini 请求
+- `/claudecode`、`/codex`、`/gemini` 继续可用
+- `claude-code.yaml`、`codex.yaml`、`gemini.yaml` 继续是路由真相
+- mode / pinned_provider 不被静默丢失
+- 不同 backend pool 之间不共享 provider/key/weight 语义
+- Web UI 恢复三分组管理和展示
+- CLI status 恢复三分组展示
+- 文档、配置、运行时行为完全一致

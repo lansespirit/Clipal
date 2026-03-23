@@ -76,8 +76,8 @@ type GlobalConfig struct {
 	LogStdout             *bool                `yaml:"log_stdout"`
 	Notifications         NotificationsConfig  `yaml:"notifications"`
 	CircuitBreaker        CircuitBreakerConfig `yaml:"circuit_breaker"`
-	// IgnoreCountTokensFailover disables provider switching for Claude Code
-	// /v1/messages/count_tokens requests, which helps keep context cache warm.
+	// Deprecated: retained only so older config.yaml files still load under
+	// strict KnownFields decoding. Runtime no longer reads this field.
 	IgnoreCountTokensFailover bool `yaml:"ignore_count_tokens_failover"`
 }
 
@@ -198,8 +198,6 @@ func DefaultGlobalConfig() GlobalConfig {
 			OpenTimeout:         "60s",
 			HalfOpenMaxInFlight: 1,
 		},
-		// Keep existing behavior by default.
-		IgnoreCountTokensFailover: false,
 	}
 }
 

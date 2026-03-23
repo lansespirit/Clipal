@@ -105,9 +105,6 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 	writeBufferString(&b, fmt.Sprintf("log_retention_days: %d # default 7 days\n", gc.LogRetentionDays))
 	writeBufferString(&b, fmt.Sprintf("log_stdout: %v\n\n", boolPtrOrTrue(gc.LogStdout)))
 
-	writeBufferString(&b, "# Claude Code: if true, /v1/messages/count_tokens failures won't affect the main conversation provider.\n")
-	writeBufferString(&b, fmt.Sprintf("ignore_count_tokens_failover: %v\n\n", gc.IgnoreCountTokensFailover))
-
 	writeBufferString(&b, "# Circuit breaker (prevents repeated requests to unhealthy providers)\n")
 	writeBufferString(&b, "circuit_breaker:\n")
 	writeBufferString(&b, fmt.Sprintf("  failure_threshold: %d # consecutive failures before opening (set to 0 to disable)\n", gc.CircuitBreaker.FailureThreshold))

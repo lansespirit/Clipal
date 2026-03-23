@@ -8,19 +8,18 @@ import "github.com/lansespirit/Clipal/internal/config"
 
 // GlobalConfigRequest represents a request to update global configuration
 type GlobalConfigRequest struct {
-	ListenAddr                string                      `json:"listen_addr"`
-	Port                      int                         `json:"port"`
-	LogLevel                  string                      `json:"log_level"`
-	ReactivateAfter           string                      `json:"reactivate_after"`
-	UpstreamIdleTimeout       string                      `json:"upstream_idle_timeout"`
-	ResponseHeaderTimeout     string                      `json:"response_header_timeout"`
-	MaxRequestBodyBytes       int64                       `json:"max_request_body_bytes"`
-	LogDir                    string                      `json:"log_dir"`
-	LogRetentionDays          int                         `json:"log_retention_days"`
-	LogStdout                 *bool                       `json:"log_stdout"`
-	Notifications             NotificationsConfigRequest  `json:"notifications"`
-	CircuitBreaker            CircuitBreakerConfigRequest `json:"circuit_breaker"`
-	IgnoreCountTokensFailover bool                        `json:"ignore_count_tokens_failover"`
+	ListenAddr            string                      `json:"listen_addr"`
+	Port                  int                         `json:"port"`
+	LogLevel              string                      `json:"log_level"`
+	ReactivateAfter       string                      `json:"reactivate_after"`
+	UpstreamIdleTimeout   string                      `json:"upstream_idle_timeout"`
+	ResponseHeaderTimeout string                      `json:"response_header_timeout"`
+	MaxRequestBodyBytes   int64                       `json:"max_request_body_bytes"`
+	LogDir                string                      `json:"log_dir"`
+	LogRetentionDays      int                         `json:"log_retention_days"`
+	LogStdout             *bool                       `json:"log_stdout"`
+	Notifications         NotificationsConfigRequest  `json:"notifications"`
+	CircuitBreaker        CircuitBreakerConfigRequest `json:"circuit_breaker"`
 }
 
 type NotificationsConfigRequest struct {
@@ -38,19 +37,18 @@ type CircuitBreakerConfigRequest struct {
 
 // GlobalConfigResponse represents the global configuration returned to the UI.
 type GlobalConfigResponse struct {
-	ListenAddr                string                       `json:"listen_addr"`
-	Port                      int                          `json:"port"`
-	LogLevel                  string                       `json:"log_level"`
-	ReactivateAfter           string                       `json:"reactivate_after"`
-	UpstreamIdleTimeout       string                       `json:"upstream_idle_timeout"`
-	ResponseHeaderTimeout     string                       `json:"response_header_timeout"`
-	MaxRequestBodyBytes       int64                        `json:"max_request_body_bytes"`
-	LogDir                    string                       `json:"log_dir"`
-	LogRetentionDays          int                          `json:"log_retention_days"`
-	LogStdout                 bool                         `json:"log_stdout"`
-	Notifications             NotificationsConfigResponse  `json:"notifications"`
-	CircuitBreaker            CircuitBreakerConfigResponse `json:"circuit_breaker"`
-	IgnoreCountTokensFailover bool                         `json:"ignore_count_tokens_failover"`
+	ListenAddr            string                       `json:"listen_addr"`
+	Port                  int                          `json:"port"`
+	LogLevel              string                       `json:"log_level"`
+	ReactivateAfter       string                       `json:"reactivate_after"`
+	UpstreamIdleTimeout   string                       `json:"upstream_idle_timeout"`
+	ResponseHeaderTimeout string                       `json:"response_header_timeout"`
+	MaxRequestBodyBytes   int64                        `json:"max_request_body_bytes"`
+	LogDir                string                       `json:"log_dir"`
+	LogRetentionDays      int                          `json:"log_retention_days"`
+	LogStdout             bool                         `json:"log_stdout"`
+	Notifications         NotificationsConfigResponse  `json:"notifications"`
+	CircuitBreaker        CircuitBreakerConfigResponse `json:"circuit_breaker"`
 }
 
 type NotificationsConfigResponse struct {
@@ -139,9 +137,10 @@ type ClientStatus struct {
 	Mode           string `json:"mode"`
 	PinnedProvider string `json:"pinned_provider,omitempty"`
 
-	ProviderCount    int      `json:"provider_count"`
-	EnabledProviders []string `json:"enabled_providers"`
-	CurrentProvider  string   `json:"current_provider"`
+	ProviderCount    int               `json:"provider_count"`
+	EnabledProviders []string          `json:"enabled_providers"`
+	CurrentProvider  string            `json:"current_provider"`
+	CurrentProviders map[string]string `json:"current_providers,omitempty"`
 
 	LastSwitch  *ProviderSwitchStatus `json:"last_switch,omitempty"`
 	LastRequest *RequestOutcomeStatus `json:"last_request,omitempty"`
@@ -179,16 +178,17 @@ type ProviderStatus struct {
 }
 
 type RequestOutcomeStatus struct {
-	At       string `json:"at"`
-	Provider string `json:"provider"`
-	Status   int    `json:"status"`
-	Delivery string `json:"delivery"`
-	Protocol string `json:"protocol"`
-	Cause    string `json:"cause,omitempty"`
-	Bytes    int    `json:"bytes"`
-	Result   string `json:"result,omitempty"`
-	Label    string `json:"label,omitempty"`
-	Detail   string `json:"detail,omitempty"`
+	At         string `json:"at"`
+	Provider   string `json:"provider"`
+	Status     int    `json:"status"`
+	Delivery   string `json:"delivery"`
+	Protocol   string `json:"protocol"`
+	Capability string `json:"capability,omitempty"`
+	Cause      string `json:"cause,omitempty"`
+	Bytes      int    `json:"bytes"`
+	Result     string `json:"result,omitempty"`
+	Label      string `json:"label,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }
 
 // ErrorResponse represents an error response
@@ -256,7 +256,6 @@ func toGlobalConfigResponse(gc config.GlobalConfig) GlobalConfigResponse {
 			OpenTimeout:         gc.CircuitBreaker.OpenTimeout,
 			HalfOpenMaxInFlight: gc.CircuitBreaker.HalfOpenMaxInFlight,
 		},
-		IgnoreCountTokensFailover: gc.IgnoreCountTokensFailover,
 	}
 }
 

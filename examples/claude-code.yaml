@@ -1,5 +1,6 @@
 # Claude-style upstream providers
-# Used by requests sent to http://127.0.0.1:3333/claudecode
+# Preferred for Claude-style requests sent to http://127.0.0.1:3333/clipal
+# Legacy alias: http://127.0.0.1:3333/claudecode
 
 mode: auto # auto | manual
 pinned_provider: "" # required when mode=manual

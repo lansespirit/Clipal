@@ -26,10 +26,6 @@ response_header_timeout: 2m
 log_retention_days: 7 # 0 keeps logs forever; default 7 days
 log_stdout: false # recommended for long-running background service; runtime default is true
 
-# Claude Code only: if true, /v1/messages/count_tokens failures won't affect the
-# main conversation provider selection.
-ignore_count_tokens_failover: false
-
 # Circuit breaker (prevents repeated requests to unhealthy providers)
 circuit_breaker:
   failure_threshold: 4 # set to 0 to disable

@@ -25,15 +25,16 @@ It works well not only for Claude Code, Codex CLI, and Gemini CLI, but also for 
 
 ## Which Clients It Fits
 
-Clipal currently exposes three local route groups:
+Clipal now standardizes client ingress on a single local route:
 
 | Local endpoint | Typical use |
 |----------------|-------------|
-| `http://127.0.0.1:3333/claudecode` | Claude Code / Claude-style requests |
-| `http://127.0.0.1:3333/codex` | Codex CLI / OpenAI-compatible clients |
-| `http://127.0.0.1:3333/gemini` | Gemini CLI / Gemini-style requests |
+| `http://127.0.0.1:3333/clipal` | Preferred unified ingress for Claude-, OpenAI-, and Gemini-style requests |
+| `http://127.0.0.1:3333/claudecode` | Legacy Claude-compatible alias |
+| `http://127.0.0.1:3333/codex` | Legacy OpenAI-compatible alias |
+| `http://127.0.0.1:3333/gemini` | Legacy Gemini-compatible alias |
 
-If a desktop client supports a custom OpenAI-compatible Base URL, `/codex` is usually the first route to try. Full compatibility still depends on the client's request format and the upstream provider's compatibility layer. See [docs/en/client-setup.md](docs/en/client-setup.md).
+For new setups, point clients at `/clipal` first. The older aliases remain available for compatibility and phased migration. Full compatibility still depends on the client's request format and the upstream provider's compatibility layer. See [docs/en/client-setup.md](docs/en/client-setup.md).
 
 ## Quick Start
 
