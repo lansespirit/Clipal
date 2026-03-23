@@ -20,9 +20,24 @@ import (
 )
 
 var (
-	loggerSetLevelFunc  = logger.SetLevel
-	notifyConfigureFunc = notify.Configure
+	loggerSetLevelFunc    = logger.SetLevel
+	notifyConfigureFunc   = notify.Configure
+	detectAuthCarrierFunc = detectAuthCarrier
 )
+
+func registerExactAndSubtree(mux *http.ServeMux, path string, h http.HandlerFunc) {
+	if mux == nil || h == nil {
+		return
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	mux.HandleFunc(path, h)
+	if !strings.HasSuffix(path, "/") {
+		mux.HandleFunc(path+"/", h)
+	}
+}
 
 // ClientType represents the type of CLI client
 type ClientType string
@@ -41,16 +56,28 @@ type ProviderSwitchEvent struct {
 	Status int
 }
 
+type authCarrier string
+
+const (
+	authCarrierNone          authCarrier = "none"
+	authCarrierAuthorization authCarrier = "authorization"
+	authCarrierClaudeHeader  authCarrier = "x-api-key"
+	authCarrierGeminiHeader  authCarrier = "x-goog-api-key"
+	authCarrierQueryKey      authCarrier = "query:key"
+	authCarrierQueryAPIKey   authCarrier = "query:api_key"
+)
+
 type RequestOutcomeEvent struct {
-	At       time.Time
-	Provider string
-	Status   int
-	Delivery string
-	Protocol string
-	Cause    string
-	Bytes    int
-	Result   string
-	Detail   string
+	At         time.Time
+	Provider   string
+	Status     int
+	Delivery   string
+	Protocol   string
+	Capability string
+	Cause      string
+	Bytes      int
+	Result     string
+	Detail     string
 }
 
 // Router manages multiple client proxies
@@ -78,22 +105,26 @@ func (r *Router) ConfigSnapshot() *config.Config {
 
 // ClientProxy handles requests for a specific client type
 type ClientProxy struct {
-	clientType          ClientType
-	mode                config.ClientMode
-	pinnedProvider      string
-	pinnedIndex         int
-	providers           []config.Provider
-	providerKeys        [][]string
-	currentIndex        int
-	countTokensIndex    int
-	currentKeyIndex     []int
-	countTokensKeyIndex []int
-	mu                  sync.RWMutex
-	httpClient          *http.Client
-	deactivated         []providerDeactivation
-	keyDeactivated      [][]providerDeactivation
-	reactivateAfter     time.Duration
-	upstreamIdle        time.Duration
+	clientType           ClientType
+	mode                 config.ClientMode
+	pinnedProvider       string
+	pinnedIndex          int
+	providers            []config.Provider
+	providerKeys         [][]string
+	currentIndex         int
+	countTokensIndex     int
+	responsesIndex       int
+	geminiStreamIndex    int
+	currentKeyIndex      []int
+	countTokensKeyIndex  []int
+	responsesKeyIndex    []int
+	geminiStreamKeyIndex []int
+	mu                   sync.RWMutex
+	httpClient           *http.Client
+	deactivated          []providerDeactivation
+	keyDeactivated       [][]providerDeactivation
+	reactivateAfter      time.Duration
+	upstreamIdle         time.Duration
 
 	breakers    []*circuitBreaker
 	lastSwitch  ProviderSwitchEvent
@@ -162,6 +193,8 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 	providerKeys := make([][]string, len(providers))
 	currentKeyIndex := make([]int, len(providers))
 	countTokensKeyIndex := make([]int, len(providers))
+	responsesKeyIndex := make([]int, len(providers))
+	geminiStreamKeyIndex := make([]int, len(providers))
 	keyDeactivated := make([][]providerDeactivation, len(providers))
 	for i := range providers {
 		breakers[i] = newCircuitBreaker(cbCfg)
@@ -190,13 +223,27 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 			}
 			return 0
 		}(),
-		currentKeyIndex:     currentKeyIndex,
-		countTokensKeyIndex: countTokensKeyIndex,
-		deactivated:         make([]providerDeactivation, len(providers)),
-		keyDeactivated:      keyDeactivated,
-		reactivateAfter:     reactivateAfter,
-		upstreamIdle:        upstreamIdle,
-		breakers:            breakers,
+		responsesIndex: func() int {
+			if pinnedIndex >= 0 {
+				return pinnedIndex
+			}
+			return 0
+		}(),
+		geminiStreamIndex: func() int {
+			if pinnedIndex >= 0 {
+				return pinnedIndex
+			}
+			return 0
+		}(),
+		currentKeyIndex:      currentKeyIndex,
+		countTokensKeyIndex:  countTokensKeyIndex,
+		responsesKeyIndex:    responsesKeyIndex,
+		geminiStreamKeyIndex: geminiStreamKeyIndex,
+		deactivated:          make([]providerDeactivation, len(providers)),
+		keyDeactivated:       keyDeactivated,
+		reactivateAfter:      reactivateAfter,
+		upstreamIdle:         upstreamIdle,
+		breakers:             breakers,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -231,12 +278,10 @@ func (r *Router) Start(version string, webHandler interface{}) error {
 	}
 
 	// Proxy endpoints
-	mux.HandleFunc("/claudecode", r.handleRequest)
-	mux.HandleFunc("/claudecode/", r.handleRequest)
-	mux.HandleFunc("/codex", r.handleRequest)
-	mux.HandleFunc("/codex/", r.handleRequest)
-	mux.HandleFunc("/gemini", r.handleRequest)
-	mux.HandleFunc("/gemini/", r.handleRequest)
+	registerExactAndSubtree(mux, "/clipal", r.handleRequest)
+	registerExactAndSubtree(mux, "/claudecode", r.handleRequest)
+	registerExactAndSubtree(mux, "/codex", r.handleRequest)
+	registerExactAndSubtree(mux, "/gemini", r.handleRequest)
 	mux.HandleFunc("/health", r.handleHealth)
 
 	addr := net.JoinHostPort(r.cfg.Global.ListenAddr, strconv.Itoa(port))
@@ -491,6 +536,8 @@ func (cp *ClientProxy) inheritRuntimeState(old *ClientProxy) {
 
 	oldCurrentProvider := providerNameAtIndex(old.providers, old.currentIndex)
 	oldCountTokensProvider := providerNameAtIndex(old.providers, old.countTokensIndex)
+	oldResponsesProvider := providerNameAtIndex(old.providers, old.responsesIndex)
+	oldGeminiStreamProvider := providerNameAtIndex(old.providers, old.geminiStreamIndex)
 
 	oldByName := make(map[string]int, len(old.providers))
 	for i := range old.providers {
@@ -518,6 +565,16 @@ func (cp *ClientProxy) inheritRuntimeState(old *ClientProxy) {
 	if oldCountTokensProvider != "" && cp.mode != config.ClientModeManual {
 		if idx := providerIndexByName(cp.providers, oldCountTokensProvider); idx >= 0 {
 			cp.countTokensIndex = idx
+		}
+	}
+	if oldResponsesProvider != "" && cp.mode != config.ClientModeManual {
+		if idx := providerIndexByName(cp.providers, oldResponsesProvider); idx >= 0 {
+			cp.responsesIndex = idx
+		}
+	}
+	if oldGeminiStreamProvider != "" && cp.mode != config.ClientModeManual {
+		if idx := providerIndexByName(cp.providers, oldGeminiStreamProvider); idx >= 0 {
+			cp.geminiStreamIndex = idx
 		}
 	}
 
@@ -558,6 +615,14 @@ func inheritKeyState(dst *ClientProxy, dstProviderIndex int, src *ClientProxy, s
 		if srcProviderIndex < len(src.countTokensKeyIndex) &&
 			src.countTokensKeyIndex[srcProviderIndex] == srcKeyIndex {
 			dst.countTokensKeyIndex[dstProviderIndex] = dstKeyIndex
+		}
+		if srcProviderIndex < len(src.responsesKeyIndex) &&
+			src.responsesKeyIndex[srcProviderIndex] == srcKeyIndex {
+			dst.responsesKeyIndex[dstProviderIndex] = dstKeyIndex
+		}
+		if srcProviderIndex < len(src.geminiStreamKeyIndex) &&
+			src.geminiStreamKeyIndex[srcProviderIndex] == srcKeyIndex {
+			dst.geminiStreamKeyIndex[dstProviderIndex] = dstKeyIndex
 		}
 	}
 }
@@ -628,10 +693,15 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 	path := req.URL.Path
 
 	// Determine client type from path prefix
+	var requestCtx RequestContext
 	var clientType ClientType
 	var stripPrefix string
+	var clipalPath bool
 
 	switch {
+	case pathMatchesPrefix(path, "/clipal"):
+		clipalPath = true
+		stripPrefix = "/clipal"
 	case pathMatchesPrefix(path, "/claudecode"):
 		clientType = ClientClaudeCode
 		stripPrefix = "/claudecode"
@@ -643,13 +713,27 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 		stripPrefix = "/gemini"
 	default:
 		logger.Warn("unknown path prefix: %s", path)
-		writeProxyError(w, "Unknown endpoint. Use /claudecode, /codex, or /gemini", http.StatusNotFound)
+		writeProxyError(w, "Unknown endpoint. Use /clipal (preferred) or compatibility aliases /claudecode, /codex, /gemini", http.StatusNotFound)
 		return
 	}
 
+	newPath := stripClientPrefix(path, stripPrefix)
+	if clipalPath {
+		var ok bool
+		requestCtx, ok = detectClipalRequestContext(newPath)
+		if !ok {
+			logger.Warn("unknown /clipal protocol path: %s", newPath)
+			writeProxyError(w, "Unknown /clipal protocol endpoint", http.StatusNotFound)
+			return
+		}
+		clientType = requestCtx.ClientType
+	} else {
+		requestCtx = requestContextForClientPath(clientType, newPath, false)
+	}
+	req = withRequestContext(req, requestCtx)
+
 	r.mu.RLock()
 	proxy, exists := r.proxies[clientType]
-	ignoreCountTokensFailover := r.cfg.Global.IgnoreCountTokensFailover
 	maxBody := r.cfg.Global.MaxRequestBody
 	r.mu.RUnlock()
 
@@ -663,15 +747,12 @@ func (r *Router) handleRequest(w http.ResponseWriter, req *http.Request) {
 		req.Body = http.MaxBytesReader(w, req.Body, maxBody)
 	}
 
-	// Strip the prefix from the path
-	newPath := stripClientPrefix(path, stripPrefix)
-
 	logger.Debug("[%s] request received: %s %s", clientType, req.Method, newPath)
 
-	// Claude Code: treat count_tokens as best-effort to avoid provider switching,
-	// which can reduce context-cache effectiveness and increase token usage.
-	if clientType == ClientClaudeCode && ignoreCountTokensFailover && isClaudeCountTokensPath(newPath) {
-		proxy.forwardCountTokensWithFailover(w, req, newPath)
+	// Count token endpoints are lightweight advisory requests, so handle them as
+	// single-shot passthroughs that never mutate provider health state.
+	if requestCtx.Capability == CapabilityClaudeCountTokens || requestCtx.Capability == CapabilityGeminiCountTokens {
+		proxy.forwardCountTokensSingleShot(w, req, newPath)
 		return
 	}
 
@@ -710,17 +791,8 @@ func (cp *ClientProxy) createProxyRequest(original *http.Request, provider confi
 	// Add standard proxy headers
 	addForwardedHeaders(proxyReq, original)
 
-	// Set/override the API key based on the original header format
-	// Claude uses x-api-key or Authorization
-	// OpenAI uses Authorization: Bearer
 	if apiKey != "" {
-		// Check if original request uses x-api-key (Claude style)
-		if original.Header.Get("x-api-key") != "" {
-			proxyReq.Header.Set("x-api-key", apiKey)
-		} else {
-			// Default to Bearer token (OpenAI style)
-			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
+		applyProviderAPIKey(proxyReq, original, apiKey)
 	}
 
 	// Set content length
@@ -728,6 +800,93 @@ func (cp *ClientProxy) createProxyRequest(original *http.Request, provider confi
 	proxyReq.Header.Del("Content-Length")
 
 	return proxyReq, nil
+}
+
+func applyProviderAPIKey(proxyReq *http.Request, original *http.Request, apiKey string) {
+	if proxyReq == nil || original == nil || strings.TrimSpace(apiKey) == "" {
+		return
+	}
+
+	clearAuthCarriers(proxyReq)
+
+	switch detectAuthCarrierFunc(original) {
+	case authCarrierNone:
+		applyDefaultProviderAPIKey(proxyReq, original, apiKey)
+	case authCarrierClaudeHeader:
+		proxyReq.Header.Set("x-api-key", apiKey)
+	case authCarrierGeminiHeader:
+		proxyReq.Header.Set("x-goog-api-key", apiKey)
+	case authCarrierAuthorization:
+		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
+	case authCarrierQueryKey:
+		setAuthQueryValue(proxyReq, "key", apiKey)
+	case authCarrierQueryAPIKey:
+		setAuthQueryValue(proxyReq, "api_key", apiKey)
+	default:
+		// Defensive fallback: if a future or unknown auth carrier appears,
+		// fall back to the protocol family's default auth style.
+		applyDefaultProviderAPIKey(proxyReq, original, apiKey)
+	}
+}
+
+func applyDefaultProviderAPIKey(proxyReq *http.Request, original *http.Request, apiKey string) {
+	switch requestFamilyForAuth(original) {
+	case ProtocolFamilyClaude:
+		proxyReq.Header.Set("x-api-key", apiKey)
+	case ProtocolFamilyGemini:
+		proxyReq.Header.Set("x-goog-api-key", apiKey)
+	default:
+		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+}
+
+func clearAuthCarriers(proxyReq *http.Request) {
+	if proxyReq == nil {
+		return
+	}
+	proxyReq.Header.Del("Authorization")
+	proxyReq.Header.Del("x-api-key")
+	proxyReq.Header.Del("x-goog-api-key")
+	q := proxyReq.URL.Query()
+	q.Del("key")
+	q.Del("api_key")
+	proxyReq.URL.RawQuery = q.Encode()
+}
+
+func setAuthQueryValue(proxyReq *http.Request, key string, value string) {
+	if proxyReq == nil || proxyReq.URL == nil {
+		return
+	}
+	q := proxyReq.URL.Query()
+	q.Set(key, value)
+	proxyReq.URL.RawQuery = q.Encode()
+}
+
+func detectAuthCarrier(original *http.Request) authCarrier {
+	if original == nil {
+		return authCarrierAuthorization
+	}
+	switch {
+	case strings.TrimSpace(original.Header.Get("x-api-key")) != "":
+		return authCarrierClaudeHeader
+	case strings.TrimSpace(original.Header.Get("x-goog-api-key")) != "":
+		return authCarrierGeminiHeader
+	case strings.TrimSpace(original.Header.Get("Authorization")) != "":
+		return authCarrierAuthorization
+	case strings.TrimSpace(original.URL.Query().Get("key")) != "":
+		return authCarrierQueryKey
+	case strings.TrimSpace(original.URL.Query().Get("api_key")) != "":
+		return authCarrierQueryAPIKey
+	default:
+		return authCarrierNone
+	}
+}
+
+func requestFamilyForAuth(original *http.Request) ProtocolFamily {
+	if requestCtx, ok := requestContextFromRequest(original); ok {
+		return requestCtx.Family
+	}
+	return ""
 }
 
 // getCurrentIndex returns the current provider index

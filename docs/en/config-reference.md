@@ -64,7 +64,6 @@ providers:
 | `log_dir` | string | `<config-dir>/logs` | Log directory |
 | `log_retention_days` | int | `7` | Log retention days; `0` keeps logs forever; default is 7 days |
 | `log_stdout` | bool | `true` | Also log to stdout; long-running background setups usually prefer `false` |
-| `ignore_count_tokens_failover` | bool | `false` | Whether Claude Code `count_tokens` failures should avoid changing the main conversation provider |
 
 ### `notifications`
 

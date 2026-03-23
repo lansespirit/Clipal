@@ -25,15 +25,16 @@ Clipal 是一个本地 LLM API 反向代理与管理工具。
 
 ## 适合哪些客户端
 
-Clipal 当前内置三组本地路由：
+Clipal 现在将客户端入口统一规范到单一路由：
 
 | 本地入口 | 典型用途 |
 |----------|----------|
-| `http://127.0.0.1:3333/claudecode` | Claude Code / Claude 风格请求 |
-| `http://127.0.0.1:3333/codex` | Codex CLI / OpenAI 兼容客户端 |
-| `http://127.0.0.1:3333/gemini` | Gemini CLI / Gemini 风格请求 |
+| `http://127.0.0.1:3333/clipal` | 首选统一入口，接收 Claude / OpenAI / Gemini 风格请求 |
+| `http://127.0.0.1:3333/claudecode` | 兼容保留的 Claude 别名入口 |
+| `http://127.0.0.1:3333/codex` | 兼容保留的 OpenAI 别名入口 |
+| `http://127.0.0.1:3333/gemini` | 兼容保留的 Gemini 别名入口 |
 
-如果某个桌面客户端支持自定义 OpenAI 兼容 Base URL，通常优先尝试 `/codex`。是否完全可用，取决于该客户端的请求格式和你上游 provider 的兼容程度。常见接入方式见 [docs/zh/client-setup.md](docs/zh/client-setup.md)。
+新接入建议优先使用 `/clipal`。旧别名仍然保留，用于兼容现有配置和渐进迁移。是否完全可用，取决于客户端请求格式和上游 provider 的兼容程度。常见接入方式见 [docs/zh/client-setup.md](docs/zh/client-setup.md)。
 
 ## 快速开始
 

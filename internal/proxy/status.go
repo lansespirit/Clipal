@@ -21,9 +21,10 @@ type ClientRuntimeSnapshot struct {
 	Mode           string
 	PinnedProvider string
 
-	CurrentProvider string
-	LastSwitch      *ProviderSwitchEvent
-	LastRequest     *RequestOutcomeEvent
+	CurrentProvider  string
+	CurrentProviders map[string]string
+	LastSwitch       *ProviderSwitchEvent
+	LastRequest      *RequestOutcomeEvent
 
 	Providers []ProviderRuntimeSnapshot
 }
@@ -96,8 +97,9 @@ func (cp *ClientProxy) runtimeSnapshot(now time.Time) ClientRuntimeSnapshot {
 	}
 
 	return ClientRuntimeSnapshot{
-		Mode:           string(cp.mode),
-		PinnedProvider: cp.pinnedProvider,
+		Mode:             string(cp.mode),
+		PinnedProvider:   cp.pinnedProvider,
+		CurrentProviders: cp.currentProvidersSnapshotLocked(),
 		CurrentProvider: func() string {
 			if len(cp.providers) == 0 {
 				return ""
@@ -112,4 +114,29 @@ func (cp *ClientProxy) runtimeSnapshot(now time.Time) ClientRuntimeSnapshot {
 		LastRequest: lastRequest,
 		Providers:   providers,
 	}
+}
+
+func (cp *ClientProxy) currentProvidersSnapshotLocked() map[string]string {
+	if cp == nil || len(cp.providers) == 0 {
+		return nil
+	}
+
+	out := map[string]string{}
+	if name := providerNameAtIndex(cp.providers, cp.currentIndex); name != "" {
+		out["default"] = name
+	}
+	switch cp.clientType {
+	case ClientCodex:
+		if name := providerNameAtIndex(cp.providers, cp.responsesIndex); name != "" {
+			out[string(CapabilityOpenAIResponses)] = name
+		}
+	case ClientGemini:
+		if name := providerNameAtIndex(cp.providers, cp.geminiStreamIndex); name != "" {
+			out[string(CapabilityGeminiStreamGenerate)] = name
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

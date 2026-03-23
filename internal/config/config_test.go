@@ -30,6 +30,19 @@ func TestValidate_CircuitBreakerDisabled_AllowsInvalidCBFields(t *testing.T) {
 	}
 }
 
+func TestExampleConfig_DoesNotExposeDeprecatedIgnoreCountTokensFailover(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", "examples", "config.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+	if strings.Contains(string(data), "ignore_count_tokens_failover") {
+		t.Fatalf("example config should not expose deprecated ignore_count_tokens_failover")
+	}
+}
+
 func TestValidate_CircuitBreakerEnabled_StillValidatesCBFields(t *testing.T) {
 	t.Parallel()
 

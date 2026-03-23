@@ -79,3 +79,20 @@ func TestDescribeRequestOutcome_ExplicitFailure(t *testing.T) {
 		t.Fatalf("detail: got %q", view.Detail)
 	}
 }
+
+func TestDescribeRequestOutcome_AdvisoryRequestUnavailable(t *testing.T) {
+	view := DescribeRequestOutcome(RequestOutcomeEvent{
+		Result: "advisory_request_unavailable",
+		Detail: "The advisory request is temporarily unavailable. Primary traffic is unaffected.",
+	})
+
+	if view.Result != "advisory_request_unavailable" {
+		t.Fatalf("result: got %q want %q", view.Result, "advisory_request_unavailable")
+	}
+	if view.Label != "Advisory request unavailable" {
+		t.Fatalf("label: got %q want %q", view.Label, "Advisory request unavailable")
+	}
+	if !strings.Contains(view.Detail, "Primary traffic is unaffected") {
+		t.Fatalf("detail: got %q", view.Detail)
+	}
+}

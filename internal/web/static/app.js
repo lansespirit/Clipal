@@ -39,8 +39,7 @@ function app() {
                 success_threshold: 2,
                 open_timeout: '60s',
                 half_open_max_inflight: 1
-            },
-            ignore_count_tokens_failover: false
+            }
         },
         status: {
             version: '',
@@ -156,6 +155,32 @@ function app() {
 
         get themeLabel() {
             return this.theme.charAt(0).toUpperCase() + this.theme.slice(1);
+        },
+
+        scopeLabel(scope) {
+            const value = String(scope || '').trim();
+            switch (value) {
+                case 'default':
+                    return 'Default';
+                case 'openai_responses':
+                    return 'Responses';
+                case 'gemini_stream_generate_content':
+                    return 'Gemini stream';
+                default:
+                    return value;
+            }
+        },
+
+        scopeProviderEntries(client) {
+            const current = String((client && client.current_provider) || '').trim();
+            const providers = (client && client.current_providers) ? client.current_providers : {};
+            return Object.entries(providers)
+                .filter(([scope, provider]) => {
+                    const scopeName = String(scope || '').trim();
+                    const providerName = String(provider || '').trim();
+                    return scopeName && scopeName !== 'default' && providerName && providerName !== current;
+                })
+                .sort(([a], [b]) => a.localeCompare(b));
         },
 
         // API Calls

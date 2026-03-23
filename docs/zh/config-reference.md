@@ -64,7 +64,6 @@ providers:
 | `log_dir` | string | `<config-dir>/logs` | 日志目录 |
 | `log_retention_days` | int | `7` | 日志保留天数；`0` 表示永久保留；默认保留 7 天 |
 | `log_stdout` | bool | `true` | 是否同时输出到 stdout；长期后台运行通常建议设为 `false` |
-| `ignore_count_tokens_failover` | bool | `false` | Claude Code 的 `count_tokens` 失败是否不影响主会话 provider 选择 |
 
 ### `notifications`
 

@@ -55,6 +55,17 @@ func newProtocolTracker(clientType ClientType, req *http.Request, resp *http.Res
 		return &protocolTracker{kind: streamProtocolNone}
 	}
 
+	if requestCtx, ok := requestContextFromRequest(req); ok {
+		switch requestCtx.Family {
+		case ProtocolFamilyOpenAI:
+			return &protocolTracker{kind: streamProtocolOpenAI}
+		case ProtocolFamilyClaude:
+			return &protocolTracker{kind: streamProtocolClaude}
+		default:
+			return &protocolTracker{kind: streamProtocolNone}
+		}
+	}
+
 	switch clientType {
 	case ClientCodex:
 		return &protocolTracker{kind: streamProtocolOpenAI}
@@ -115,9 +126,9 @@ func (pt *protocolTracker) abortedStatus() protocolStatus {
 	return protocolIncomplete
 }
 
-func (cp *ClientProxy) logRequestResult(providerName string, statusCode int, result streamResult, manual bool) {
+func (cp *ClientProxy) logRequestResult(req *http.Request, providerName string, statusCode int, result streamResult, manual bool) {
 	now := time.Now()
-	cp.recordLastRequest(now, providerName, statusCode, result)
+	cp.recordLastRequest(now, req, providerName, statusCode, result)
 	presentation := DescribeRequestOutcome(RequestOutcomeEvent{
 		At:       now,
 		Provider: providerName,

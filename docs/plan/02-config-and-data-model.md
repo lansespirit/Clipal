@@ -2,16 +2,50 @@
 
 ## 配置设计目标
 
-新的配置模型应满足：
+配置模型需要同时满足两件事：
 
-- 用户只维护一份 provider 列表
-- 每个 provider 只有一个 `base_url`
-- 每个 provider 可配置多 `api_keys`
-- 每个 provider 明确声明支持哪些协议
-- 不暴露内部变体概念
-- 兼容当前的优先级、启用开关、manual pin、热重载
+- 支持统一 ingress 与协议识别
+- 保持后端 provider 池分离
 
-## 建议的用户配置结构
+因此本轮配置目标是：
+
+- 保留三份 provider 配置文件
+- 保留每组独立的 priority / enabled / mode / pinned_provider 语义
+- 不把不同协议族的 key 池自动合并
+- 允许内部构造统一请求上下文，但不改变持久化真相
+
+## 用户配置结构
+
+### 全局配置
+
+`config.yaml`
+
+负责：
+
+- 监听地址
+- 端口
+- 日志
+- failover / circuit breaker 全局参数
+
+### Claude 配置
+
+`claude-code.yaml`
+
+```yaml
+mode: auto
+pinned_provider: ""
+
+providers:
+  - name: "anthropic-direct"
+    base_url: "https://api.anthropic.com"
+    api_key: "sk-ant-xxx"
+    priority: 1
+    enabled: true
+```
+
+### Codex / OpenAI 配置
+
+`codex.yaml`
 
 ```yaml
 mode: auto
@@ -21,68 +55,45 @@ providers:
   - name: "openrouter"
     base_url: "https://openrouter.ai/api"
     api_keys:
-      - "sk-xxx"
-      - "sk-yyy"
-    protocols:
-      - "openai_chat"
-      - "openai_responses"
-      - "claude"
+      - "sk-or-xxx"
+      - "sk-or-yyy"
     priority: 1
-    enabled: true
-
-  - name: "anthropic-direct"
-    base_url: "https://api.anthropic.com"
-    api_key: "sk-ant-xxx"
-    protocols:
-      - "claude"
-      - "claude_count_tokens"
-    priority: 2
-    enabled: true
-
-  - name: "gemini-direct"
-    base_url: "https://generativelanguage.googleapis.com"
-    api_key: "AIza..."
-    protocols:
-      - "gemini_generate"
-      - "gemini_stream_generate"
-    priority: 3
     enabled: true
 ```
 
-## 配置字段说明
+### Gemini 配置
 
-### 顶层
+`gemini.yaml`
 
-- `mode`: `auto | manual`
-- `pinned_provider`: `manual` 模式下固定使用的 provider
-- `providers[]`: 统一 provider 列表
+```yaml
+mode: auto
+pinned_provider: ""
 
-### provider
+providers:
+  - name: "gemini-direct"
+    base_url: "https://generativelanguage.googleapis.com"
+    api_key: "AIza..."
+    priority: 1
+    enabled: true
+```
 
-- `name`: provider 名称，唯一
-- `base_url`: 用户输入的唯一基础地址
-- `api_key` / `api_keys`: 单 key 或多 key
-- `protocols`: 用户声明支持的协议列表
-- `priority`: 越小优先级越高
-- `enabled`: 是否启用
+## 为什么不做统一 provider 持久化
 
-## 协议枚举建议
+统一 provider 列表在概念上很干净，但在 Clipal 这个场景下会引入更大的实际问题：
 
-第一版建议显式区分如下协议：
+- 不同协议族的权重体系会混淆
+- 不同渠道的 key 池会被误合并
+- legacy `mode` / `pinned_provider` 语义很难无损迁移
+- UI 会把用户本来清晰的三组操作心智打乱
 
-- `claude`
-- `claude_count_tokens`
-- `openai_chat`
-- `openai_responses`
-- `gemini_generate`
-- `gemini_stream_generate`
+结论是：
 
-说明：
-
-- `claude_count_tokens` 单独列出，是为了兼容现有针对 `count_tokens` 的特殊策略
-- `gemini_generate` 与 `gemini_stream_generate` 分开，有助于 probe 和错误诊断
+- “统一 ingress” 值得做
+- “统一 provider 持久化模型” 当前不值得做
 
 ## Go 结构体建议
+
+继续围绕现有三组配置模型演进：
 
 ```go
 type ClientMode string
@@ -92,66 +103,69 @@ const (
     ClientModeManual ClientMode = "manual"
 )
 
-type Protocol string
-
-const (
-    ProtocolClaude              Protocol = "claude"
-    ProtocolClaudeCountTokens   Protocol = "claude_count_tokens"
-    ProtocolOpenAIChat          Protocol = "openai_chat"
-    ProtocolOpenAIResponses     Protocol = "openai_responses"
-    ProtocolGeminiGenerate      Protocol = "gemini_generate"
-    ProtocolGeminiStreamGenerate Protocol = "gemini_stream_generate"
-)
-
 type Provider struct {
-    Name      string     `yaml:"name"`
-    BaseURL   string     `yaml:"base_url"`
-    APIKey    string     `yaml:"api_key,omitempty"`
-    APIKeys   []string   `yaml:"api_keys,omitempty"`
-    Protocols []Protocol `yaml:"protocols"`
-    Priority  int        `yaml:"priority"`
-    Enabled   *bool      `yaml:"enabled,omitempty"`
+    Name     string   `yaml:"name"`
+    BaseURL  string   `yaml:"base_url"`
+    APIKey   string   `yaml:"api_key,omitempty"`
+    APIKeys  []string `yaml:"api_keys,omitempty"`
+    Priority int      `yaml:"priority"`
+    Enabled  *bool    `yaml:"enabled,omitempty"`
 }
 
-type RoutingConfig struct {
+type ClientConfig struct {
     Mode           ClientMode `yaml:"mode"`
     PinnedProvider string     `yaml:"pinned_provider"`
     Providers      []Provider `yaml:"providers"`
 }
+
+type Config struct {
+    Global     GlobalConfig
+    ClaudeCode ClientConfig
+    Codex      ClientConfig
+    Gemini     ClientConfig
+}
 ```
 
-## 内部运行态模型
+## 内部数据模型
 
-### Capability Cache
+### RequestContext
 
-这部分不写入用户主配置，可单独持久化为内部缓存文件或运行时热缓存。
+统一入口需要一个内部请求上下文：
 
 ```go
-type ProtocolCapability struct {
-    Available      bool
-    AuthStyle      string
-    RequestPath    string
-    ModelsPath     string
-    Models         []string
-    LastVerifiedAt time.Time
-    LastError      string
-}
+type IngressProtocol string
+type InternalCapability string
 
-type ProviderCapabilityCache struct {
-    ProviderName string
-    Protocols    map[Protocol]ProtocolCapability
+type RequestContext struct {
+    IngressPrefix   string
+    VisibleProtocol IngressProtocol
+    Capability      InternalCapability
+    UpstreamPath    string
 }
+```
+
+这个上下文是运行时对象，不进入用户配置。
+
+### Backend Pool Mapping
+
+协议识别完成后，需要映射到后端池：
+
+```go
+Claude                -> ClaudeCode pool
+OpenAI Chat           -> Codex pool
+OpenAI Responses      -> Codex pool
+Gemini Generate       -> Gemini pool
+Gemini StreamGenerate -> Gemini pool
 ```
 
 ### Runtime State
 
-```go
-type ProviderProtocolKey struct {
-    Provider string
-    Protocol Protocol
-}
+运行态可以继续细化，但必须局限在各自 backend pool 内。
 
-type ProviderProtocolRuntime struct {
+推荐方向：
+
+```go
+type ProviderCapabilityRuntime struct {
     CurrentKeyIndex int
 
     DeactivatedReason string
@@ -165,61 +179,65 @@ type ProviderProtocolRuntime struct {
 }
 ```
 
-## 配置迁移方案
+其中 capability 可以是：
 
-### 当前状态
+- `claude_messages`
+- `claude_count_tokens`
+- `openai_chat_completions`
+- `openai_responses`
+- `gemini_generate_content`
+- `gemini_stream_generate_content`
 
-当前项目是：
+这些 capability 用于请求识别、runtime 事件和日志标签，不等于都拥有独立的 current provider 指针。
 
+但这些 capability 只用于 runtime 和 adapter，不用于用户配置分组。
+
+## 配置校验规则
+
+继续保留并强化以下规则：
+
+- `mode` 只能是 `auto | manual`
+- `manual` 下 `pinned_provider` 必须存在且启用
+- `api_key` 与 `api_keys` 不能同时设置
+- key 至少有一个
+- `priority >= 1`
+- provider 名称在同一配置文件内唯一
+
+不新增统一 `protocols[]` 作为用户必填字段。
+
+## 热重载规则
+
+继续监听：
+
+- `config.yaml`
 - `claude-code.yaml`
 - `codex.yaml`
 - `gemini.yaml`
 
-三份独立配置。
+热重载要求：
 
-### 迁移目标
+- 保持监听地址和端口在运行时稳定
+- 尽量保留各 backend pool 内的 runtime state
+- 不跨 backend pool 继承 provider 状态
 
-迁移为一份统一路由配置，例如：
+## 迁移策略
 
-- `routing.yaml`
+本轮不做“旧三份配置自动迁移为一份新配置”。
 
-或保留现有文件命名习惯，但内部统一写入一份新文件。
+迁移策略改为：
 
-### 推荐迁移策略
+- 保持现有三份配置继续作为主配置
+- 新增 `/clipal` 入口不要求用户改配置结构
+- 如后续仍想探索统一 provider 视图，只能作为只读投影或实验性导出，不得成为默认路由真相
 
-第一阶段不立刻删除旧文件，而是：
+## 不纳入主配置的内容
 
-1. 启动时优先读取新统一配置
-2. 若不存在新配置，则读取三份旧配置并自动合并
-3. UI 仅编辑新统一配置
-4. 保留一次性迁移导出能力，帮助用户确认
+以下内容仍不建议进入用户主配置：
 
-### 合并规则
-
-- 同名 provider 若来自多个旧文件，视为同一 provider
-- `protocols` 为各旧分组协议的并集
-- `api_keys` 合并去重
-- `priority` 取最小值
-- 若 `base_url` 冲突，则保留为多个 provider，避免错误合并
-
-## 验证规则
-
-新的配置校验需要新增：
-
-- `protocols` 不能为空
-- `protocols` 内枚举值必须合法
-- `manual` 模式下 `pinned_provider` 必须存在且启用
-- `api_key` 与 `api_keys` 不能同时设置
-- key 至少有一个
-
-## 不建议纳入配置的内容
-
-以下内容不建议加入用户主配置：
-
-- 实际探测出的真实 endpoint path
-- 实际 models 列表
-- 鉴权推断结果
+- 真实探测出来的 endpoint path
+- models 列表
+- auth style 推断结果
 - stream 完成标记规则
-- 供应商内部协议变体
+- provider capability cache
 
-这些都应由程序自动维护。
+这些内容如果将来需要，应放在内部缓存或状态页，不应干扰用户配置。

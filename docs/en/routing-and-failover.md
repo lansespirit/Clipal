@@ -2,17 +2,20 @@
 
 ## Route Prefixes
 
-Clipal currently registers these local paths:
+Clipal standardizes client ingress on these local paths:
 
 | Path | Use |
 |------|-----|
 | `/` | Web UI |
 | `/health` | Health check |
-| `/claudecode/*` | Claude-style requests |
-| `/codex/*` | OpenAI / Codex-style requests |
-| `/gemini/*` | Gemini-style requests |
+| `/clipal/*` | Preferred unified ingress for Claude-, OpenAI-, and Gemini-style requests |
+| `/claudecode/*` | Legacy Claude-compatible alias |
+| `/codex/*` | Legacy OpenAI-compatible alias |
+| `/gemini/*` | Legacy Gemini-compatible alias |
 
-Each client group has its own provider list and runtime state.
+Clipal detects the request family from the upstream path under `/clipal/*`. The compatibility aliases remain available for older client configs. Each backend client group still keeps its own provider list and runtime state.
+
+For ambiguous paths under `/clipal`, Clipal uses explicit protocol rules instead of implicit detector order. In particular, `/clipal/v1/files` is treated as OpenAI-compatible, while Gemini-specific file flows stay on Gemini-style paths such as `/clipal/v1beta/files` and `/clipal/upload/v1beta/files`.
 
 ## Provider Selection Order
 

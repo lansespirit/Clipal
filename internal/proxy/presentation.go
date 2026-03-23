@@ -100,6 +100,15 @@ func describeExplicitRequestOutcome(event RequestOutcomeEvent) RequestOutcomePre
 			Label:  "No provider available",
 			Detail: detail,
 		}
+	case "advisory_request_unavailable":
+		if detail == "" {
+			detail = "The advisory request is temporarily unavailable. Primary traffic is unaffected."
+		}
+		return RequestOutcomePresentation{
+			Result: "advisory_request_unavailable",
+			Label:  "Advisory request unavailable",
+			Detail: detail,
+		}
 	case "all_providers_failed":
 		if detail == "" {
 			detail = "Every provider attempt failed before a response could be completed."

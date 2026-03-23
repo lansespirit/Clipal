@@ -46,7 +46,8 @@ Common causes:
 
 - the client config was not saved
 - another config file is overriding your Base URL
-- you picked the wrong route prefix
+- the client is not pointing at `http://127.0.0.1:3333/clipal`
+- you are still using an outdated compatibility alias or official API host in another config file
 
 Re-check [Client Setup](client-setup.md).
 

@@ -231,15 +231,6 @@
                         </div>
                     </div>
 
-                    <div class="form-group" style="margin-top: 16px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" x-model="globalConfig.ignore_count_tokens_failover">
-                            <span style="font-weight: 500;">Ignore Count Tokens Failover</span>
-                        </label>
-                        <div class="form-hint" style="margin-left: 24px;">Keeps context cache warm by disabling
-                            switching for token counting</div>
-                    </div>
-
                     <div class="form-header" style="margin-top: 20px;">
                         <h2 style="font-size: 16px;">Circuit Breaker</h2>
                     </div>
@@ -517,6 +508,19 @@
                                 <div class="status-client-subtitle">
                                     Current: <span class="mono-pill" x-text="client.current_provider || 'None'"></span>
                                 </div>
+                                <template x-if="scopeProviderEntries(client).length > 0">
+                                    <div class="form-hint" style="margin-top: 8px;">
+                                        Scoped routing:
+                                        <template x-for="[scope, provider] in scopeProviderEntries(client)"
+                                            :key="scope + ':' + provider">
+                                            <span style="margin-right: 8px;">
+                                                <span x-text="scopeLabel(scope)"></span>
+                                                <span>-></span>
+                                                <span class="mono-pill" x-text="provider"></span>
+                                            </span>
+                                        </template>
+                                    </div>
+                                </template>
                                 <div class="status-client-subtitle" style="margin-top: 6px;">
                                     Mode: <span class="mono-pill" x-text="client.mode || 'auto'"></span>
                                     <template x-if="(client.mode || '') === 'manual'">

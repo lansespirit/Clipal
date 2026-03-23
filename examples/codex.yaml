@@ -1,5 +1,6 @@
 # OpenAI-compatible upstream providers
-# Used by requests sent to http://127.0.0.1:3333/codex
+# Preferred for OpenAI-compatible requests sent to http://127.0.0.1:3333/clipal
+# Legacy alias: http://127.0.0.1:3333/codex
 # Suitable for Codex CLI and many desktop clients with custom Base URL support.
 
 mode: auto # auto | manual

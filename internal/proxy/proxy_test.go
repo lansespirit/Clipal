@@ -164,6 +164,252 @@ func TestAddForwardedHeaders(t *testing.T) {
 	}
 }
 
+func TestCreateProxyRequest_PreservesClaudeXAPIKeyStyle(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+		{Name: "claude", BaseURL: "https://api.anthropic.com", APIKey: "provider-key", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", bytes.NewReader([]byte(`{"x":1}`)))
+	original.Header.Set("x-api-key", "client-key")
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientClaudeCode,
+		Family:         ProtocolFamilyClaude,
+		Capability:     CapabilityClaudeMessages,
+		UpstreamPath:   "/v1/messages",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createProxyRequest(original, cp.providers[0], "provider-key", "/v1/messages", []byte(`{"x":1}`))
+	if err != nil {
+		t.Fatalf("createProxyRequest: %v", err)
+	}
+	if got := proxyReq.Header.Get("x-api-key"); got != "provider-key" {
+		t.Fatalf("x-api-key: got %q want %q", got, "provider-key")
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization: got %q want empty", got)
+	}
+	if got := proxyReq.Header.Get("x-goog-api-key"); got != "" {
+		t.Fatalf("x-goog-api-key: got %q want empty", got)
+	}
+}
+
+func TestCreateProxyRequest_UsesGeminiXGoogAPIKeyStyle(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientGemini, config.ClientModeAuto, "", []config.Provider{
+		{Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com", APIKey: "provider-key", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1beta/models/gemini-2.5-pro:generateContent", bytes.NewReader([]byte(`{"contents":[]}`)))
+	original.Header.Set("x-goog-api-key", "client-key")
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientGemini,
+		Family:         ProtocolFamilyGemini,
+		Capability:     CapabilityGeminiGenerateContent,
+		UpstreamPath:   "/v1beta/models/gemini-2.5-pro:generateContent",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createProxyRequest(original, cp.providers[0], "provider-key", "/v1beta/models/gemini-2.5-pro:generateContent", []byte(`{"contents":[]}`))
+	if err != nil {
+		t.Fatalf("createProxyRequest: %v", err)
+	}
+	if got := proxyReq.Header.Get("x-goog-api-key"); got != "provider-key" {
+		t.Fatalf("x-goog-api-key: got %q want %q", got, "provider-key")
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization: got %q want empty", got)
+	}
+	if got := proxyReq.Header.Get("x-api-key"); got != "" {
+		t.Fatalf("x-api-key: got %q want empty", got)
+	}
+}
+
+func TestApplyProviderAPIKey_UnknownCarrierFallsBackToProtocolDefault(t *testing.T) {
+	t.Parallel()
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", nil)
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientClaudeCode,
+		Family:         ProtocolFamilyClaude,
+		Capability:     CapabilityClaudeMessages,
+		UpstreamPath:   "/v1/messages",
+		UnifiedIngress: true,
+	})
+
+	proxyReq := httptest.NewRequest(http.MethodPost, "http://upstream/v1/messages", nil)
+	proxyReq.Header.Set("Authorization", "Bearer stale")
+
+	origDetect := detectAuthCarrierFunc
+	detectAuthCarrierFunc = func(*http.Request) authCarrier { return authCarrier("future-carrier") }
+	defer func() { detectAuthCarrierFunc = origDetect }()
+
+	applyProviderAPIKey(proxyReq, original, "provider-key")
+
+	if got := proxyReq.Header.Get("x-api-key"); got != "provider-key" {
+		t.Fatalf("x-api-key: got %q want %q", got, "provider-key")
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization: got %q want empty", got)
+	}
+}
+
+func TestRegisterExactAndSubtreeRegistersExpectedServeMuxMatches(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	var hits int
+	registerExactAndSubtree(mux, "/clipal", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+		wantHits   int
+	}{
+		{name: "exact", path: "/clipal", wantStatus: http.StatusNoContent, wantHits: 1},
+		{name: "subtree", path: "/clipal/v1/messages", wantStatus: http.StatusNoContent, wantHits: 2},
+		{name: "neighbor prefix", path: "/clipalx", wantStatus: http.StatusNotFound, wantHits: 2},
+	}
+
+	for _, tt := range tests {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "http://proxy"+tt.path, nil)
+		mux.ServeHTTP(rr, req)
+		if rr.Result().StatusCode != tt.wantStatus {
+			t.Fatalf("%s status: got %d want %d", tt.name, rr.Result().StatusCode, tt.wantStatus)
+		}
+		if hits != tt.wantHits {
+			t.Fatalf("%s hits: got %d want %d", tt.name, hits, tt.wantHits)
+		}
+	}
+}
+
+func TestCreateProxyRequest_PreservesExplicitAuthorizationCarrier(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientGemini, config.ClientModeAuto, "", []config.Provider{
+		{Name: "gemini-gateway", BaseURL: "https://gateway.example.com", APIKey: "provider-key", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1beta/models/gemini-2.5-pro:generateContent", bytes.NewReader([]byte(`{"contents":[]}`)))
+	original.Header.Set("Authorization", "Bearer client-key")
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientGemini,
+		Family:         ProtocolFamilyGemini,
+		Capability:     CapabilityGeminiGenerateContent,
+		UpstreamPath:   "/v1beta/models/gemini-2.5-pro:generateContent",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createProxyRequest(original, cp.providers[0], "provider-key", "/v1beta/models/gemini-2.5-pro:generateContent", []byte(`{"contents":[]}`))
+	if err != nil {
+		t.Fatalf("createProxyRequest: %v", err)
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "Bearer provider-key" {
+		t.Fatalf("Authorization: got %q want %q", got, "Bearer provider-key")
+	}
+	if got := proxyReq.Header.Get("x-goog-api-key"); got != "" {
+		t.Fatalf("x-goog-api-key: got %q want empty", got)
+	}
+}
+
+func TestCreateProxyRequest_OverridesGeminiQueryKey(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientGemini, config.ClientModeAuto, "", []config.Provider{
+		{Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com", APIKey: "provider-key", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1beta/models/gemini-2.5-pro:generateContent?key=client-key&alt=sse", bytes.NewReader([]byte(`{"contents":[]}`)))
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientGemini,
+		Family:         ProtocolFamilyGemini,
+		Capability:     CapabilityGeminiGenerateContent,
+		UpstreamPath:   "/v1beta/models/gemini-2.5-pro:generateContent",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createProxyRequest(original, cp.providers[0], "provider-key", "/v1beta/models/gemini-2.5-pro:generateContent", []byte(`{"contents":[]}`))
+	if err != nil {
+		t.Fatalf("createProxyRequest: %v", err)
+	}
+	if got := proxyReq.URL.Query().Get("key"); got != "provider-key" {
+		t.Fatalf("query key: got %q want %q", got, "provider-key")
+	}
+	if got := proxyReq.URL.Query().Get("alt"); got != "sse" {
+		t.Fatalf("query alt: got %q want %q", got, "sse")
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization: got %q want empty", got)
+	}
+}
+
+func TestCreateProxyRequest_DefaultsClaudeAuthCarrierWithoutClientAuth(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+		{Name: "claude", BaseURL: "https://api.anthropic.com", APIKey: "provider-key", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", bytes.NewReader([]byte(`{"x":1}`)))
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientClaudeCode,
+		Family:         ProtocolFamilyClaude,
+		Capability:     CapabilityClaudeMessages,
+		UpstreamPath:   "/v1/messages",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createProxyRequest(original, cp.providers[0], "provider-key", "/v1/messages", []byte(`{"x":1}`))
+	if err != nil {
+		t.Fatalf("createProxyRequest: %v", err)
+	}
+	if got := proxyReq.Header.Get("x-api-key"); got != "provider-key" {
+		t.Fatalf("x-api-key: got %q want %q", got, "provider-key")
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization: got %q want empty", got)
+	}
+}
+
+func TestCreateProxyRequest_DefaultsGeminiAuthCarrierWithoutClientAuth(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientGemini, config.ClientModeAuto, "", []config.Provider{
+		{Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com", APIKey: "provider-key", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1beta/models/gemini-2.5-flash-image:generateContent", bytes.NewReader([]byte(`{"contents":[]}`)))
+	original = withRequestContext(original, RequestContext{
+		ClientType:     ClientGemini,
+		Family:         ProtocolFamilyGemini,
+		Capability:     CapabilityGeminiGenerateContent,
+		UpstreamPath:   "/v1beta/models/gemini-2.5-flash-image:generateContent",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createProxyRequest(original, cp.providers[0], "provider-key", "/v1beta/models/gemini-2.5-flash-image:generateContent", []byte(`{"contents":[]}`))
+	if err != nil {
+		t.Fatalf("createProxyRequest: %v", err)
+	}
+	if got := proxyReq.Header.Get("x-goog-api-key"); got != "provider-key" {
+		t.Fatalf("x-goog-api-key: got %q want %q", got, "provider-key")
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization: got %q want empty", got)
+	}
+}
+
 func TestIsUpstreamIdleTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -593,7 +839,7 @@ func TestForwardWithFailover_CodexSSEEOFWithoutDoneLogsIncomplete(t *testing.T) 
 	}
 }
 
-func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
+func TestClaudeCountTokens_FailureDoesNotRetryOrAffectHealthState(t *testing.T) {
 	t.Parallel()
 
 	var srv1Count int
@@ -614,11 +860,10 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
-			ListenAddr:                "127.0.0.1",
-			Port:                      3333,
-			LogLevel:                  config.LogLevelDebug,
-			ReactivateAfter:           "1h",
-			IgnoreCountTokensFailover: true,
+			ListenAddr:      "127.0.0.1",
+			Port:            3333,
+			LogLevel:        config.LogLevelDebug,
+			ReactivateAfter: "1h",
 		},
 		ClaudeCode: config.ClientConfig{
 			Providers: []config.Provider{
@@ -643,16 +888,25 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 	router.handleRequest(rr, req)
 
 	res := rr.Result()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusOK)
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusServiceUnavailable)
 	}
-	if got := rr.Body.String(); got != "ok" {
-		t.Fatalf("body: got %q want %q", got, "ok")
+	if got := strings.TrimSpace(rr.Body.String()); got != "down" {
+		t.Fatalf("body: got %q want %q", got, "down")
 	}
 	if got := cp.getCurrentIndex(); got != 0 {
 		t.Fatalf("currentIndex changed by count_tokens: got %d want %d", got, 0)
 	}
-	if srv1Count != 1 || srv2Count != 1 {
+	if got := cp.countTokensIndex; got != 0 {
+		t.Fatalf("countTokensIndex changed by count_tokens: got %d want %d", got, 0)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("provider 0 should not be deactivated by count_tokens")
+	}
+	if cp.breakers[0].state != circuitClosed {
+		t.Fatalf("breaker state changed by count_tokens: got %s want %s", cp.breakers[0].state, circuitClosed)
+	}
+	if srv1Count != 1 || srv2Count != 0 {
 		t.Fatalf("unexpected request counts: srv1=%d srv2=%d", srv1Count, srv2Count)
 	}
 
@@ -661,17 +915,311 @@ func TestClaudeCountTokens_IsolatedFailoverDoesNotChangeProvider(t *testing.T) {
 	router.handleRequest(rr2, req2)
 
 	res2 := rr2.Result()
-	if res2.StatusCode != http.StatusOK {
-		t.Fatalf("status2: got %d want %d", res2.StatusCode, http.StatusOK)
+	if res2.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status2: got %d want %d", res2.StatusCode, http.StatusServiceUnavailable)
 	}
-	if got := rr2.Body.String(); got != "ok" {
-		t.Fatalf("body2: got %q want %q", got, "ok")
+	if got := strings.TrimSpace(rr2.Body.String()); got != "down" {
+		t.Fatalf("body2: got %q want %q", got, "down")
 	}
 	if got := cp.getCurrentIndex(); got != 0 {
 		t.Fatalf("currentIndex changed by count_tokens (second): got %d want %d", got, 0)
 	}
-	if srv1Count != 1 || srv2Count != 2 {
+	if got := cp.countTokensIndex; got != 0 {
+		t.Fatalf("countTokensIndex changed by count_tokens (second): got %d want %d", got, 0)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("provider 0 should still not be deactivated by count_tokens")
+	}
+	if cp.breakers[0].state != circuitClosed {
+		t.Fatalf("breaker state changed by second count_tokens: got %s want %s", cp.breakers[0].state, circuitClosed)
+	}
+	if srv1Count != 2 || srv2Count != 0 {
 		t.Fatalf("unexpected request counts after second call: srv1=%d srv2=%d", srv1Count, srv2Count)
+	}
+}
+
+func TestClaudeCountTokens_NetworkFailureDoesNotRetryOrAffectHealthState(t *testing.T) {
+	t.Parallel()
+
+	var srv1Count int
+	var srv2Count int
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			srv1Count++
+			return nil, errors.New("dial failed")
+		case "p2":
+			srv2Count++
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			ListenAddr:      "127.0.0.1",
+			Port:            3333,
+			LogLevel:        config.LogLevelDebug,
+			ReactivateAfter: "1h",
+		},
+		ClaudeCode: config.ClientConfig{
+			Providers: []config.Provider{
+				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+			},
+		},
+	}
+
+	router := NewRouter(cfg)
+	cp := router.proxies[ClientClaudeCode]
+	if cp == nil {
+		t.Fatalf("expected claudecode proxy to be initialized")
+	}
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages/count_tokens", bytes.NewReader([]byte(`{"x":1}`)))
+	router.handleRequest(rr, req)
+
+	if rr.Result().StatusCode != http.StatusBadGateway {
+		t.Fatalf("status: got %d want %d", rr.Result().StatusCode, http.StatusBadGateway)
+	}
+	if got := cp.getCurrentIndex(); got != 0 {
+		t.Fatalf("currentIndex changed by count_tokens network failure: got %d want %d", got, 0)
+	}
+	if got := cp.countTokensIndex; got != 0 {
+		t.Fatalf("countTokensIndex changed by count_tokens network failure: got %d want %d", got, 0)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("provider 0 should not be deactivated by count_tokens network failure")
+	}
+	if cp.breakers[0].state != circuitClosed {
+		t.Fatalf("breaker state changed by count_tokens network failure: got %s want %s", cp.breakers[0].state, circuitClosed)
+	}
+	if srv1Count != 1 || srv2Count != 0 {
+		t.Fatalf("unexpected request counts: srv1=%d srv2=%d", srv1Count, srv2Count)
+	}
+}
+
+func TestGeminiCountTokens_DoesNotRetryOrAffectHealthState(t *testing.T) {
+	t.Parallel()
+
+	var srv1Count int
+	var srv2Count int
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			srv1Count++
+			return newResponse(http.StatusServiceUnavailable, nil, "down"), nil
+		case "p2":
+			srv2Count++
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			ListenAddr:      "127.0.0.1",
+			Port:            3333,
+			LogLevel:        config.LogLevelDebug,
+			ReactivateAfter: "1h",
+		},
+		Gemini: config.ClientConfig{
+			Providers: []config.Provider{
+				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+			},
+		},
+	}
+
+	router := NewRouter(cfg)
+	cp := router.proxies[ClientGemini]
+	if cp == nil {
+		t.Fatalf("expected gemini proxy to be initialized")
+	}
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/gemini/v1beta/models/gemini-2.0-flash:countTokens", bytes.NewReader([]byte(`{"contents":[]}`)))
+	router.handleRequest(rr, req)
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusServiceUnavailable)
+	}
+	if got := strings.TrimSpace(rr.Body.String()); got != "down" {
+		t.Fatalf("body: got %q want %q", got, "down")
+	}
+	if got := cp.getCurrentIndex(); got != 0 {
+		t.Fatalf("currentIndex changed by gemini countTokens: got %d want %d", got, 0)
+	}
+	if cp.isDeactivated(0) {
+		t.Fatalf("provider 0 should not be deactivated by gemini countTokens")
+	}
+	if cp.breakers[0].state != circuitClosed {
+		t.Fatalf("breaker state changed by gemini countTokens: got %s want %s", cp.breakers[0].state, circuitClosed)
+	}
+	if srv1Count != 1 || srv2Count != 0 {
+		t.Fatalf("unexpected request counts: srv1=%d srv2=%d", srv1Count, srv2Count)
+	}
+}
+
+func TestClaudeCountTokens_SkipsUnavailableCurrentProvider(t *testing.T) {
+	t.Parallel()
+
+	var srv1Count int
+	var srv2Count int
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "p1":
+			srv1Count++
+			return newResponse(http.StatusOK, nil, "p1"), nil
+		case "p2":
+			srv2Count++
+			return newResponse(http.StatusOK, nil, "p2"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			ListenAddr:      "127.0.0.1",
+			Port:            3333,
+			LogLevel:        config.LogLevelDebug,
+			ReactivateAfter: "1h",
+			CircuitBreaker: config.CircuitBreakerConfig{
+				FailureThreshold:    1,
+				SuccessThreshold:    1,
+				OpenTimeout:         "1h",
+				HalfOpenMaxInFlight: 1,
+			},
+		},
+		ClaudeCode: config.ClientConfig{
+			Providers: []config.Provider{
+				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+				{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+			},
+		},
+	}
+
+	router := NewRouter(cfg)
+	cp := router.proxies[ClientClaudeCode]
+	if cp == nil {
+		t.Fatalf("expected claudecode proxy to be initialized")
+	}
+	cp.httpClient.Transport = rt
+	cp.breakers[0].state = circuitOpen
+	cp.breakers[0].openedAt = time.Now()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages/count_tokens", bytes.NewReader([]byte(`{"x":1}`)))
+	router.handleRequest(rr, req)
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusOK)
+	}
+	if got := strings.TrimSpace(rr.Body.String()); got != "p2" {
+		t.Fatalf("body: got %q want %q", got, "p2")
+	}
+	if got := cp.getCurrentIndex(); got != 0 {
+		t.Fatalf("currentIndex changed by count_tokens skip: got %d want %d", got, 0)
+	}
+	if srv1Count != 0 || srv2Count != 1 {
+		t.Fatalf("unexpected request counts: srv1=%d srv2=%d", srv1Count, srv2Count)
+	}
+}
+
+func TestClaudeCountTokens_AllUnavailableReturnsRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	var srv1Count int
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		srv1Count++
+		return newResponse(http.StatusOK, nil, "p1"), nil
+	})
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			ListenAddr:      "127.0.0.1",
+			Port:            3333,
+			LogLevel:        config.LogLevelDebug,
+			ReactivateAfter: "1h",
+			CircuitBreaker: config.CircuitBreakerConfig{
+				FailureThreshold:    1,
+				SuccessThreshold:    1,
+				OpenTimeout:         "1h",
+				HalfOpenMaxInFlight: 1,
+			},
+		},
+		ClaudeCode: config.ClientConfig{
+			Providers: []config.Provider{
+				{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+			},
+		},
+	}
+
+	router := NewRouter(cfg)
+	cp := router.proxies[ClientClaudeCode]
+	if cp == nil {
+		t.Fatalf("expected claudecode proxy to be initialized")
+	}
+	cp.httpClient.Transport = rt
+	cp.breakers[0].state = circuitOpen
+	cp.breakers[0].openedAt = time.Now()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages/count_tokens", bytes.NewReader([]byte(`{"x":1}`)))
+	router.handleRequest(rr, req)
+
+	res := rr.Result()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d want %d", res.StatusCode, http.StatusServiceUnavailable)
+	}
+	if got := strings.TrimSpace(rr.Body.String()); !strings.Contains(got, "Advisory request temporarily unavailable") {
+		t.Fatalf("body: got %q", got)
+	}
+	if ra := strings.TrimSpace(res.Header.Get("Retry-After")); ra == "" {
+		t.Fatalf("expected Retry-After header to be set")
+	}
+	if srv1Count != 0 {
+		t.Fatalf("expected no upstream call, got %d", srv1Count)
+	}
+	snap := cp.runtimeSnapshot(time.Now())
+	if snap.LastRequest == nil {
+		t.Fatalf("expected last request to be recorded")
+	}
+	if got := snap.LastRequest.Result; got != "advisory_request_unavailable" {
+		t.Fatalf("last request result: got %q want %q", got, "advisory_request_unavailable")
+	}
+}
+
+func TestClaudeCountTokens_RuntimeSnapshotOmitsScopedProvider(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientClaudeCode, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.countTokensIndex = 1
+
+	snap := cp.runtimeSnapshot(time.Now())
+	if snap.CurrentProvider != "p1" {
+		t.Fatalf("current provider: got %q want %q", snap.CurrentProvider, "p1")
+	}
+	if snap.CurrentProviders["default"] != "p1" {
+		t.Fatalf("current providers default: got %q want %q", snap.CurrentProviders["default"], "p1")
+	}
+	if _, ok := snap.CurrentProviders[string(CapabilityClaudeCountTokens)]; ok {
+		t.Fatalf("did not expect %q in current providers: %#v", CapabilityClaudeCountTokens, snap.CurrentProviders)
 	}
 }
 

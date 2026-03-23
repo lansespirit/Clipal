@@ -106,7 +106,6 @@ func (a *API) HandleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.Global.CircuitBreaker.SuccessThreshold = req.CircuitBreaker.SuccessThreshold
 	cfg.Global.CircuitBreaker.OpenTimeout = req.CircuitBreaker.OpenTimeout
 	cfg.Global.CircuitBreaker.HalfOpenMaxInFlight = req.CircuitBreaker.HalfOpenMaxInFlight
-	cfg.Global.IgnoreCountTokensFailover = req.IgnoreCountTokensFailover
 
 	if !a.saveGlobalConfigOrWriteError(w, cfg) {
 		return
@@ -567,6 +566,19 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 		current = getFirstEnabledProvider(enabled)
 	}
 
+	currentProviders := make(map[string]string, len(rt.CurrentProviders)+1)
+	for scope, provider := range rt.CurrentProviders {
+		scope = strings.TrimSpace(scope)
+		provider = strings.TrimSpace(provider)
+		if scope == "" || provider == "" {
+			continue
+		}
+		currentProviders[scope] = provider
+	}
+	if current != "" {
+		currentProviders["default"] = current
+	}
+
 	// Map runtime per-provider info by name (runtime only contains enabled providers).
 	rtByName := make(map[string]proxy.ProviderRuntimeSnapshot, len(rt.Providers))
 	for _, p := range rt.Providers {
@@ -642,16 +654,17 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 	if rt.LastRequest != nil && !rt.LastRequest.At.IsZero() {
 		view := proxy.DescribeRequestOutcome(*rt.LastRequest)
 		lastRequest = &RequestOutcomeStatus{
-			At:       rt.LastRequest.At.Format(time.RFC3339),
-			Provider: rt.LastRequest.Provider,
-			Status:   rt.LastRequest.Status,
-			Delivery: rt.LastRequest.Delivery,
-			Protocol: rt.LastRequest.Protocol,
-			Cause:    rt.LastRequest.Cause,
-			Bytes:    rt.LastRequest.Bytes,
-			Result:   view.Result,
-			Label:    view.Label,
-			Detail:   view.Detail,
+			At:         rt.LastRequest.At.Format(time.RFC3339),
+			Provider:   rt.LastRequest.Provider,
+			Status:     rt.LastRequest.Status,
+			Delivery:   rt.LastRequest.Delivery,
+			Protocol:   rt.LastRequest.Protocol,
+			Capability: userVisibleCapability(rt.LastRequest.Capability),
+			Cause:      rt.LastRequest.Cause,
+			Bytes:      rt.LastRequest.Bytes,
+			Result:     view.Result,
+			Label:      view.Label,
+			Detail:     view.Detail,
 		}
 	}
 
@@ -662,10 +675,20 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 		ProviderCount:    len(providers),
 		EnabledProviders: enabledNames,
 		CurrentProvider:  current,
+		CurrentProviders: currentProviders,
 
 		LastSwitch:  lastSwitch,
 		LastRequest: lastRequest,
 		Providers:   outProviders,
+	}
+}
+
+func userVisibleCapability(capability string) string {
+	switch capability {
+	case string(proxy.CapabilityClaudeCountTokens), string(proxy.CapabilityGeminiCountTokens):
+		return ""
+	default:
+		return capability
 	}
 }
 
