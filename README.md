@@ -15,6 +15,7 @@ It works well not only for Claude Code, Codex CLI, and Gemini CLI, but also for 
 - Configure multiple upstream providers per client group with priority-based failover
 - Keep separate configs for different client types or protocol styles
 - Add, edit, pin, enable, disable, and inspect providers in the Web UI
+- One-click take over supported CLI user configs from the Web UI, with backup and rollback
 - Configure multiple API keys per provider and retry within the same provider before moving to the next one
 - Manage local status, background services, and updates with `clipal status`, `clipal service`, and `clipal update`
 - Run as a single cross-platform binary on macOS, Linux, and Windows

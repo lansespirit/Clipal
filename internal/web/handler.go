@@ -129,6 +129,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/config/global", h.localOnly(h.api.HandleGetGlobalConfig))
 	mux.HandleFunc("/api/config/global/update", h.localOnly(h.api.HandleUpdateGlobalConfig))
 	mux.HandleFunc("/api/config/export", h.localOnly(h.api.HandleExportConfig))
+	mux.HandleFunc("/api/integrations", h.localOnly(h.api.HandleListIntegrations))
+	mux.HandleFunc("/api/integrations/", h.localOnly(h.routeIntegrations))
 
 	mux.HandleFunc("/api/client-config/", h.localOnly(h.routeClientConfig))
 	mux.HandleFunc("/api/providers/", h.localOnly(h.routeProviders))
@@ -145,6 +147,15 @@ func (h *Handler) routeClientConfig(w http.ResponseWriter, r *http.Request) {
 		h.api.HandleGetClientConfig(w, r)
 	case http.MethodPut:
 		h.api.HandleUpdateClientConfig(w, r)
+	default:
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) routeIntegrations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		h.api.HandleIntegrationAction(w, r)
 	default:
 		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

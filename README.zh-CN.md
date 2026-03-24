@@ -15,6 +15,7 @@ Clipal 是一个本地 LLM API 反向代理与管理工具。
 - 给同一类客户端配置多个上游 provider，并按优先级自动切换
 - 为不同客户端或协议分组维护独立配置
 - 在 Web UI 中增删 provider、切换模式、查看状态、管理后台服务
+- 在 Web UI 中一键接管已支持 CLI 的用户级配置，并支持备份与回滚
 - 在一个 provider 下配置多个 API Key，先在同 provider 内切换 key，再决定是否切 provider
 - 通过 `clipal status`、`clipal service`、`clipal update` 管理本地运行状态
 - 以单文件二进制运行在 macOS、Linux、Windows 上

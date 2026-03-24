@@ -6,6 +6,8 @@ function app() {
         activeTab: 'providers',
         servicePoll: null,
         selectedClient: 'claude',
+        integrations: [],
+        integrationBusyProduct: '',
         clientOptions: [
             { value: 'claude', label: 'Claude' },
             { value: 'openai', label: 'OpenAI' },
@@ -100,7 +102,8 @@ function app() {
                     this.refreshStatus(),
                     this.loadServiceStatus(),
                     this.loadProviders(),
-                    this.loadGlobalConfig()
+                    this.loadGlobalConfig(),
+                    this.loadIntegrations(true)
                 ]);
             } finally {
                 this.isLoading = false;
@@ -296,6 +299,133 @@ function app() {
             const ok = await this.copyToClipboard(this.serviceStatus.install_command);
             if (ok) this.showAlert('success', 'Install command copied');
             else this.showAlert('error', 'Failed to copy command');
+        },
+
+        integrationStateLabel(state) {
+            switch (String(state || '').trim()) {
+                case 'configured':
+                    return 'Configured';
+                case 'error':
+                    return 'Needs attention';
+                default:
+                    return 'Not configured';
+            }
+        },
+
+        integrationStateClass(state) {
+            switch (String(state || '').trim()) {
+                case 'configured':
+                    return 'pill-success';
+                case 'error':
+                    return 'pill-danger';
+                default:
+                    return 'pill-warning';
+            }
+        },
+
+        integrationProductName(product) {
+            switch (String(product || '').trim()) {
+                case 'claude':
+                    return 'Claude Code';
+                case 'codex':
+                    return 'Codex CLI';
+                case 'opencode':
+                    return 'OpenCode';
+                case 'gemini':
+                    return 'Gemini CLI';
+                case 'continue':
+                    return 'Continue';
+                case 'aider':
+                    return 'Aider';
+                case 'goose':
+                    return 'Goose';
+                default:
+                    return product;
+            }
+        },
+
+
+        integrationApplyLabel() {
+            return 'Use Clipal';
+        },
+
+        integrationRollbackLabel() {
+            return 'Restore';
+        },
+
+
+        integrationProductNote(product) {
+            switch (String(product || '').trim()) {
+                case 'claude':
+                    return 'Clipal only updates ANTHROPIC_BASE_URL. ANTHROPIC_AUTH_TOKEN is left untouched.';
+                case 'codex':
+                    return 'Clipal updates model_provider to clipal and writes [model_providers.clipal] with the local URL and wire_api = "responses".';
+                case 'opencode':
+                    return 'Clipal adds or updates provider.clipal, points it at the local Clipal OpenAI-compatible URL, and switches the active model to clipal/<current-model>.';
+                case 'gemini':
+                    return 'Clipal only updates GEMINI_API_BASE in ~/.gemini/.env. Other Gemini environment overrides may still take precedence.';
+                case 'continue':
+                    return 'Clipal adds or updates a user-level Continue model entry that points at the local Clipal OpenAI-compatible URL. You may still need to select that model inside Continue.';
+                case 'aider':
+                    return 'Clipal updates the home-level .aider.conf.yml openai-api-base and a minimal OpenAI-compatible model value. Repo-local config, .env, or CLI flags can still override it.';
+                case 'goose':
+                    return 'Clipal creates or updates a managed Goose custom provider file. You may still need to select the Clipal provider or model inside Goose.';
+                default:
+                    return 'Clipal only edits the user-level config file shown on this card.';
+            }
+        },
+
+
+        integrationPreviewValue(content, emptyLabel) {
+            const value = String(content || '');
+            return value.trim() ? value : emptyLabel;
+        },
+
+        normalizeIntegration(item) {
+            return {
+                ...item,
+                name: this.integrationProductName(item.product) || item.name,
+                current_content: String((item && item.current_content) || ''),
+                planned_content: String((item && item.planned_content) || '')
+            };
+        },
+
+
+        async loadIntegrations(background = false) {
+            try {
+                const items = await this.apiCall('/api/integrations', {}, !!background);
+                this.integrations = (items || []).map(item => this.normalizeIntegration(item));
+            } catch (error) {
+                console.error('Failed to load integrations:', error);
+                this.integrations = [];
+            }
+        },
+
+        async runIntegrationAction(product, action) {
+            const name = String(product || '').trim();
+            const op = String(action || '').trim();
+            if (!name || !op) return;
+
+            this.integrationBusyProduct = name;
+            try {
+                const response = await this.apiCall(`/api/integrations/${encodeURIComponent(name)}/${op}`, {
+                    method: 'POST'
+                });
+                this.integrations = (this.integrations || []).map(item =>
+                    item && item.product === name
+                        ? this.normalizeIntegration({ ...response.status, name: this.integrationProductName(name) || response.status.name })
+                        : item
+                );
+                if (op === 'apply') {
+                    this.showAlert('success', `${this.integrationProductName(name)} is now pointed at Clipal. Restart the client or open a new session after applying changes.`);
+                } else {
+                    this.showAlert('success', `${this.integrationProductName(name)} was restored from backup. Restart the client or open a new session after applying changes.`);
+                }
+            } catch (error) {
+                console.error(`Failed to ${op} integration:`, error);
+            } finally {
+                this.integrationBusyProduct = '';
+            }
         },
 
         // Providers
@@ -628,7 +758,7 @@ function app() {
             }
         },
 
-        // UI Helpers
+        alertTimeout: null,
         showAlert(type, message) {
             this.alert = {
                 show: true,
@@ -636,10 +766,12 @@ function app() {
                 message: message
             };
 
-            // Auto-hide after 5 seconds
-            setTimeout(() => {
+            if (this.alertTimeout) {
+                clearTimeout(this.alertTimeout);
+            }
+            this.alertTimeout = setTimeout(() => {
                 this.alert.show = false;
-            }, 5000);
+            }, 8000); // Increased from 5s to 8s
         },
 
         closeModals() {

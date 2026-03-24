@@ -19,7 +19,6 @@ Edit `~/.claude/settings.json`:
 ```json
 {
   "env": {
-    "ANTHROPIC_AUTH_TOKEN": "any-value",
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:3333/clipal"
   }
 }
@@ -27,8 +26,9 @@ Edit `~/.claude/settings.json`:
 
 Notes:
 
-- `ANTHROPIC_AUTH_TOKEN` can usually be any non-empty placeholder value
-- Clipal replaces upstream auth with the provider credentials from local config
+- The Web UI takeover only updates `ANTHROPIC_BASE_URL`
+- Your existing `ANTHROPIC_AUTH_TOKEN` is left untouched
+- The Web UI can apply and roll back this user-level change for you from `CLI Takeover`
 
 ## Codex CLI
 
@@ -40,13 +40,122 @@ model_provider = "clipal"
 [model_providers.clipal]
 name = "clipal"
 base_url = "http://127.0.0.1:3333/clipal"
+wire_api = "responses"
 ```
+
+Notes:
+
+- The Web UI can apply and roll back this user-level change for you from `CLI Takeover`
+- If your environment also uses workspace-local Codex settings, those may still take precedence
+
+## OpenCode
+
+Edit `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "clipal/gpt-5.4",
+  "provider": {
+    "clipal": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Clipal",
+      "options": {
+        "baseURL": "http://127.0.0.1:3333/clipal/v1",
+        "apiKey": "clipal"
+      },
+      "models": {
+        "gpt-5.4": {
+          "name": "GPT-5.4"
+        }
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+- The Web UI can apply and roll back this user-level change for you from `CLI Takeover`
+- The Web UI takeover adds or updates `provider.clipal` and rewrites the active `model` to `clipal/<current-model-id>` when possible
+- Project-local `opencode.json` or environment-based overrides may still take precedence
 
 ## Gemini CLI
 
-```bash
-export GEMINI_API_BASE="http://127.0.0.1:3333/clipal"
+Edit `~/.gemini/.env`:
+
+```dotenv
+GEMINI_API_BASE=http://127.0.0.1:3333/clipal
 ```
+
+Notes:
+
+- The Web UI takeover only updates `GEMINI_API_BASE` in the user-level Gemini CLI `.env`
+- Project-local `.env` files or exported environment variables may still take precedence
+- After applying or rolling back from `CLI Takeover`, restart Gemini CLI or open a new session so it reloads the updated environment
+
+## Continue
+
+Edit `~/.continue/config.yaml`:
+
+```yaml
+models:
+  - name: Clipal
+    provider: openai
+    model: gpt-5.4
+    apiBase: http://127.0.0.1:3333/clipal
+    apiKey: clipal
+    roles:
+      - chat
+      - edit
+      - apply
+```
+
+Notes:
+
+- The Web UI takeover adds or updates a Clipal model entry in the user-level Continue config
+- Continue may still keep another model selected in the app, so you may need to switch to `Clipal` inside Continue
+- Workspace-level Continue settings can still override the user-level config
+
+## Aider
+
+Edit `~/.aider.conf.yml`:
+
+```yaml
+model: openai/gpt-5.4
+openai-api-base: http://127.0.0.1:3333/clipal
+```
+
+Notes:
+
+- The Web UI takeover updates `openai-api-base` and a minimal `model` value in the home-level Aider config
+- Repo-local `.aider.conf.yml`, `.env`, current-directory config, and CLI flags can still override the home config
+- Existing `openai-api-key` values are left untouched
+
+## Goose
+
+Edit `~/.config/goose/custom_providers/clipal.json`:
+
+```json
+{
+  "name": "clipal",
+  "engine": "openai",
+  "display_name": "Clipal",
+  "base_url": "http://127.0.0.1:3333/clipal/v1/chat/completions",
+  "models": [
+    {
+      "name": "gpt-5.4",
+      "context_limit": 128000
+    }
+  ]
+}
+```
+
+Notes:
+
+- The Web UI takeover manages a dedicated Goose custom provider file rather than rewriting built-in provider config
+- You may still need to select the Clipal provider or model inside Goose
+- Restart Goose or open a new session after apply or rollback so it reloads provider config
 
 ## Generic OpenAI-Compatible Clients
 

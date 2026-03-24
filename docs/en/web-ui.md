@@ -44,6 +44,28 @@ If you changed the port, replace `3333` with your actual port.
 - Install, start, stop, restart, or uninstall the background service
 - View best-effort service status
 
+### CLI Takeover
+
+- Inspect supported CLI integrations from the UI
+- Apply one-click user-level takeover for `Claude Code`, `Codex CLI`, `OpenCode`, `Gemini CLI`, `Continue`, `Aider`, and `Goose`
+- Create a backup before the first takeover so rollback can restore the original file
+- Roll back to the last captured pre-takeover state
+- See the exact target config file path that Clipal manages
+- Preview the current file and the exact result Clipal will write before applying changes
+
+Notes:
+
+- This feature currently edits user-level config only
+- `Claude Code` takeover only updates `ANTHROPIC_BASE_URL`; it does not overwrite `ANTHROPIC_AUTH_TOKEN`
+- `OpenCode` takeover adds or updates `provider.clipal` and rewrites the active `model` to `clipal/<current-model-id>`
+- `Gemini CLI` takeover only updates `GEMINI_API_BASE` in `~/.gemini/.env`
+- `Continue` takeover adds or updates a user-level `Clipal` model entry
+- `Aider` takeover updates the home-level `openai-api-base` and a minimal OpenAI-compatible `model`
+- `Goose` takeover manages a dedicated custom provider file under `~/.config/goose/custom_providers/`
+- Project-local, managed, or enterprise settings may still override the effective behavior
+- Re-applying an already managed integration is designed to be a no-op, so the original backup stays restorable
+- After apply or rollback, restart the client or open a new session so it reloads the updated user config
+
 ### Export
 
 - Export the current config as JSON for backup or migration

@@ -4,7 +4,10 @@ package web
 // structs directly over HTTP. This prevents accidental JSON field-name mismatches
 // and lets us redact sensitive fields like API keys.
 
-import "github.com/lansespirit/Clipal/internal/config"
+import (
+	"github.com/lansespirit/Clipal/internal/config"
+	integrationpkg "github.com/lansespirit/Clipal/internal/integration"
+)
 
 // GlobalConfigRequest represents a request to update global configuration
 type GlobalConfigRequest struct {
@@ -226,6 +229,23 @@ type ServiceStatusResponse struct {
 	InstallHint    string `json:"install_hint,omitempty"`
 }
 
+type IntegrationResponse struct {
+	Product         string `json:"product"`
+	Name            string `json:"name"`
+	State           string `json:"state"`
+	TargetPath      string `json:"target_path"`
+	BackupAvailable bool   `json:"backup_available"`
+	Warning         string `json:"warning,omitempty"`
+	CurrentContent  string `json:"current_content,omitempty"`
+	PlannedContent  string `json:"planned_content,omitempty"`
+}
+
+type IntegrationActionResponse struct {
+	Message string              `json:"message"`
+	Product string              `json:"product"`
+	Status  IntegrationResponse `json:"status"`
+}
+
 func boolPtrOrTrue(v *bool) bool {
 	if v == nil {
 		return true
@@ -289,5 +309,18 @@ func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {
 		Mode:           string(cc.Mode),
 		PinnedProvider: cc.PinnedProvider,
 		Providers:      out,
+	}
+}
+
+func toIntegrationResponse(product integrationpkg.ProductID, status integrationpkg.Status, preview integrationpkg.Preview) IntegrationResponse {
+	return IntegrationResponse{
+		Product:         string(product),
+		Name:            integrationpkg.ProductName(product),
+		State:           string(status.State),
+		TargetPath:      status.TargetPath,
+		BackupAvailable: status.BackupAvailable,
+		Warning:         status.Warning,
+		CurrentContent:  preview.CurrentContent,
+		PlannedContent:  preview.PlannedContent,
 	}
 }

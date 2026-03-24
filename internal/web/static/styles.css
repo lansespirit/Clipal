@@ -636,6 +636,57 @@ body {
     gap: 8px;
 }
 
+.integration-card {
+    gap: 18px;
+}
+
+.integration-warning {
+    margin-top: -4px;
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400e;
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    font-size: var(--text-sm);
+}
+
+.dark .integration-warning {
+    color: #fcd34d;
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.integration-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.integration-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+    gap: 14px;
+}
+
+.integration-preview-panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+}
+
+.integration-preview-code {
+    margin-top: 10px;
+    min-height: 140px;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
 .log-output {
     font-family: var(--font-mono);
     font-size: var(--text-xs);

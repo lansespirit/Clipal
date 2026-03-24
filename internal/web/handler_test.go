@@ -180,6 +180,10 @@ func TestServeStatic_ServesBrandIconAndUpdatedLabels(t *testing.T) {
 		`{ value: 'claude', label: 'Claude' }`,
 		`{ value: 'openai', label: 'OpenAI' }`,
 		`{ value: 'gemini', label: 'Gemini' }`,
+		`return 'Gemini CLI';`,
+		`return 'Continue';`,
+		`return 'Aider';`,
+		`return 'Goose';`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing %q", want)
@@ -257,6 +261,72 @@ func TestLocalOnly_APIStateChanging_RejectsWrongContentType(t *testing.T) {
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestIntegrations_UIAndRouteAreRegistered(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	h := NewHandler(t.TempDir(), "test", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
+	w := httptest.NewRecorder()
+	h.serveIndex(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("index status=%d body=%s", w.Code, w.Body.String())
+	}
+	index := w.Body.String()
+	if !strings.Contains(index, "CLI Takeover") {
+		t.Fatalf("index missing integrations tab: %s", index)
+	}
+	for _, want := range []string{
+		"This only edits your user-level config file.",
+		"Restart the client or open a new session after applying changes.",
+		"Current file",
+		"After apply",
+	} {
+		if !strings.Contains(index, want) {
+			t.Fatalf("index missing %q: %s", want, index)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/static/app.js", nil)
+	w = httptest.NewRecorder()
+	h.serveStatic(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("app.js status=%d body=%s", w.Code, w.Body.String())
+	}
+	js := w.Body.String()
+	for _, want := range []string{
+		"/api/integrations",
+		"Claude Code",
+		"Codex CLI",
+		"OpenCode",
+		"Restart the client or open a new session",
+		"ANTHROPIC_AUTH_TOKEN is left untouched",
+		`wire_api = "responses"`,
+		"current_content",
+		"planned_content",
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("app.js missing %q", want)
+		}
+	}
+	if strings.Contains(js, "clipal-placeholder") {
+		t.Fatalf("app.js should not suggest overwriting Claude auth token")
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/api/integrations", nil)
+	req.Host = "localhost:3333"
+	req.RemoteAddr = "127.0.0.1:12345"
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("route status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

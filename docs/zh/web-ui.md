@@ -44,6 +44,28 @@ http://127.0.0.1:3333/
 - 安装、启动、停止、重启、卸载后台服务
 - 查看后台服务状态
 
+### CLI Takeover
+
+- 在 UI 中查看当前支持的一键接管项
+- 一键接管 `Claude Code`、`Codex CLI`、`OpenCode`、`Gemini CLI`、`Continue`、`Aider` 和 `Goose` 的用户级配置
+- 首次接管前自动创建备份，便于后续回滚
+- 一键回滚到接管前捕获的原始文件状态
+- 展示 Clipal 实际管理的目标配置文件路径
+- 在 apply 前预览“当前文件”和“Apply 后将写入的结果”
+
+说明：
+
+- 当前阶段只修改用户级配置
+- `Claude Code` 的一键接管只会更新 `ANTHROPIC_BASE_URL`，不会覆盖 `ANTHROPIC_AUTH_TOKEN`
+- `OpenCode` 的一键接管会新增或更新 `provider.clipal`，并把当前 `model` 改写为 `clipal/<当前模型ID>`
+- `Gemini CLI` 的一键接管只会更新 `~/.gemini/.env` 里的 `GEMINI_API_BASE`
+- `Continue` 的一键接管会新增或更新用户级 `Clipal` 模型项
+- `Aider` 的一键接管会更新 home 级 `openai-api-base`，并补一个最小 OpenAI 兼容 `model`
+- `Goose` 的一键接管会管理 `~/.config/goose/custom_providers/` 下的独立 custom provider 文件
+- 项目级、受管控或企业策略下发的配置仍可能覆盖最终生效结果
+- 对已经由 Clipal 接管的配置重复执行 apply 会尽量保持幂等，不覆盖最初备份
+- Apply 或 Rollback 后，建议重启客户端或新开一个会话，让它重新加载用户级配置
+
 ### Export
 
 - 导出当前配置为 JSON，便于备份或迁移

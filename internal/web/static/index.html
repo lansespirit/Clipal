@@ -50,6 +50,11 @@
                 :class="{'active': activeTab === 'settings'}" class="tab">
                 Global Settings
             </button>
+            <button id="tabbtn-integrations" role="tab" :tabindex="activeTab === 'integrations' ? 0 : -1"
+                :aria-selected="activeTab === 'integrations'" aria-controls="tab-integrations"
+                @click="activeTab = 'integrations'" :class="{'active': activeTab === 'integrations'}" class="tab">
+                CLI Takeover
+            </button>
             <button id="tabbtn-services" role="tab" :tabindex="activeTab === 'services' ? 0 : -1"
                 :aria-selected="activeTab === 'services'" aria-controls="tab-services" @click="activeTab = 'services'"
                 :class="{'active': activeTab === 'services'}" class="tab">
@@ -63,10 +68,25 @@
         </nav>
 
         <!-- Alert Messages -->
-        <div x-show="alert.show" :class="'alert alert-' + alert.type"
-            style="margin-bottom: 20px; padding: 12px; border-radius: 8px; background: var(--bg-surface); border: 1px solid var(--border);"
-            x-transition>
-            <span x-text="alert.message"></span>
+        <div x-show="alert.show"
+            :class="{
+                'alert-success': alert.type === 'success',
+                'alert-error': alert.type === 'error',
+                'alert-info': alert.type === 'info'
+            }"
+            style="position: fixed; top: 24px; left: 50%; width: max-content; max-width: 90vw; transform: translateX(-50%); z-index: 10000; padding: 14px 24px; border-radius: 99px; font-weight: 500; font-size: 15px; box-shadow: var(--shadow-xl); background: var(--bg-card); border: 2px solid; text-align: center; cursor: pointer;"
+            :style="alert.type === 'success' ? 'border-color: var(--success); color: var(--success);' : (alert.type === 'error' ? 'border-color: var(--danger); color: var(--danger);' : 'border-color: var(--primary); color: var(--primary);')"
+            @click="alert.show = false"
+            x-transition:enter="transition ease-out duration-300"
+            x-transition:enter-start="opacity-0 -translate-y-8"
+            x-transition:enter-end="opacity-100 translate-y-0"
+            x-transition:leave="transition ease-in duration-200"
+            x-transition:leave-start="opacity-100 translate-y-0"
+            x-transition:leave-end="opacity-0 -translate-y-8">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="flex-shrink: 0" x-text="alert.type === 'success' ? '✅' : (alert.type === 'error' ? '❌' : 'ℹ️')"></span>
+                <span x-text="alert.message" style="color: var(--text-primary); text-align: left;"></span>
+            </div>
         </div>
 
         <!-- Providers Tab -->
@@ -320,6 +340,84 @@
                         style="margin-left: auto;">Export Config</button>
                 </div>
             </form>
+        </div>
+
+        <!-- Integrations Tab -->
+        <div id="tab-integrations" role="tabpanel" aria-labelledby="tabbtn-integrations"
+            x-show="activeTab === 'integrations'" class="tab-content"
+            x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2"
+            x-transition:enter-end="opacity-100 translate-y-0">
+            <div class="card-grid">
+                <div class="card" style="grid-column: 1 / -1;">
+                    <div class="provider-header">
+                        <div>
+                            <h3 class="provider-name">CLI Takeover</h3>
+                            <div class="status-client-subtitle">
+                                Let Clipal take over supported CLI clients by modifying their user-level config files.
+                            </div>
+                        </div>
+                        <div class="status-metrics">
+                            <button type="button" class="metric-pill pill-secondary" @click="loadIntegrations()">
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-hint">
+                        This only edits your user-level config file. Project-local or managed settings may still
+                        override the effective behavior.
+                    </div>
+                    <div class="form-hint" style="margin-top: 8px;">
+                        Restart the client or open a new session after applying changes.
+                    </div>
+                </div>
+
+                <template x-if="integrations.length === 0">
+                    <div class="card u-text-center" style="grid-column: 1 / -1; padding: 48px;">
+                        <p style="color: var(--text-secondary)">No supported integrations detected.</p>
+                    </div>
+                </template>
+
+                <template x-for="integration in integrations" :key="integration.product">
+                    <div class="card integration-card">
+                        <div class="provider-header" style="margin-bottom: 8px; padding-bottom: 0; border-bottom: none; display: flex; align-items: center; justify-content: space-between;">
+                            <div style="display: flex; align-items: center; gap: 14px;">
+                                <h3 class="provider-name" x-text="integration.name"></h3>
+                                <span class="metric-pill" :class="integrationStateClass(integration.state)"
+                                    x-text="integrationStateLabel(integration.state)"></span>
+                            </div>
+                            <div class="segmented-group" style="padding: 3px; gap: 1px;">
+                                <button type="button" class="segment-btn" style="padding: 7px 18px; font-size: 13px; border-radius: 8px;"
+                                    :class="integration.state === 'configured' ? 'active' : ''"
+                                    :disabled="integrationBusyProduct === integration.product || integration.state === 'configured'"
+                                    @click="runIntegrationAction(integration.product, 'apply')"
+                                    x-text="integrationBusyProduct === integration.product && integration.state !== 'configured' ? 'Working...' : integrationApplyLabel()">
+                                </button>
+                                <button type="button" class="segment-btn" style="padding: 7px 18px; font-size: 13px; border-radius: 8px;"
+                                    :class="integration.state !== 'configured' ? 'active' : ''"
+                                    :disabled="integrationBusyProduct === integration.product || integration.state !== 'configured' || !integration.backup_available"
+                                    @click="runIntegrationAction(integration.product, 'rollback')"
+                                    x-text="integrationBusyProduct === integration.product && integration.state === 'configured' ? 'Working...' : integrationRollbackLabel()">
+                                </button>
+                            </div>
+                        </div>
+
+                        <details class="integration-preview-details" style="margin-top: 4px;">
+                            <summary class="form-hint" style="cursor: pointer; user-select: none; display: inline-block;">View Configuration Details & Preview (<span x-text="integration.backup_available ? 'Backup Available' : 'No backup yet'"></span>)</summary>
+
+                            <div class="integration-preview-grid" style="margin-top: 12px;">
+                                <div class="integration-preview-panel">
+                                    <div class="kv-label">Current file</div>
+                                    <pre class="integration-preview-code" x-text="integrationPreviewValue(integration.current_content, 'File does not exist yet.')" style="min-height: 80px;"></pre>
+                                </div>
+                                <div class="integration-preview-panel">
+                                    <div class="kv-label">After apply</div>
+                                    <pre class="integration-preview-code" x-text="integrationPreviewValue(integration.planned_content, 'No planned changes.')" style="min-height: 80px;"></pre>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </template>
+            </div>
         </div>
 
         <!-- Services Tab -->

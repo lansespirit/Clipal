@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
+	"github.com/lansespirit/Clipal/internal/integration"
 	"github.com/lansespirit/Clipal/internal/logger"
 	"github.com/lansespirit/Clipal/internal/proxy"
 )
@@ -25,18 +26,20 @@ const (
 
 // API handles all API requests for the management interface
 type API struct {
-	configDir string
-	version   string
-	runtime   *proxy.Router
-	configMu  sync.Mutex
+	configDir    string
+	version      string
+	runtime      *proxy.Router
+	integrations *integration.Manager
+	configMu     sync.Mutex
 }
 
 // NewAPI creates a new API handler
 func NewAPI(configDir, version string, runtime *proxy.Router) *API {
 	return &API{
-		configDir: configDir,
-		version:   version,
-		runtime:   runtime,
+		configDir:    configDir,
+		version:      version,
+		runtime:      runtime,
+		integrations: integration.NewManager(configDir),
 	}
 }
 
@@ -541,7 +544,92 @@ func (a *API) HandleExportConfig(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(exportData)
 }
 
+func (a *API) HandleListIntegrations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cfg := a.runtimeConfigOrLoad(w)
+	if cfg == nil {
+		return
+	}
+
+	resp := make([]IntegrationResponse, 0, len(integration.SupportedProducts()))
+	for _, product := range integration.SupportedProducts() {
+		status, err := a.integrations.Status(product, cfg)
+		if err != nil {
+			writeError(w, fmt.Sprintf("failed to inspect %s: %v", product, err), http.StatusInternalServerError)
+			return
+		}
+		preview, err := a.integrations.Preview(product, cfg)
+		if err != nil {
+			writeError(w, fmt.Sprintf("failed to preview %s: %v", product, err), http.StatusInternalServerError)
+			return
+		}
+		resp = append(resp, toIntegrationResponse(product, status, preview))
+	}
+	writeJSON(w, resp)
+}
+
+func (a *API) HandleIntegrationAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	product, action := extractIntegrationAction(r.URL.EscapedPath())
+	if product == "" || action == "" {
+		writeError(w, "invalid integration path", http.StatusBadRequest)
+		return
+	}
+
+	cfg := a.runtimeConfigOrLoad(w)
+	if cfg == nil {
+		return
+	}
+
+	var (
+		result integration.Result
+		err    error
+	)
+	switch action {
+	case "apply":
+		result, err = a.integrations.Apply(product, cfg)
+	case "rollback":
+		result, err = a.integrations.Rollback(product, cfg)
+	default:
+		writeError(w, "invalid integration action", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	preview, err := a.integrations.Preview(result.Product, cfg)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, IntegrationActionResponse{
+		Message: result.Message,
+		Product: string(result.Product),
+		Status:  toIntegrationResponse(result.Product, result.Status, preview),
+	})
+}
+
 // Helper functions
+
+func (a *API) runtimeConfigOrLoad(w http.ResponseWriter) *config.Config {
+	if a.runtime != nil {
+		if cfg := a.runtime.ConfigSnapshot(); cfg != nil {
+			return cfg
+		}
+	}
+	return a.loadConfigOrWriteError(w)
+}
 
 func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt proxy.ClientRuntimeSnapshot) ClientStatus {
 	enabled := config.GetEnabledProviders(cc)
@@ -681,6 +769,20 @@ func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt p
 		LastRequest: lastRequest,
 		Providers:   outProviders,
 	}
+}
+
+func extractIntegrationAction(path string) (integration.ProductID, string) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "api" || parts[1] != "integrations" {
+		return "", ""
+	}
+	product := integration.ProductID(strings.TrimSpace(parts[2]))
+	switch product {
+	case integration.ProductClaudeCode, integration.ProductCodexCLI, integration.ProductOpenCode, integration.ProductGeminiCLI, integration.ProductContinue, integration.ProductAider, integration.ProductGoose:
+	default:
+		return "", strings.TrimSpace(parts[3])
+	}
+	return product, strings.TrimSpace(parts[3])
 }
 
 func userVisibleCapability(capability string) string {
