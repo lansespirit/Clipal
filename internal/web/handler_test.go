@@ -148,6 +148,39 @@ func TestServeStatic_ContentTypeAndNotFound(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("missing status=%d body=%s", w.Code, w.Body.String())
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/static/styles.css", nil)
+	w = httptest.NewRecorder()
+	h.serveStatic(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("styles.css status=%d body=%s", w.Code, w.Body.String())
+	}
+	css := w.Body.String()
+	for _, want := range []string{
+		".pill-xs",
+		".pill-sm",
+		".pill-status-compact",
+		".pill {",
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("styles.css missing %q", want)
+		}
+	}
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
+	w = httptest.NewRecorder()
+	h.serveIndex(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("index status=%d body=%s", w.Code, w.Body.String())
+	}
+	index := w.Body.String()
+	for _, want := range []string{
+		`class="version-pill pill pill-xs"`,
+		`class="metric-pill pill pill-status-compact integration-card-status"`,
+	} {
+		if !strings.Contains(index, want) {
+			t.Fatalf("index missing %q", want)
+		}
+	}
 }
 
 func TestServeStatic_ServesBrandIconAndUpdatedLabels(t *testing.T) {

@@ -249,14 +249,40 @@ body {
     gap: 16px;
 }
 
+.pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.pill-xs {
+    height: 24px;
+    padding: 0 8px;
+    font-size: var(--text-xs);
+}
+
+.pill-sm {
+    height: 28px;
+    padding: 0 10px;
+    font-size: var(--text-xs);
+}
+
+.pill-status-compact {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 0.6875rem;
+    letter-spacing: 0.02em;
+}
+
 .version-pill {
     font-family: var(--font-mono);
     font-weight: var(--font-medium);
-    font-size: var(--text-xs);
     background: var(--bg-surface);
     color: var(--text-secondary);
-    padding: 6px 10px;
-    border-radius: 99px;
     border: 1px solid var(--border);
 }
 
@@ -374,16 +400,9 @@ body {
 }
 
 .mode-pill {
-    display: inline-flex;
-    align-items: center;
-    height: 28px;
-    padding: 0 10px;
-    border-radius: 999px;
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
     font-weight: var(--font-medium);
     border: 1px solid transparent;
-    user-select: none;
 }
 
 .mode-pill.mode-auto {
@@ -568,11 +587,8 @@ body {
 .mono-pill {
     font-family: var(--font-mono);
     font-weight: var(--font-medium);
-    font-size: var(--text-xs);
     background: var(--bg-surface);
     color: var(--text-secondary);
-    padding: 6px 10px;
-    border-radius: 99px;
     border: 1px solid var(--border);
 }
 
@@ -656,9 +672,6 @@ body {
 
 .integration-card-status {
     margin-top: 0;
-    padding: 4px 8px;
-    font-size: 0.6875rem;
-    letter-spacing: 0.02em;
     flex: 0 0 auto;
     align-self: flex-start;
 }
@@ -894,15 +907,9 @@ body {
 }
 
 .chip {
-    display: inline-flex;
-    align-items: center;
-    height: 28px;
-    padding: 0 10px;
-    border-radius: 999px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     color: var(--text-secondary);
-    font-size: var(--text-xs);
     font-weight: var(--font-medium);
     font-family: var(--font-mono);
     max-width: 100%;

@@ -25,13 +25,13 @@
                 <div class="brand-copy">
                     <div class="flex items-center gap-3">
                         <h1>Clipal</h1>
-                        <span class="version-pill" x-text="status.version"></span>
+                        <span class="version-pill pill pill-xs" x-text="status.version"></span>
                     </div>
                     <p class="brand-subtitle">Local ingress for Claude, OpenAI, and Gemini traffic</p>
                 </div>
             </div>
             <div class="header-info">
-                <span class="version-pill" x-text="'Uptime: ' + status.uptime"></span>
+                <span class="version-pill pill pill-xs" x-text="'Uptime: ' + status.uptime"></span>
                 <button @click="toggleTheme()" class="theme-toggle" :title="'Current theme: ' + themeLabel">
                     <span x-text="themeIcon"></span>
                 </button>
@@ -113,7 +113,7 @@
                     <div class="client-mode-row">
                         <div class="client-mode-left">
                             <span class="client-mode-label">Mode</span>
-                            <span class="mode-pill" :class="clientConfig.mode === 'auto' ? 'mode-auto' : 'mode-manual'"
+                            <span class="mode-pill pill pill-sm" :class="clientConfig.mode === 'auto' ? 'mode-auto' : 'mode-manual'"
                                 x-text="clientConfig.mode === 'auto' ? 'Auto' : 'Manual'"></span>
                             <span class="tooltip" aria-label="Mode help">
                                 <button type="button" class="info-btn" aria-label="Mode help">i</button>
@@ -123,7 +123,7 @@
 
                         <div class="client-mode-middle" x-show="clientConfig.mode === 'manual'">
                             <span class="client-mode-label">Pinned:</span>
-                            <span class="mono-pill" x-text="clientConfig.pinned_provider || 'None'"></span>
+                            <span class="mono-pill pill pill-sm" x-text="clientConfig.pinned_provider || 'None'"></span>
                         </div>
 
                         <div class="client-mode-right">
@@ -357,7 +357,7 @@
                             </div>
                         </div>
                         <div class="status-metrics">
-                            <button type="button" class="metric-pill pill-secondary" @click="loadIntegrations()">
+                            <button type="button" class="metric-pill pill pill-xs pill-secondary" @click="loadIntegrations()">
                                 Refresh
                             </button>
                         </div>
@@ -381,7 +381,7 @@
                     <div class="card integration-card">
                         <div class="integration-card-header">
                             <h3 class="provider-name integration-card-heading" x-text="integration.name"></h3>
-                            <span class="metric-pill integration-card-status" :class="integrationStateClass(integration.state)"
+                            <span class="metric-pill pill pill-status-compact integration-card-status" :class="integrationStateClass(integration.state)"
                                 x-text="integrationStateLabel(integration.state)"></span>
                         </div>
 
@@ -447,36 +447,36 @@
                         <div>
                             <h3 class="provider-name">Clipal Service</h3>
                             <div class="status-client-subtitle">
-                                Manage the OS background service (same as <span class="mono-pill">clipal service
+                                Manage the OS background service (same as <span class="mono-pill pill pill-xs">clipal service
                                     *</span>)
                             </div>
                         </div>
                         <div class="status-metrics">
-                            <button type="button" class="metric-pill" disabled
+                            <button type="button" class="metric-pill pill pill-sm" disabled
                                 :class="serviceStatus.supported ? 'pill-success' : 'pill-danger'"
                                 x-text="serviceStatus.supported ? 'Supported' : 'Unsupported'"></button>
 
                             <template x-if="serviceStatus.supported && !serviceStatus.installed">
                                 <template x-if="serviceStatus.os === 'windows'">
-                                    <button type="button" class="metric-pill pill-primary"
+                                    <button type="button" class="metric-pill pill pill-sm pill-primary"
                                         @click="copyServiceInstallCommand()">
                                         Install
                                     </button>
                                 </template>
                                 <template x-if="serviceStatus.os !== 'windows'">
-                                    <button type="button" class="metric-pill pill-primary"
+                                    <button type="button" class="metric-pill pill pill-sm pill-primary"
                                         @click="serviceAction('install')">
                                         Install
                                     </button>
                                 </template>
                             </template>
                             <template x-if="!serviceStatus.supported || serviceStatus.installed">
-                                <button type="button" class="metric-pill" disabled
+                                <button type="button" class="metric-pill pill pill-sm" disabled
                                     :class="serviceStatus.installed ? 'pill-success' : 'pill-warning'"
                                     x-text="serviceStatus.installed ? 'Installed' : 'Not installed'"></button>
                             </template>
 
-                            <button type="button" class="metric-pill pill-secondary" @click="loadServiceStatus()">
+                            <button type="button" class="metric-pill pill pill-sm pill-secondary" @click="loadServiceStatus()">
                                 Check
                             </button>
                         </div>
@@ -628,7 +628,7 @@
                             <div>
                                 <h3 class="provider-name" x-text="clientLabel(name)"></h3>
                                 <div class="status-client-subtitle">
-                                    Current: <span class="mono-pill" x-text="client.current_provider || 'None'"></span>
+                                    Current: <span class="mono-pill pill pill-sm" x-text="client.current_provider || 'None'"></span>
                                 </div>
                                 <template x-if="scopeProviderEntries(client).length > 0">
                                     <div class="form-hint" style="margin-top: 8px;">
@@ -638,16 +638,16 @@
                                             <span style="margin-right: 8px;">
                                                 <span x-text="scopeLabel(scope)"></span>
                                                 <span>-></span>
-                                                <span class="mono-pill" x-text="provider"></span>
+                                                <span class="mono-pill pill pill-sm" x-text="provider"></span>
                                             </span>
                                         </template>
                                     </div>
                                 </template>
                                 <div class="status-client-subtitle" style="margin-top: 6px;">
-                                    Mode: <span class="mono-pill" x-text="client.mode || 'auto'"></span>
+                                    Mode: <span class="mono-pill pill pill-sm" x-text="client.mode || 'auto'"></span>
                                     <template x-if="(client.mode || '') === 'manual'">
                                         <span style="margin-left: 10px;">
-                                            Pinned: <span class="mono-pill"
+                                            Pinned: <span class="mono-pill pill pill-sm"
                                                 x-text="client.pinned_provider || 'None'"></span>
                                         </span>
                                     </template>
@@ -674,14 +674,14 @@
                                 </div>
                             </div>
                             <div class="status-metrics">
-                                <span class="metric-pill" x-text="'Providers: ' + client.provider_count"></span>
-                                <span class="metric-pill"
+                                <span class="metric-pill pill pill-sm" x-text="'Providers: ' + client.provider_count"></span>
+                                <span class="metric-pill pill pill-sm"
                                     x-text="'Enabled: ' + ((client.enabled_providers && client.enabled_providers.length) || 0)"></span>
                             </div>
                         </div>
                         <div class="chips">
                             <template x-for="p in (client.providers || [])" :key="p.name">
-                                <span class="chip"
+                                <span class="chip pill pill-sm"
                                     :class="p.name === client.current_provider ? 'chip-primary' : (p.skip_reason ? 'chip-danger' : (!p.enabled ? 'chip-muted' : ''))"
                                     :title="providerStatusTitle(p)" x-text="providerStatusLabel(p)"></span>
                             </template>
@@ -727,8 +727,8 @@
                             placeholder="sk-xxx&#10;sk-yyy"></textarea>
                         <div class="form-meta">
                             <span class="form-meta-label">Saved as</span>
-                            <span class="mono-pill">1 line -> api_key</span>
-                            <span class="mono-pill">2+ lines -> api_keys</span>
+                            <span class="mono-pill pill pill-sm">1 line -> api_key</span>
+                            <span class="mono-pill pill pill-sm">2+ lines -> api_keys</span>
                         </div>
                         <div class="form-hint" x-show="showEditProviderModal && editingProviderKeyCount > 0"
                             x-text="'Leave empty to keep the current ' + editingProviderKeyCount + ' configured key' + (editingProviderKeyCount === 1 ? '' : 's') + '.'"></div>
