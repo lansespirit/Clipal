@@ -69,6 +69,12 @@ func TestFormatGlobalConfigYAML_HasHeaderAndQuotesEmptyStrings(t *testing.T) {
 	if !strings.Contains(got, "\nnotifications:\n") {
 		t.Fatalf("expected notifications block, got:\n%s", got)
 	}
+	if !strings.Contains(got, "\nrouting:\n") {
+		t.Fatalf("expected routing block, got:\n%s", got)
+	}
+	if !strings.Contains(got, "sticky_sessions:\n") {
+		t.Fatalf("expected sticky_sessions block, got:\n%s", got)
+	}
 }
 
 func TestFormatGlobalConfigYAML_EscapesNewlines(t *testing.T) {

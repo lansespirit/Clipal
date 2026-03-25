@@ -118,8 +118,35 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 	writeBufferString(&b, fmt.Sprintf("  min_level: %s # debug | info | warn | error\n", yamlDoubleQuote(strings.TrimSpace(string(gc.Notifications.MinLevel)))))
 	writeBufferString(&b, fmt.Sprintf("  provider_switch: %v\n", boolPtrOrTrue(gc.Notifications.ProviderSwitch)))
 
+	writeBufferString(&b, "\n# Routing strategy\n")
+	writeBufferString(&b, "routing:\n")
+	writeBufferString(&b, "  sticky_sessions:\n")
+	writeBufferString(&b, fmt.Sprintf("    enabled: %v\n", gc.Routing.StickySessions.Enabled))
+	writeBufferString(&b, fmt.Sprintf("    explicit_ttl: %s # idle TTL for explicit sticky bindings\n", yamlDoubleQuote(strings.TrimSpace(gc.Routing.StickySessions.ExplicitTTL))))
+	writeBufferString(&b, fmt.Sprintf("    cache_hint_ttl: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.Routing.StickySessions.CacheHintTTL))))
+	writeBufferString(&b, fmt.Sprintf("    dynamic_feature_ttl: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.Routing.StickySessions.DynamicFeatureTTL))))
+	writeBufferString(&b, fmt.Sprintf("    dynamic_feature_capacity: %d\n", gc.Routing.StickySessions.DynamicFeatureCapacity))
+	writeBufferString(&b, fmt.Sprintf("    response_lookup_ttl: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.Routing.StickySessions.ResponseLookupTTL))))
+	writeBufferString(&b, "  busy_backpressure:\n")
+	writeBufferString(&b, fmt.Sprintf("    enabled: %v\n", gc.Routing.BusyBackpressure.Enabled))
+	writeBufferString(&b, fmt.Sprintf("    retry_delays: [%s]\n", yamlInlineQuotedList(gc.Routing.BusyBackpressure.RetryDelays)))
+	writeBufferString(&b, fmt.Sprintf("    probe_max_inflight: %d\n", gc.Routing.BusyBackpressure.ProbeMaxInFlight))
+	writeBufferString(&b, fmt.Sprintf("    short_retry_after_max: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.Routing.BusyBackpressure.ShortRetryAfterMax))))
+	writeBufferString(&b, fmt.Sprintf("    max_inline_wait: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.Routing.BusyBackpressure.MaxInlineWait))))
+
 	writeBufferString(&b, "\n")
 	return b.Bytes()
+}
+
+func yamlInlineQuotedList(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, yamlDoubleQuote(strings.TrimSpace(v)))
+	}
+	return strings.Join(out, ", ")
 }
 
 func clientConfigHeader(clientType string) string {

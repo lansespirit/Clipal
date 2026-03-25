@@ -46,6 +46,20 @@ func TestHandleGetGlobalConfig_ReturnsSnakeCase(t *testing.T) {
 	if _, ok := ntf["MinLevel"]; ok {
 		t.Fatalf("did not expect notifications.MinLevel")
 	}
+	routing, ok := got["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected routing object, got %T", got["routing"])
+	}
+	sticky, ok := routing["sticky_sessions"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected routing.sticky_sessions object, got %T", routing["sticky_sessions"])
+	}
+	if _, ok := sticky["explicit_ttl"]; !ok {
+		t.Fatalf("expected routing.sticky_sessions.explicit_ttl, got keys=%v", keys(sticky))
+	}
+	if _, ok := routing["StickySessions"]; ok {
+		t.Fatalf("did not expect routing.StickySessions")
+	}
 	if v, ok := got["log_stdout"]; !ok || (v != true && v != false) {
 		t.Fatalf("expected log_stdout boolean, got %v (%T)", got["log_stdout"], got["log_stdout"])
 	}
@@ -168,6 +182,17 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
     "min_level": "warn",
     "provider_switch": false
   },
+  "routing": {
+    "sticky_sessions": {
+      "enabled": true,
+      "explicit_ttl": "45m"
+    },
+    "busy_backpressure": {
+      "enabled": true,
+      "short_retry_after_max": "5s",
+      "max_inline_wait": "12s"
+    }
+  },
   "circuit_breaker": {
     "failure_threshold": 4,
     "success_threshold": 2,
@@ -196,6 +221,21 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
 	}
 	if cfg.Global.Notifications.ProviderSwitch == nil || *cfg.Global.Notifications.ProviderSwitch {
 		t.Fatalf("expected notifications.provider_switch=false, got %v", cfg.Global.Notifications.ProviderSwitch)
+	}
+	if !cfg.Global.Routing.StickySessions.Enabled {
+		t.Fatalf("expected routing.sticky_sessions.enabled=true")
+	}
+	if cfg.Global.Routing.StickySessions.ExplicitTTL != "45m" {
+		t.Fatalf("expected routing.sticky_sessions.explicit_ttl=45m, got %q", cfg.Global.Routing.StickySessions.ExplicitTTL)
+	}
+	if !cfg.Global.Routing.BusyBackpressure.Enabled {
+		t.Fatalf("expected routing.busy_backpressure.enabled=true")
+	}
+	if cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax != "5s" {
+		t.Fatalf("expected routing.busy_backpressure.short_retry_after_max=5s, got %q", cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax)
+	}
+	if cfg.Global.Routing.BusyBackpressure.MaxInlineWait != "12s" {
+		t.Fatalf("expected routing.busy_backpressure.max_inline_wait=12s, got %q", cfg.Global.Routing.BusyBackpressure.MaxInlineWait)
 	}
 }
 

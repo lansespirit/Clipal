@@ -184,10 +184,24 @@ func TestServeStatic_ContentTypeAndNotFound(t *testing.T) {
 		`service-action-layout`,
 		`service-action-main-row`,
 		`service-action-aside`,
+		`settings-compact-grid`,
+		`settings-panel`,
+		`settings-page-header`,
+		`Routing Strategy`,
 	} {
 		if !strings.Contains(index, want) {
 			t.Fatalf("index missing %q", want)
 		}
+	}
+	if strings.Contains(index, `class="settings-toolbar card"`) {
+		t.Fatalf("index still contains old settings hero card")
+	}
+	providersPos := strings.Index(index, `id="tabbtn-providers"`)
+	integrationsPos := strings.Index(index, `id="tabbtn-integrations"`)
+	settingsPos := strings.Index(index, `id="tabbtn-settings"`)
+	servicesPos := strings.Index(index, `id="tabbtn-services"`)
+	if !(providersPos >= 0 && integrationsPos > providersPos && settingsPos > integrationsPos && servicesPos > settingsPos) {
+		t.Fatalf("unexpected tab order: providers=%d integrations=%d settings=%d services=%d", providersPos, integrationsPos, settingsPos, servicesPos)
 	}
 }
 
@@ -229,6 +243,8 @@ func TestServeStatic_ServesBrandIconAndUpdatedLabels(t *testing.T) {
 		`serviceActionDisabledReason(action) {`,
 		`return 'Service is already running';`,
 		`return 'Service is not running';`,
+		`sticky_sessions: {`,
+		`busy_backpressure: {`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing %q", want)

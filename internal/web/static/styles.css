@@ -1306,6 +1306,101 @@ body {
     letter-spacing: -0.01em;
 }
 
+.settings-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+    padding: 0 2px 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-page-copy {
+    margin-top: 4px;
+    color: var(--text-tertiary);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    max-width: 680px;
+}
+
+.settings-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 6px;
+}
+
+.settings-compact-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+    gap: 16px;
+}
+
+.settings-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 22px 20px;
+    box-shadow: var(--shadow-sm);
+}
+
+.settings-panel-header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-panel-header h3 {
+    font-size: var(--text-base);
+    font-weight: var(--font-bold);
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+
+.settings-panel-copy {
+    margin-top: 4px;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+}
+
+.settings-panel-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 14px;
+}
+
+.settings-panel-grid .form-group {
+    margin-bottom: 0;
+}
+
+.settings-flag-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.settings-flag-card {
+    min-height: 42px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+}
+
+.settings-form-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 18px;
+    flex-wrap: wrap;
+}
+
 .form-group {
     margin-bottom: 24px;
 }
@@ -1805,6 +1900,24 @@ input:checked+.slider:before {
 
     .form-section {
         padding: 22px;
+    }
+
+    .settings-page-header,
+    .settings-form-actions {
+        align-items: stretch;
+    }
+
+    .settings-toolbar-actions {
+        justify-content: flex-start;
+        padding-top: 4px;
+    }
+
+    .settings-panel {
+        padding: 18px;
+    }
+
+    .settings-panel-grid {
+        grid-template-columns: 1fr;
     }
 
     .service-action-main-row {

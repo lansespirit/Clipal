@@ -45,15 +45,15 @@
                 @click="activeTab = 'providers'" :class="{'active': activeTab === 'providers'}" class="tab">
                 Providers
             </button>
-            <button id="tabbtn-settings" role="tab" :tabindex="activeTab === 'settings' ? 0 : -1"
-                :aria-selected="activeTab === 'settings'" aria-controls="tab-settings" @click="activeTab = 'settings'"
-                :class="{'active': activeTab === 'settings'}" class="tab">
-                Global Settings
-            </button>
             <button id="tabbtn-integrations" role="tab" :tabindex="activeTab === 'integrations' ? 0 : -1"
                 :aria-selected="activeTab === 'integrations'" aria-controls="tab-integrations"
                 @click="activeTab = 'integrations'" :class="{'active': activeTab === 'integrations'}" class="tab">
                 CLI Takeover
+            </button>
+            <button id="tabbtn-settings" role="tab" :tabindex="activeTab === 'settings' ? 0 : -1"
+                :aria-selected="activeTab === 'settings'" aria-controls="tab-settings" @click="activeTab = 'settings'"
+                :class="{'active': activeTab === 'settings'}" class="tab">
+                Global Settings
             </button>
             <button id="tabbtn-services" role="tab" :tabindex="activeTab === 'services' ? 0 : -1"
                 :aria-selected="activeTab === 'services'" aria-controls="tab-services" @click="activeTab = 'services'"
@@ -204,140 +204,192 @@
             class="tab-content" x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
             <form @submit.prevent="saveGlobalConfig()">
-                <div class="form-section">
-                    <div class="form-header">
-                        <h2>Server Configuration</h2>
+                <div class="settings-page-header">
+                    <div>
+                        <h3 class="provider-name">Global Settings</h3>
+                        <div class="settings-page-copy">
+                            Runtime defaults, recovery policy, routing strategy, and local observability.
+                        </div>
                     </div>
-
-                    <div class="card-grid">
-                        <div class="form-group">
-                            <label class="form-label">Listen Address</label>
-                            <input type="text" x-model="globalConfig.listen_addr" class="form-input" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Port</label>
-                            <input type="number" x-model.number="globalConfig.port" class="form-input" required min="1"
-                                max="65535">
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Log Level</label>
-                            <select x-model="globalConfig.log_level" class="form-select">
-                                <option value="debug">Debug</option>
-                                <option value="info">Info</option>
-                                <option value="warn">Warn</option>
-                                <option value="error">Error</option>
-                            </select>
-                        </div>
+                    <div class="settings-toolbar-actions">
+                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
+                        <button type="button" @click="exportConfig()" class="btn btn-secondary">Export</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
                     </div>
                 </div>
 
-                <div class="form-section">
-                    <div class="form-header">
-                        <h2>Provider Failover</h2>
-                    </div>
-
-                    <div class="card-grid">
-                        <div class="form-group">
-                            <label class="form-label">Reactivate After</label>
-                            <input type="text" x-model="globalConfig.reactivate_after" class="form-input" required>
-                            <div class="form-hint">e.g., 1h, 30m</div>
+                <div class="settings-compact-grid">
+                    <section class="settings-panel">
+                        <div class="settings-panel-header">
+                            <div>
+                                <h3>Runtime</h3>
+                                <p class="settings-panel-copy">Basic listener and request buffering defaults.</p>
+                            </div>
                         </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Upstream Idle Timeout</label>
-                            <input type="text" x-model="globalConfig.upstream_idle_timeout" class="form-input" required>
-                            <div class="form-hint">e.g., 3m</div>
+                        <div class="settings-panel-grid">
+                            <div class="form-group">
+                                <label class="form-label">Listen Address</label>
+                                <input type="text" x-model="globalConfig.listen_addr" class="form-input" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Port</label>
+                                <input type="number" x-model.number="globalConfig.port" class="form-input" required min="1"
+                                    max="65535">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Log Level</label>
+                                <select x-model="globalConfig.log_level" class="form-select">
+                                    <option value="debug">Debug</option>
+                                    <option value="info">Info</option>
+                                    <option value="warn">Warn</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Max Body Size</label>
+                                <input type="number" x-model.number="globalConfig.max_request_body_bytes" class="form-input"
+                                    required min="1">
+                                <div class="form-hint">Bytes buffered for retryable requests.</div>
+                            </div>
                         </div>
+                    </section>
 
-                        <div class="form-group">
-                            <label class="form-label">Response Header Timeout</label>
-                            <input type="text" x-model="globalConfig.response_header_timeout" class="form-input" required>
-                            <div class="form-hint">e.g., 2m, 3m (0 disables)</div>
+                    <section class="settings-panel">
+                        <div class="settings-panel-header">
+                            <div>
+                                <h3>Reliability</h3>
+                                <p class="settings-panel-copy">Timeouts, temporary deactivation, and circuit breaker behavior.</p>
+                            </div>
                         </div>
-                    </div>
-
-                    <div class="form-header" style="margin-top: 20px;">
-                        <h2 style="font-size: 16px;">Circuit Breaker</h2>
-                    </div>
-
-                    <div class="card-grid">
-                        <div class="form-group">
-                            <label class="form-label">Failure Threshold</label>
-                            <input type="number" x-model.number="globalConfig.circuit_breaker.failure_threshold"
-                                class="form-input" required min="0">
-                            <div class="form-hint">Consecutive failures before opening (0 disables)</div>
+                        <div class="settings-panel-grid">
+                            <div class="form-group">
+                                <label class="form-label">Reactivate After</label>
+                                <input type="text" x-model="globalConfig.reactivate_after" class="form-input" required>
+                                <div class="form-hint">How long a failed provider stays deactivated.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Upstream Idle Timeout</label>
+                                <input type="text" x-model="globalConfig.upstream_idle_timeout" class="form-input" required>
+                                <div class="form-hint">Set to 0 to disable stalled-stream protection.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Response Header Timeout</label>
+                                <input type="text" x-model="globalConfig.response_header_timeout" class="form-input" required>
+                                <div class="form-hint">Set to 0 to wait indefinitely for headers.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Failure Threshold</label>
+                                <input type="number" x-model.number="globalConfig.circuit_breaker.failure_threshold"
+                                    class="form-input" required min="0">
+                                <div class="form-hint">0 disables the circuit breaker.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Success Threshold</label>
+                                <input type="number" x-model.number="globalConfig.circuit_breaker.success_threshold"
+                                    class="form-input" required min="1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Open Timeout</label>
+                                <input type="text" x-model="globalConfig.circuit_breaker.open_timeout" class="form-input"
+                                    required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Half-Open Max In-Flight</label>
+                                <input type="number" x-model.number="globalConfig.circuit_breaker.half_open_max_inflight"
+                                    class="form-input" required min="1">
+                            </div>
                         </div>
+                    </section>
 
-                        <div class="form-group">
-                            <label class="form-label">Success Threshold</label>
-                            <input type="number" x-model.number="globalConfig.circuit_breaker.success_threshold"
-                                class="form-input" required min="1">
-                            <div class="form-hint">Consecutive half-open successes to close</div>
+                    <section class="settings-panel">
+                        <div class="settings-panel-header">
+                            <div>
+                                <h3>Logs & Alerts</h3>
+                                <p class="settings-panel-copy">Local logging, retention, and desktop notification behavior.</p>
+                            </div>
                         </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Open Timeout</label>
-                            <input type="text" x-model="globalConfig.circuit_breaker.open_timeout" class="form-input"
-                                required>
-                            <div class="form-hint">e.g., 60s, 2m</div>
+                        <div class="settings-panel-grid">
+                            <div class="form-group">
+                                <label class="form-label">Log Directory</label>
+                                <input type="text" x-model="globalConfig.log_dir" class="form-input">
+                                <div class="form-hint">Leave empty to use the default config-dir logs folder.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Retention (Days)</label>
+                                <input type="number" x-model.number="globalConfig.log_retention_days" class="form-input"
+                                    min="0">
+                                <div class="form-hint">0 keeps logs forever.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Notification Level</label>
+                                <select x-model="globalConfig.notifications.min_level" class="form-select">
+                                    <option value="debug">Debug</option>
+                                    <option value="info">Info</option>
+                                    <option value="warn">Warn</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
                         </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Half-Open Max In-Flight</label>
-                            <input type="number" x-model.number="globalConfig.circuit_breaker.half_open_max_inflight"
-                                class="form-input" required min="1">
-                            <div class="form-hint">Concurrent probe requests</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <div class="form-header">
-                        <h2>Logging & Notifications</h2>
-                    </div>
-
-                    <div class="card-grid">
-                        <div class="form-group">
-                            <label class="form-label">Log Directory</label>
-                            <input type="text" x-model="globalConfig.log_dir" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Retention (Days)</label>
-                            <input type="number" x-model.number="globalConfig.log_retention_days" class="form-input"
-                                min="0">
-                            <div class="form-hint">Set to 0 to keep logs forever</div>
-                        </div>
-                    </div>
-
-                    <div class="card-grid" style="margin-top: 20px;">
-                        <div class="form-group">
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <div class="settings-flag-grid">
+                            <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.log_stdout">
-                                <span>Log to Stdout</span>
+                                <span class="checkbox-text">Log to Stdout</span>
                             </label>
-                        </div>
-                        <div class="form-group">
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.notifications.enabled">
-                                <span>Enable Desktop Notifications</span>
+                                <span class="checkbox-text">Desktop Notifications</span>
                             </label>
-                        </div>
-                        <div class="form-group">
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.notifications.provider_switch">
-                                <span>Notify on Switch</span>
+                                <span class="checkbox-text">Notify on Provider Switch</span>
                             </label>
                         </div>
-                    </div>
+                    </section>
+
+                    <section class="settings-panel">
+                        <div class="settings-panel-header">
+                            <div>
+                                <h3>Routing Strategy</h3>
+                                <p class="settings-panel-copy">Expose only the routing controls that change user-visible behavior.</p>
+                            </div>
+                        </div>
+                        <div class="settings-panel-grid">
+                            <div class="form-group">
+                                <label class="form-label">Sticky Session TTL</label>
+                                <input type="text" x-model="globalConfig.routing.sticky_sessions.explicit_ttl" class="form-input">
+                                <div class="form-hint">Idle lifetime for explicit session bindings.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Short Retry-After Max</label>
+                                <input type="text" x-model="globalConfig.routing.busy_backpressure.short_retry_after_max" class="form-input">
+                                <div class="form-hint">Upper bound for honoring short upstream retry-after hints.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Max Inline Wait</label>
+                                <input type="text" x-model="globalConfig.routing.busy_backpressure.max_inline_wait" class="form-input">
+                                <div class="form-hint">How long Clipal may wait before overflowing to another provider.</div>
+                            </div>
+                        </div>
+                        <div class="settings-flag-grid">
+                            <label class="checkbox-label settings-flag-card">
+                                <input type="checkbox" x-model="globalConfig.routing.sticky_sessions.enabled">
+                                <span class="checkbox-text">Enable Sticky Sessions</span>
+                            </label>
+                            <label class="checkbox-label settings-flag-card">
+                                <input type="checkbox" x-model="globalConfig.routing.busy_backpressure.enabled">
+                                <span class="checkbox-text">Enable Busy Backpressure</span>
+                            </label>
+                        </div>
+                    </section>
                 </div>
 
-                <div class="form-actions" style="display: flex; gap: 12px;">
-                    <button type="submit" class="btn btn-primary">Save Configuration</button>
-                    <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
-                    <button type="button" @click="exportConfig()" class="btn btn-secondary"
-                        style="margin-left: auto;">Export Config</button>
+                <div class="form-actions settings-form-actions">
+                    <div class="form-hint">Saving updates `config.yaml`. Some runtime changes may require restart to take full effect.</div>
+                    <div class="settings-toolbar-actions">
+                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
+                        <button type="button" @click="exportConfig()" class="btn btn-secondary">Export</button>
+                        <button type="submit" class="btn btn-primary">Save Settings</button>
+                    </div>
                 </div>
             </form>
         </div>

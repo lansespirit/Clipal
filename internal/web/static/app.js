@@ -42,6 +42,17 @@ function app() {
                 success_threshold: 2,
                 open_timeout: '60s',
                 half_open_max_inflight: 1
+            },
+            routing: {
+                sticky_sessions: {
+                    enabled: true,
+                    explicit_ttl: '30m'
+                },
+                busy_backpressure: {
+                    enabled: true,
+                    short_retry_after_max: '3s',
+                    max_inline_wait: '8s'
+                }
             }
         },
         status: {
@@ -92,6 +103,15 @@ function app() {
             const out = { ...def, ...(cfg || {}) };
             out.notifications = { ...def.notifications, ...((cfg && cfg.notifications) ? cfg.notifications : {}) };
             out.circuit_breaker = { ...def.circuit_breaker, ...((cfg && cfg.circuit_breaker) ? cfg.circuit_breaker : {}) };
+            out.routing = { ...def.routing, ...((cfg && cfg.routing) ? cfg.routing : {}) };
+            out.routing.sticky_sessions = {
+                ...def.routing.sticky_sessions,
+                ...((cfg && cfg.routing && cfg.routing.sticky_sessions) ? cfg.routing.sticky_sessions : {})
+            };
+            out.routing.busy_backpressure = {
+                ...def.routing.busy_backpressure,
+                ...((cfg && cfg.routing && cfg.routing.busy_backpressure) ? cfg.routing.busy_backpressure : {})
+            };
             return out;
         },
 

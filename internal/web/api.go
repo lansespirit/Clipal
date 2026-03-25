@@ -109,6 +109,21 @@ func (a *API) HandleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.Global.CircuitBreaker.SuccessThreshold = req.CircuitBreaker.SuccessThreshold
 	cfg.Global.CircuitBreaker.OpenTimeout = req.CircuitBreaker.OpenTimeout
 	cfg.Global.CircuitBreaker.HalfOpenMaxInFlight = req.CircuitBreaker.HalfOpenMaxInFlight
+	if req.Routing.StickySessions.Enabled != nil {
+		cfg.Global.Routing.StickySessions.Enabled = *req.Routing.StickySessions.Enabled
+	}
+	if strings.TrimSpace(req.Routing.StickySessions.ExplicitTTL) != "" {
+		cfg.Global.Routing.StickySessions.ExplicitTTL = req.Routing.StickySessions.ExplicitTTL
+	}
+	if req.Routing.BusyBackpressure.Enabled != nil {
+		cfg.Global.Routing.BusyBackpressure.Enabled = *req.Routing.BusyBackpressure.Enabled
+	}
+	if strings.TrimSpace(req.Routing.BusyBackpressure.ShortRetryAfterMax) != "" {
+		cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax = req.Routing.BusyBackpressure.ShortRetryAfterMax
+	}
+	if strings.TrimSpace(req.Routing.BusyBackpressure.MaxInlineWait) != "" {
+		cfg.Global.Routing.BusyBackpressure.MaxInlineWait = req.Routing.BusyBackpressure.MaxInlineWait
+	}
 
 	if !a.saveGlobalConfigOrWriteError(w, cfg) {
 		return

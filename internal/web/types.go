@@ -23,6 +23,7 @@ type GlobalConfigRequest struct {
 	LogStdout             *bool                       `json:"log_stdout"`
 	Notifications         NotificationsConfigRequest  `json:"notifications"`
 	CircuitBreaker        CircuitBreakerConfigRequest `json:"circuit_breaker"`
+	Routing               RoutingConfigRequest        `json:"routing"`
 }
 
 type NotificationsConfigRequest struct {
@@ -36,6 +37,22 @@ type CircuitBreakerConfigRequest struct {
 	SuccessThreshold    int    `json:"success_threshold"`
 	OpenTimeout         string `json:"open_timeout"`
 	HalfOpenMaxInFlight int    `json:"half_open_max_inflight"`
+}
+
+type RoutingConfigRequest struct {
+	StickySessions   StickySessionsConfigRequest   `json:"sticky_sessions"`
+	BusyBackpressure BusyBackpressureConfigRequest `json:"busy_backpressure"`
+}
+
+type StickySessionsConfigRequest struct {
+	Enabled     *bool  `json:"enabled,omitempty"`
+	ExplicitTTL string `json:"explicit_ttl,omitempty"`
+}
+
+type BusyBackpressureConfigRequest struct {
+	Enabled            *bool  `json:"enabled,omitempty"`
+	ShortRetryAfterMax string `json:"short_retry_after_max,omitempty"`
+	MaxInlineWait      string `json:"max_inline_wait,omitempty"`
 }
 
 // GlobalConfigResponse represents the global configuration returned to the UI.
@@ -52,6 +69,7 @@ type GlobalConfigResponse struct {
 	LogStdout             bool                         `json:"log_stdout"`
 	Notifications         NotificationsConfigResponse  `json:"notifications"`
 	CircuitBreaker        CircuitBreakerConfigResponse `json:"circuit_breaker"`
+	Routing               RoutingConfigResponse        `json:"routing"`
 }
 
 type NotificationsConfigResponse struct {
@@ -65,6 +83,22 @@ type CircuitBreakerConfigResponse struct {
 	SuccessThreshold    int    `json:"success_threshold"`
 	OpenTimeout         string `json:"open_timeout"`
 	HalfOpenMaxInFlight int    `json:"half_open_max_inflight"`
+}
+
+type RoutingConfigResponse struct {
+	StickySessions   StickySessionsConfigResponse   `json:"sticky_sessions"`
+	BusyBackpressure BusyBackpressureConfigResponse `json:"busy_backpressure"`
+}
+
+type StickySessionsConfigResponse struct {
+	Enabled     bool   `json:"enabled"`
+	ExplicitTTL string `json:"explicit_ttl"`
+}
+
+type BusyBackpressureConfigResponse struct {
+	Enabled            bool   `json:"enabled"`
+	ShortRetryAfterMax string `json:"short_retry_after_max"`
+	MaxInlineWait      string `json:"max_inline_wait"`
 }
 
 type ClientConfigRequest struct {
@@ -280,6 +314,17 @@ func toGlobalConfigResponse(gc config.GlobalConfig) GlobalConfigResponse {
 			SuccessThreshold:    gc.CircuitBreaker.SuccessThreshold,
 			OpenTimeout:         gc.CircuitBreaker.OpenTimeout,
 			HalfOpenMaxInFlight: gc.CircuitBreaker.HalfOpenMaxInFlight,
+		},
+		Routing: RoutingConfigResponse{
+			StickySessions: StickySessionsConfigResponse{
+				Enabled:     gc.Routing.StickySessions.Enabled,
+				ExplicitTTL: gc.Routing.StickySessions.ExplicitTTL,
+			},
+			BusyBackpressure: BusyBackpressureConfigResponse{
+				Enabled:            gc.Routing.BusyBackpressure.Enabled,
+				ShortRetryAfterMax: gc.Routing.BusyBackpressure.ShortRetryAfterMax,
+				MaxInlineWait:      gc.Routing.BusyBackpressure.MaxInlineWait,
+			},
 		},
 	}
 }
