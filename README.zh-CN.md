@@ -1,7 +1,7 @@
 # Clipal
 
 <div align="center">
-  <img src="assets/Clipal-Hancock5.jpeg" alt="Clipal" width="100%">
+  <img src="assets/Clipal-hancock5.jpeg" alt="Clipal" width="100%">
   <p><b>你的终极本地 LLM API 网关与管理器</b></p>
   <p>
     <a href="README.md">English</a> | <a href="README.zh-CN.md">中文</a>
