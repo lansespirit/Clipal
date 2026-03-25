@@ -26,6 +26,8 @@ cd "${dir}"
 
 # Only hash regular files (ignore directories).
 while IFS= read -r -d '' f; do
+  if [[ "${f#./}" == "checksums.txt" ]]; then
+    continue
+  fi
   ${hash_cmd} "${f#./}"
 done < <(find . -maxdepth 1 -type f -print0 | sort -z)
-
