@@ -79,11 +79,10 @@ function app() {
             stdout_path: '',
             stderr_path: ''
         },
-        alert: {
-            show: false,
-            type: 'info',
-            message: ''
-        },
+        toasts: [],
+        toastCounter: 0,
+        toastTimeouts: {},
+        integrationResults: {},
         showAddProviderModal: false,
         showEditProviderModal: false,
         providerForm: {
@@ -294,7 +293,7 @@ function app() {
         },
 
         // API Calls
-        async apiCall(url, options = {}, background = false) {
+        async apiCall(url, options = {}, background = false, suppressAlert = false) {
             if (!background) this.isLoading = true;
             try {
                 // Minimum loading time to prevent flickering for fast requests
@@ -324,7 +323,9 @@ function app() {
 
                 return data;
             } catch (error) {
-                this.showAlert('error', error.message);
+                if (!suppressAlert) {
+                    this.showAlert('error', error.message);
+                }
                 throw error;
             } finally {
                 if (!background) this.isLoading = false;
@@ -600,6 +601,60 @@ function app() {
             return 'No planned changes.';
         },
 
+        integrationResultFor(integration) {
+            const product = String((integration && integration.product) || '').trim();
+            if (!product) {
+                return null;
+            }
+            return this.integrationResults[product] || null;
+        },
+
+        integrationResultClass(result) {
+            const type = String((result && result.type) || 'info').trim() || 'info';
+            return `integration-result--${type}`;
+        },
+
+        integrationResultBadgeClass(result) {
+            const type = String((result && result.type) || 'info').trim() || 'info';
+            return `integration-result__badge--${type}`;
+        },
+
+        integrationResultBadgeLabel(type) {
+            switch (String(type || '').trim()) {
+                case 'success':
+                    return 'Updated';
+                case 'error':
+                    return 'Error';
+                default:
+                    return 'Notice';
+            }
+        },
+
+        setIntegrationResult(product, type, title, message) {
+            const name = String(product || '').trim();
+            if (!name) {
+                return;
+            }
+            this.integrationResults = {
+                ...this.integrationResults,
+                [name]: {
+                    type: String(type || 'info').trim() || 'info',
+                    title: String(title || '').trim(),
+                    message: String(message || '').trim()
+                }
+            };
+        },
+
+        clearIntegrationResult(product) {
+            const name = String(product || '').trim();
+            if (!name || !this.integrationResults[name]) {
+                return;
+            }
+            const next = { ...this.integrationResults };
+            delete next[name];
+            this.integrationResults = next;
+        },
+
         normalizeIntegration(item) {
             return {
                 ...item,
@@ -615,7 +670,12 @@ function app() {
         async loadIntegrations(background = false) {
             try {
                 const items = await this.apiCall('/api/integrations', {}, !!background);
-                this.integrations = (items || []).map(item => this.normalizeIntegration(item));
+                const integrations = (items || []).map(item => this.normalizeIntegration(item));
+                this.integrations = integrations;
+                const knownProducts = new Set(integrations.map(item => String((item && item.product) || '').trim()).filter(Boolean));
+                this.integrationResults = Object.fromEntries(
+                    Object.entries(this.integrationResults).filter(([product]) => knownProducts.has(product))
+                );
             } catch (error) {
                 console.error('Failed to load integrations:', error);
                 this.integrations = [];
@@ -627,22 +687,38 @@ function app() {
             const op = String(action || '').trim();
             if (!name || !op) return;
 
+            this.clearIntegrationResult(name);
             this.integrationBusyProduct = name;
             try {
                 const response = await this.apiCall(`/api/integrations/${encodeURIComponent(name)}/${op}`, {
                     method: 'POST'
-                });
+                }, false, true);
                 this.integrations = (this.integrations || []).map(item =>
                     item && item.product === name
                         ? this.normalizeIntegration({ ...response.status, name: this.integrationProductName(name) || response.status.name })
                         : item
                 );
                 if (op === 'apply') {
-                    this.showAlert('success', `${this.integrationProductName(name)} is now pointed at Clipal. Restart the client or open a new session after applying changes.`);
+                    this.setIntegrationResult(
+                        name,
+                        'success',
+                        'Now using Clipal',
+                        'Restart the client or open a new session to apply changes.'
+                    );
                 } else {
-                    this.showAlert('success', `${this.integrationProductName(name)} was restored from backup. Restart the client or open a new session after applying changes.`);
+                    this.setIntegrationResult(
+                        name,
+                        'success',
+                        'Restored from backup',
+                        'Restart the client or open a new session to apply changes.'
+                    );
                 }
             } catch (error) {
+                const title = op === 'apply'
+                    ? 'Couldn’t update this client'
+                    : 'Couldn’t restore this client';
+                this.setIntegrationResult(name, 'error', title, error.message);
+                this.showAlert('error', error.message, title);
                 console.error(`Failed to ${op} integration:`, error);
             } finally {
                 this.integrationBusyProduct = '';
@@ -954,20 +1030,99 @@ function app() {
             }
         },
 
-        alertTimeout: null,
-        showAlert(type, message) {
-            this.alert = {
-                show: true,
-                type: type,
-                message: message
+        defaultToastTitle(type) {
+            switch (String(type || '').trim()) {
+                case 'success':
+                    return 'Success';
+                case 'error':
+                    return 'Request failed';
+                default:
+                    return 'Notice';
+            }
+        },
+
+        toastTypeLabel(type) {
+            switch (String(type || '').trim()) {
+                case 'success':
+                    return 'Success';
+                case 'error':
+                    return 'Error';
+                default:
+                    return 'Info';
+            }
+        },
+
+        clearToastTimer(id) {
+            const key = String(id || '').trim();
+            if (!key || !this.toastTimeouts[key]) {
+                return;
+            }
+            clearTimeout(this.toastTimeouts[key]);
+            delete this.toastTimeouts[key];
+        },
+
+        dismissToast(id) {
+            const key = String(id || '').trim();
+            if (!key) {
+                return;
+            }
+            this.clearToastTimer(key);
+            this.toasts = this.toasts.filter(toast => toast.id !== key);
+        },
+
+        pauseToast(id) {
+            const key = String(id || '').trim();
+            const toast = this.toasts.find(item => item.id === key);
+            if (!toast) {
+                return;
+            }
+            if (typeof toast.dismissAt === 'number' && toast.dismissAt > 0) {
+                toast.remaining = Math.max(0, toast.dismissAt - Date.now());
+            }
+            this.clearToastTimer(key);
+        },
+
+        resumeToast(id) {
+            const key = String(id || '').trim();
+            const toast = this.toasts.find(item => item.id === key);
+            if (!toast) {
+                return;
+            }
+            const delay = Math.max(1, Number(toast.remaining) || 0);
+            toast.dismissAt = Date.now() + delay;
+            this.clearToastTimer(key);
+            this.toastTimeouts[key] = setTimeout(() => {
+                this.dismissToast(key);
+            }, delay);
+        },
+
+        showAlert(type, message, title = '') {
+            const body = String(message || '').trim();
+            if (!body) {
+                return;
+            }
+
+            const kind = ['success', 'error', 'info'].includes(type) ? type : 'info';
+            const id = `toast-${Date.now()}-${++this.toastCounter}`;
+            const toast = {
+                id,
+                type: kind,
+                title: String(title || '').trim() || this.defaultToastTitle(kind),
+                message: body,
+                remaining: kind === 'error' ? 7000 : 5200,
+                dismissAt: 0
             };
 
-            if (this.alertTimeout) {
-                clearTimeout(this.alertTimeout);
+            const nextToasts = [...this.toasts, toast];
+            while (nextToasts.length > 3) {
+                const removed = nextToasts.shift();
+                if (removed && removed.id) {
+                    this.clearToastTimer(removed.id);
+                }
             }
-            this.alertTimeout = setTimeout(() => {
-                this.alert.show = false;
-            }, 8000); // Increased from 5s to 8s
+
+            this.toasts = nextToasts;
+            this.resumeToast(id);
         },
 
         closeModals() {

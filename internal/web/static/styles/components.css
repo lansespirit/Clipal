@@ -121,6 +121,109 @@
     font-weight: var(--font-bold);
 }
 
+/* Toasts */
+
+.toast-stack {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 180;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+    pointer-events: none;
+}
+
+.toast {
+    width: min(420px, calc(100vw - 32px));
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: var(--glass-bg);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    pointer-events: auto;
+}
+
+.toast--success {
+    border-color: rgba(16, 185, 129, 0.24);
+}
+
+.toast--error {
+    border-color: rgba(239, 68, 68, 0.24);
+}
+
+.toast--info {
+    border-color: rgba(59, 130, 246, 0.22);
+}
+
+.toast__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.toast__badge {
+    flex: 0 0 auto;
+}
+
+.toast__badge--success {
+    background: var(--success-soft);
+    color: var(--success);
+    border: 1px solid transparent;
+}
+
+.toast__badge--error {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border: 1px solid transparent;
+}
+
+.toast__badge--info {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border: 1px solid transparent;
+}
+
+.toast__title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: var(--text-sm);
+    font-weight: var(--font-bold);
+    color: var(--text-primary);
+    line-height: 1.25;
+}
+
+.toast__message {
+    margin-top: 10px;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed);
+    text-align: left;
+}
+
+.toast__close {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: var(--transition);
+    flex: 0 0 auto;
+}
+
+.toast__close:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+}
+
 /* Providers toolbar */
 
 .client-switcher-container {
@@ -330,6 +433,17 @@
 }
 
 @media (max-width: 640px) {
+    .toast-stack {
+        top: 16px;
+        right: 16px;
+        left: 16px;
+        align-items: stretch;
+    }
+
+    .toast {
+        width: 100%;
+    }
+
     .modal {
         width: calc(100% - 24px);
         max-width: none;

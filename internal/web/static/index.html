@@ -71,26 +71,28 @@
             </button>
         </nav>
 
-        <!-- Alert Messages -->
-        <div x-show="alert.show"
-            :class="{
-                'alert-success': alert.type === 'success',
-                'alert-error': alert.type === 'error',
-                'alert-info': alert.type === 'info'
-            }"
-            style="position: fixed; top: 24px; left: 50%; width: max-content; max-width: 90vw; transform: translateX(-50%); z-index: 10000; padding: 14px 24px; border-radius: 99px; font-weight: 500; font-size: 15px; box-shadow: var(--shadow-xl); background: var(--bg-card); border: 2px solid; text-align: center; cursor: pointer;"
-            :style="alert.type === 'success' ? 'border-color: var(--success); color: var(--success);' : (alert.type === 'error' ? 'border-color: var(--danger); color: var(--danger);' : 'border-color: var(--primary); color: var(--primary);')"
-            @click="alert.show = false"
-            x-transition:enter="transition ease-out duration-300"
-            x-transition:enter-start="opacity-0 -translate-y-8"
-            x-transition:enter-end="opacity-100 translate-y-0"
-            x-transition:leave="transition ease-in duration-200"
-            x-transition:leave-start="opacity-100 translate-y-0"
-            x-transition:leave-end="opacity-0 -translate-y-8">
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="flex-shrink: 0" x-text="alert.type === 'success' ? '✅' : (alert.type === 'error' ? '❌' : 'ℹ️')"></span>
-                <span x-text="alert.message" style="color: var(--text-primary); text-align: left;"></span>
-            </div>
+        <!-- Toast Messages -->
+        <div class="toast-stack" aria-live="polite" aria-atomic="false">
+            <template x-for="toast in toasts" :key="toast.id">
+                <div class="toast" :class="`toast--${toast.type}`" :role="toast.type === 'error' ? 'alert' : 'status'"
+                    @mouseenter="pauseToast(toast.id)"
+                    @mouseleave="resumeToast(toast.id)"
+                    x-transition:enter="transition ease-out duration-220"
+                    x-transition:enter-start="opacity-0 translate-y-2 scale-[0.98]"
+                    x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+                    x-transition:leave="transition ease-in duration-180"
+                    x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+                    x-transition:leave-end="opacity-0 -translate-y-1 scale-[0.98]">
+                    <div class="toast__header">
+                        <span class="badge badge--xs badge--mono toast__badge" :class="`toast__badge--${toast.type}`"
+                            x-text="toastTypeLabel(toast.type)"></span>
+                        <div class="toast__title" x-text="toast.title"></div>
+                        <button type="button" class="toast__close" @click="dismissToast(toast.id)"
+                            aria-label="Dismiss notification">×</button>
+                    </div>
+                    <div class="toast__message" x-text="toast.message"></div>
+                </div>
+            </template>
         </div>
 
         <!-- Providers Tab -->
@@ -471,6 +473,21 @@
                                     x-text="integrationActionDisabledReason(integration, 'rollback')"></span>
                             </span>
                         </div>
+
+                        <template x-if="integrationResultFor(integration)">
+                            <div class="integration-result" :class="integrationResultClass(integrationResultFor(integration))">
+                                <div class="integration-result__header">
+                                    <span class="badge badge--xs badge--mono integration-result__badge"
+                                        :class="integrationResultBadgeClass(integrationResultFor(integration))"
+                                        x-text="integrationResultBadgeLabel(integrationResultFor(integration).type)"></span>
+                                    <button type="button" class="integration-result__dismiss"
+                                        @click="clearIntegrationResult(integration.product)"
+                                        aria-label="Dismiss result">×</button>
+                                </div>
+                                <div class="integration-result__title" x-text="integrationResultFor(integration).title"></div>
+                                <div class="integration-result__message" x-text="integrationResultFor(integration).message"></div>
+                            </div>
+                        </template>
 
                         <details class="integration-preview-details">
                             <summary class="form-hint integration-card-summary integration-card-summary-row">
