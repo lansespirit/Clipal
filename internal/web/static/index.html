@@ -6,7 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clipal Management</title>
     <link rel="icon" type="image/svg+xml" href="/static/clipal-icon.svg">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles/tokens.css">
+    <link rel="stylesheet" href="/static/styles/base.css">
+    <link rel="stylesheet" href="/static/styles/primitives.css">
+    <link rel="stylesheet" href="/static/styles/components.css">
+    <link rel="stylesheet" href="/static/styles/pages.css">
     <script defer src="/static/alpine.min.js"></script>
 </head>
 
@@ -25,13 +29,13 @@
                 <div class="brand-copy">
                     <div class="flex items-center gap-3">
                         <h1>Clipal</h1>
-                        <span class="version-pill pill pill-xs" x-text="status.version"></span>
+                        <span class="pill pill--xs pill--neutral pill--mono" x-text="status.version"></span>
                     </div>
                     <p class="brand-subtitle">Local ingress for Claude, OpenAI, and Gemini traffic</p>
                 </div>
             </div>
             <div class="header-info">
-                <span class="version-pill pill pill-xs" x-text="'Uptime: ' + status.uptime"></span>
+                <span class="pill pill--xs pill--neutral pill--mono" x-text="'Uptime: ' + status.uptime"></span>
                 <button @click="toggleTheme()" class="theme-toggle" :title="'Current theme: ' + themeLabel">
                     <span x-text="themeIcon"></span>
                 </button>
@@ -123,7 +127,8 @@
 
                         <div class="client-mode-middle" x-show="clientConfig.mode === 'manual'">
                             <span class="client-mode-label">Pinned:</span>
-                            <span class="mono-pill pill pill-sm" x-text="clientConfig.pinned_provider || 'None'"></span>
+                            <span class="pill pill--sm pill--neutral pill--mono"
+                                x-text="clientConfig.pinned_provider || 'None'"></span>
                         </div>
 
                         <div class="client-mode-right">
@@ -152,22 +157,22 @@
                 </template>
 
                 <template x-for="provider in providers" :key="provider.name">
-                    <div class="card">
-                        <div class="provider-header">
-                            <div class="provider-info">
-                                <div class="provider-name-row">
+                    <div class="card provider-card">
+                        <div class="provider-card__header">
+                            <div class="provider-card__info">
+                                <div class="provider-card__title-row">
                                     <span class="priority-badge badge badge-xs badge-outline badge-mono" x-text="'#' + provider.priority"></span>
-                                    <h3 class="provider-name" x-text="provider.name"></h3>
+                                    <h3 class="provider-name provider-card__title" x-text="provider.name"></h3>
                                     <template x-if="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider">
                                         <span class="pin-badge badge badge-xs badge-warning" title="Pinned provider">Pinned</span>
                                     </template>
                                 </div>
                                 <span
-                                    :class="'provider-status ' + (provider.enabled ? 'status-enabled' : 'status-disabled')"
+                                    :class="'provider-card__status ' + (provider.enabled ? 'provider-card__status--enabled' : 'provider-card__status--disabled')"
                                     x-text="provider.enabled ? 'Active' : 'Disabled'">
                                 </span>
                             </div>
-                            <div class="provider-controls">
+                            <div class="provider-card__controls">
                                 <label class="switch"
                                     :title="(clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider) ? (provider.enabled ? 'Pinned provider cannot be disabled in manual mode' : 'Enable pinned provider') : (provider.enabled ? 'Disable' : 'Enable')">
                                     <input type="checkbox" :checked="provider.enabled"
@@ -184,14 +189,14 @@
                                     title="Delete">🗑️</button>
                             </div>
                         </div>
-                        <div class="provider-details">
-                            <div class="detail-item">
-                                <span class="detail-label">Base URL</span>
-                                <span class="detail-value" x-text="provider.base_url"></span>
+                        <div class="provider-card__details">
+                            <div class="provider-card__detail">
+                                <span class="provider-card__detail-label">Base URL</span>
+                                <span class="provider-card__detail-value" x-text="provider.base_url"></span>
                             </div>
-                            <div class="detail-item">
-                                <span class="detail-label">API Keys</span>
-                                <span class="detail-value" x-text="(provider.key_count || 0) + ' configured'"></span>
+                            <div class="provider-card__detail">
+                                <span class="provider-card__detail-label">API Keys</span>
+                                <span class="provider-card__detail-value" x-text="(provider.key_count || 0) + ' configured'"></span>
                             </div>
                         </div>
                     </div>
@@ -201,7 +206,7 @@
 
         <!-- Settings Tab -->
         <div id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" x-show="activeTab === 'settings'"
-            class="tab-content" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
             <form @submit.prevent="saveGlobalConfig()">
                 <div class="settings-page-header">
@@ -383,7 +388,7 @@
                     </section>
                 </div>
 
-                <div class="form-actions settings-form-actions">
+                <div class="settings-form-actions">
                     <div class="form-hint">Saving updates `config.yaml`. Some runtime changes may require restart to take full effect.</div>
                     <div class="settings-toolbar-actions">
                         <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
@@ -396,20 +401,21 @@
 
         <!-- Integrations Tab -->
         <div id="tab-integrations" role="tabpanel" aria-labelledby="tabbtn-integrations"
-            x-show="activeTab === 'integrations'" class="tab-content"
+            x-show="activeTab === 'integrations'"
             x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2"
             x-transition:enter-end="opacity-100 translate-y-0">
             <div class="card-grid">
-                <div class="card" style="grid-column: 1 / -1;">
-                    <div class="provider-header">
+                <div class="card takeover-page__panel" style="grid-column: 1 / -1;">
+                    <div class="takeover-page__header">
                         <div>
                             <h3 class="provider-name">CLI Takeover</h3>
-                            <div class="status-client-subtitle">
+                            <div class="takeover-page__copy">
                                 Let Clipal take over supported CLI clients by modifying their user-level config files.
                             </div>
                         </div>
-                        <div class="status-metrics">
-                            <button type="button" class="metric-pill pill pill-xs pill-secondary" @click="loadIntegrations()">
+                        <div class="takeover-page__metrics">
+                            <button type="button" class="pill pill--xs pill--neutral pill--mono pill-secondary"
+                                @click="loadIntegrations()">
                                 Refresh
                             </button>
                         </div>
@@ -433,7 +439,7 @@
                     <div class="card integration-card">
                         <div class="integration-card-header">
                             <h3 class="provider-name integration-card-heading" x-text="integration.name"></h3>
-                            <span class="metric-pill pill pill-status-compact integration-card-status" :class="integrationStateClass(integration.state)"
+                            <span class="pill pill--compact pill--neutral pill--mono integration-card-status" :class="integrationStateClass(integration.state)"
                                 x-text="integrationStateLabel(integration.state)"></span>
                         </div>
 
@@ -491,26 +497,26 @@
 
         <!-- Services Tab -->
         <div id="tab-services" role="tabpanel" aria-labelledby="tabbtn-services" x-show="activeTab === 'services'"
-            class="tab-content" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
             <div class="card-grid">
-                <div class="card" style="grid-column: 1 / -1;">
-                    <div class="provider-header">
+                <div class="card service-panel" style="grid-column: 1 / -1;">
+                    <div class="service-panel__header">
                         <div>
                             <h3 class="provider-name">Clipal Service</h3>
-                            <div class="status-client-subtitle">
-                                Manage the OS background service (same as <span class="mono-pill pill pill-xs">clipal service
+                            <div class="service-panel__copy">
+                                Manage the OS background service (same as <span class="pill pill--xs pill--neutral pill--mono">clipal service
                                     *</span>)
                             </div>
                         </div>
-                        <div class="status-metrics">
-                            <button type="button" class="metric-pill pill pill-sm" disabled
+                        <div class="service-panel__metrics">
+                            <button type="button" class="pill pill--sm pill--neutral pill--mono" disabled
                                 :class="serviceStatus.supported ? 'pill-success' : 'pill-danger'"
                                 x-text="serviceStatus.supported ? 'Supported' : 'Unsupported'"></button>
-                            <button type="button" class="metric-pill pill pill-sm" disabled
+                            <button type="button" class="pill pill--sm pill--neutral pill--mono" disabled
                                 :class="serviceStatus.installed ? 'pill-success' : 'pill-warning'"
                                 x-text="serviceStatus.installed ? 'Installed' : 'Not installed'"></button>
-                            <button type="button" class="metric-pill pill pill-sm" disabled
+                            <button type="button" class="pill pill--sm pill--neutral pill--mono" disabled
                                 :class="serviceRuntimeClass()"
                                 x-text="serviceRuntimeLabel()"></button>
                         </div>
@@ -665,12 +671,12 @@
 
         <!-- Status Tab -->
         <div id="tab-status" role="tabpanel" aria-labelledby="tabbtn-status" x-show="activeTab === 'status'"
-            class="tab-content" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter="transition ease-out duration-200"
             x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
             <div class="card-grid">
-                <div class="card" style="grid-column: 1 / -1;">
-                    <div class="provider-header">
-                        <h3 class="provider-name">System Info</h3>
+                <div class="card status-card status-system-card" style="grid-column: 1 / -1;">
+                    <div class="status-card__header">
+                        <h3 class="provider-name status-card__title">System Info</h3>
                     </div>
                     <div class="kv-grid">
                         <div class="kv-item">
@@ -689,7 +695,7 @@
                                         x-text="globalConfig.circuit_breaker.failure_threshold + ' fail / ' + globalConfig.circuit_breaker.success_threshold + ' succ' + ' (' + globalConfig.circuit_breaker.open_timeout + ')'"></span>
                                 </span>
                                 <span x-show="globalConfig.circuit_breaker.failure_threshold <= 0"
-                                    class="status-deactivated">
+                                    class="text-tertiary">
                                     Disabled
                                 </span>
                             </div>
@@ -698,33 +704,34 @@
                 </div>
 
                 <template x-for="(client, name) in status.clients" :key="name">
-                    <div class="card">
-                        <div class="provider-header">
-                            <div>
-                                <h3 class="provider-name" x-text="clientLabel(name)"></h3>
-                                <div class="status-client-subtitle">
-                                    Current: <span class="mono-pill pill pill-xs" x-text="client.current_provider || 'None'"></span>
+                    <div class="card status-card">
+                        <div class="status-card__header">
+                            <div class="status-card__heading">
+                                <div class="status-card__title-row">
+                                    <h3 class="provider-name status-card__title" x-text="clientLabel(name)"></h3>
+                                    <span class="status-card__mode pill" x-text="client.mode || 'auto'"></span>
                                 </div>
-                                <template x-if="scopeProviderEntries(client).length > 0">
-                                    <div class="form-hint" style="margin-top: 8px;">
-                                        Scoped routing:
-                                        <template x-for="[scope, provider] in scopeProviderEntries(client)"
-                                            :key="scope + ':' + provider">
-                                            <span style="margin-right: 8px;">
-                                                <span x-text="scopeLabel(scope)"></span>
-                                                <span>-></span>
-                                                <span class="mono-pill pill pill-sm" x-text="provider"></span>
-                                            </span>
-                                        </template>
-                                    </div>
-                                </template>
-                                <div class="status-client-subtitle" style="margin-top: 6px;">
-                                    Mode: <span class="mono-pill pill pill-xs" x-text="client.mode || 'auto'"></span>
-                                    <template x-if="(client.mode || '') === 'manual'">
-                                        <span style="margin-left: 10px;">
-                                            Pinned: <span class="mono-pill pill pill-xs"
-                                                x-text="client.pinned_provider || 'None'"></span>
+                                <div class="status-card__meta">
+                                    <template x-if="scopeProviderEntries(client).length > 0">
+                                        <span class="status-card__meta-label">Scoped routing</span>
+                                    </template>
+                                    <template x-for="[scope, provider] in scopeProviderEntries(client)"
+                                        :key="scope + ':' + provider">
+                                        <span class="status-card__scoped-route">
+                                            <span x-text="scopeLabel(scope)"></span>
+                                            <span>&rarr;</span>
+                                            <span class="pill pill--xs pill--neutral pill--mono" x-text="provider"></span>
                                         </span>
+                                    </template>
+                                    <template x-if="(client.mode || '') === 'manual'">
+                                        <span class="status-card__meta-divider"></span>
+                                    </template>
+                                    <template x-if="(client.mode || '') === 'manual'">
+                                        <span class="status-card__meta-label">Pinned</span>
+                                    </template>
+                                    <template x-if="(client.mode || '') === 'manual'">
+                                        <span class="pill pill--xs pill--neutral pill--mono"
+                                            x-text="client.pinned_provider || 'None'"></span>
                                     </template>
                                 </div>
                                 <div class="form-hint" style="margin-top: 8px;" x-show="client.last_switch">
@@ -748,17 +755,26 @@
                                         x-text="(client.last_request && client.last_request.at) ? client.last_request.at : ''"></span>
                                 </div>
                             </div>
-                            <div class="status-metrics">
-                                <span class="metric-pill pill pill-sm" x-text="'Providers: ' + client.provider_count"></span>
-                                <span class="metric-pill pill pill-sm"
+                            <div class="status-card__metrics">
+                                <span class="pill pill--compact pill--neutral pill--mono" x-text="'Providers: ' + client.provider_count"></span>
+                                <span class="pill pill--compact pill--neutral pill--mono"
                                     x-text="'Enabled: ' + ((client.enabled_providers && client.enabled_providers.length) || 0)"></span>
                             </div>
                         </div>
-                        <div class="chips">
-                            <template x-for="p in (client.providers || [])" :key="p.name">
-                                <span class="chip pill pill-sm"
-                                    :class="p.name === client.current_provider ? 'chip-primary' : (p.skip_reason ? 'chip-danger' : (!p.enabled ? 'chip-muted' : ''))"
-                                    :title="providerStatusTitle(p)" x-text="providerStatusLabel(p)"></span>
+                        <div class="status-card__groups">
+                            <template x-for="group in providerStatusGroups(client)" :key="group.key">
+                                <div class="status-card__group">
+                                    <div class="status-card__group-label" x-text="group.label"></div>
+                                    <div class="chips status-card__group-chips">
+                                        <template x-for="p in providerStatusEntries(client, group.key)"
+                                            :key="group.key + ':' + p.name">
+                                            <span class="chip pill pill-sm"
+                                                :class="providerStatusChipClass(group.key, p)"
+                                                :title="providerStatusTitle(p)"
+                                                x-text="providerStatusLabel(p)"></span>
+                                        </template>
+                                    </div>
+                                </div>
                             </template>
                         </div>
                     </div>
@@ -802,8 +818,8 @@
                             placeholder="sk-xxx&#10;sk-yyy"></textarea>
                         <div class="form-meta">
                             <span class="form-meta-label">Saved as</span>
-                            <span class="mono-pill pill pill-xs">1 line -> api_key</span>
-                            <span class="mono-pill pill pill-xs">2+ lines -> api_keys</span>
+                            <span class="pill pill--xs pill--neutral pill--mono">1 line -> api_key</span>
+                            <span class="pill pill--xs pill--neutral pill--mono">2+ lines -> api_keys</span>
                         </div>
                         <div class="form-hint" x-show="showEditProviderModal && editingProviderKeyCount > 0"
                             x-text="'Leave empty to keep the current ' + editingProviderKeyCount + ' configured key' + (editingProviderKeyCount === 1 ? '' : 's') + '.'"></div>

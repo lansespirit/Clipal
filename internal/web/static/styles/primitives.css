@@ -1,0 +1,206 @@
+.pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 999px;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.pill-xs,
+.pill--xs {
+    height: 24px;
+    padding: 0 8px;
+    font-size: var(--text-xs);
+}
+
+.pill-sm,
+.pill--sm {
+    height: 28px;
+    padding: 0 10px;
+    font-size: var(--text-xs);
+}
+
+.pill-status-compact,
+.pill--compact {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 0.6875rem;
+    letter-spacing: 0.02em;
+}
+
+.pill--neutral {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+
+.pill--mono {
+    font-family: var(--font-mono);
+    font-weight: var(--font-medium);
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.badge-xs,
+.badge--xs {
+    height: 20px;
+    padding: 0 7px;
+    font-size: 0.6875rem;
+}
+
+.badge-sm,
+.badge--sm {
+    height: 22px;
+    padding: 0 8px;
+    font-size: var(--text-xs);
+}
+
+.badge-outline,
+.badge--outline {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+
+.badge-warning,
+.badge--warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    border: 1px solid transparent;
+}
+
+.badge-mono,
+.badge--mono {
+    font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+}
+
+/* Keep legacy pill aliases here while markup migrates to the `pill--*` modifiers. */
+
+.mode-pill {
+    font-family: var(--font-mono);
+    font-weight: var(--font-medium);
+    border: 1px solid transparent;
+}
+
+.mode-pill.mode-auto {
+    background: var(--primary-soft);
+    color: var(--primary);
+}
+
+.mode-pill.mode-manual {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+}
+
+.pill-primary {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: transparent;
+    cursor: pointer;
+}
+
+.pill-secondary {
+    cursor: pointer;
+}
+
+.pill-success {
+    background: var(--success-soft);
+    color: var(--success);
+    border-color: transparent;
+}
+
+.pill-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    border-color: transparent;
+}
+
+.pill-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: transparent;
+}
+
+.pill--primary {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: transparent;
+}
+
+.pill--success {
+    background: var(--success-soft);
+    color: var(--success);
+    border-color: transparent;
+}
+
+.pill--warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    border-color: transparent;
+}
+
+.pill--danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: transparent;
+}
+
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.chip {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-weight: var(--font-medium);
+    font-family: var(--font-mono);
+    max-width: 100%;
+}
+
+.chip-primary {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: transparent;
+}
+
+.chip--primary {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: transparent;
+}
+
+.chip-muted {
+    opacity: 0.7;
+}
+
+.chip--muted {
+    opacity: 0.7;
+}
+
+.chip-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: transparent;
+}
+
+.chip--danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: transparent;
+}

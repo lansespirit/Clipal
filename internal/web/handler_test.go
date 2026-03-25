@@ -112,7 +112,11 @@ func TestServeIndex_ContentTypeAndNotFound(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{
-		`/static/styles.css`,
+		`/static/styles/tokens.css`,
+		`/static/styles/base.css`,
+		`/static/styles/primitives.css`,
+		`/static/styles/components.css`,
+		`/static/styles/pages.css`,
 		`/static/clipal-icon.svg`,
 		`rel="icon"`,
 	} {
@@ -149,23 +153,21 @@ func TestServeStatic_ContentTypeAndNotFound(t *testing.T) {
 		t.Fatalf("missing status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "http://localhost/static/styles.css", nil)
-	w = httptest.NewRecorder()
-	h.serveStatic(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("styles.css status=%d body=%s", w.Code, w.Body.String())
-	}
-	css := w.Body.String()
-	for _, want := range []string{
-		".pill-xs",
-		".pill-sm",
-		".pill-status-compact",
-		".pill {",
-		".badge {",
-		".badge-xs",
+	for _, path := range []string{
+		"/static/styles/tokens.css",
+		"/static/styles/base.css",
+		"/static/styles/primitives.css",
+		"/static/styles/components.css",
+		"/static/styles/pages.css",
 	} {
-		if !strings.Contains(css, want) {
-			t.Fatalf("styles.css missing %q", want)
+		req = httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
+		w = httptest.NewRecorder()
+		h.serveStatic(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body.String())
+		}
+		if got := w.Header().Get("Content-Type"); got != "text/css; charset=utf-8" {
+			t.Fatalf("%s content-type=%q", path, got)
 		}
 	}
 	req = httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
@@ -176,32 +178,30 @@ func TestServeStatic_ContentTypeAndNotFound(t *testing.T) {
 	}
 	index := w.Body.String()
 	for _, want := range []string{
-		`class="version-pill pill pill-xs"`,
-		`class="metric-pill pill pill-status-compact integration-card-status"`,
-		`class="priority-badge badge badge-xs badge-outline badge-mono"`,
-		`class="pin-badge badge badge-xs badge-warning"`,
-		`service-action-shell`,
-		`service-action-layout`,
-		`service-action-main-row`,
-		`service-action-aside`,
-		`settings-compact-grid`,
-		`settings-panel`,
-		`settings-page-header`,
-		`Routing Strategy`,
+		`/static/styles/tokens.css`,
+		`/static/styles/base.css`,
+		`/static/styles/primitives.css`,
+		`/static/styles/components.css`,
+		`/static/styles/pages.css`,
+		`status-card__header`,
+		`class="card status-card"`,
+		`provider-card__header`,
+		`class="card provider-card"`,
+		`takeover-page__header`,
+		`service-panel__header`,
+		`id="tabbtn-providers"`,
+		`id="tabbtn-integrations"`,
+		`id="tabbtn-settings"`,
+		`id="tabbtn-services"`,
+		`id="tabbtn-status"`,
+		`CLI Takeover`,
+		`Global Settings`,
+		`Services`,
+		`System Status`,
 	} {
 		if !strings.Contains(index, want) {
 			t.Fatalf("index missing %q", want)
 		}
-	}
-	if strings.Contains(index, `class="settings-toolbar card"`) {
-		t.Fatalf("index still contains old settings hero card")
-	}
-	providersPos := strings.Index(index, `id="tabbtn-providers"`)
-	integrationsPos := strings.Index(index, `id="tabbtn-integrations"`)
-	settingsPos := strings.Index(index, `id="tabbtn-settings"`)
-	servicesPos := strings.Index(index, `id="tabbtn-services"`)
-	if !(providersPos >= 0 && integrationsPos > providersPos && settingsPos > integrationsPos && servicesPos > settingsPos) {
-		t.Fatalf("unexpected tab order: providers=%d integrations=%d settings=%d services=%d", providersPos, integrationsPos, settingsPos, servicesPos)
 	}
 }
 

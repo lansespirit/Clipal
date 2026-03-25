@@ -228,6 +228,71 @@ function app() {
                 .sort(([a], [b]) => a.localeCompare(b));
         },
 
+        providerStatusEntries(client, state) {
+            const current = String((client && client.current_provider) || '').trim();
+            const providers = Array.isArray(client && client.providers) ? client.providers : [];
+            const entries = providers
+                .filter(p => p && String(p.name || '').trim())
+                .map(p => ({ ...p }));
+
+            if (current && !entries.some(p => String(p.name || '').trim() === current)) {
+                entries.unshift({
+                    name: current,
+                    enabled: true,
+                    priority: 0,
+                    key_count: 0,
+                    available_key_count: 0,
+                    state: 'available',
+                    detail: 'Current provider is active but has not appeared in the latest provider snapshot yet.'
+                });
+            }
+
+            const sorted = entries.sort((a, b) => {
+                const aPriority = Number(a && a.priority);
+                const bPriority = Number(b && b.priority);
+                const aValue = Number.isFinite(aPriority) && aPriority > 0 ? aPriority : Number.MAX_SAFE_INTEGER;
+                const bValue = Number.isFinite(bPriority) && bPriority > 0 ? bPriority : Number.MAX_SAFE_INTEGER;
+                if (aValue !== bValue) return aValue - bValue;
+                return String(a.name || '').localeCompare(String(b.name || ''));
+            });
+
+            return sorted.filter(p => {
+                const name = String(p.name || '').trim();
+                const skip = String(p.skip_reason || '').trim();
+                const isCurrent = !!current && name === current;
+                const isDisabled = p.enabled === false || !!skip;
+                const isActive = !isCurrent && !isDisabled;
+
+                switch (state) {
+                    case 'current':
+                        return isCurrent;
+                    case 'active':
+                        return isActive;
+                    case 'disabled':
+                        return !isCurrent && isDisabled;
+                    default:
+                        return false;
+                }
+            });
+        },
+
+        providerStatusGroups(client) {
+            const groups = [
+                { key: 'current', label: 'Current' },
+                { key: 'active', label: 'Active' },
+                { key: 'disabled', label: 'Disabled' }
+            ];
+            return groups.filter(group => this.providerStatusEntries(client, group.key).length > 0);
+        },
+
+        providerStatusChipClass(state, p) {
+            if (state === 'current') return 'chip-primary';
+            if (state === 'disabled') {
+                return p && p.enabled === false ? 'chip-muted' : 'chip-danger';
+            }
+            return '';
+        },
+
         // API Calls
         async apiCall(url, options = {}, background = false) {
             if (!background) this.isLoading = true;
@@ -605,55 +670,30 @@ function app() {
             if (!p) return '';
             const name = String(p.name || '').trim();
             if (!name) return '';
-
-            const label = String(p.label || '').trim();
-            if (label) return label;
-
-            if (p.enabled === false) return `${name} (disabled)`;
-
-            const skip = String(p.skip_reason || '').trim();
-            if (skip === 'deactivated') {
-                const r = String(p.deactivated_reason || '').trim() || 'deactivated';
-                const d = String(p.deactivated_in || '').trim();
-                return d ? `${name} (${r} ${d})` : `${name} (${r})`;
-            }
-            if (skip === 'circuit_open') {
-                const d = String(p.circuit_open_in || '').trim();
-                return d ? `${name} (circuit ${d})` : `${name} (circuit open)`;
-            }
-            if (skip === 'keys_exhausted') {
-                const available = Number(p.available_key_count || 0);
-                const total = Number(p.key_count || 0);
-                return total > 0 ? `${name} (${available}/${total} keys available)` : `${name} (no keys available)`;
-            }
-            if (skip === 'disabled') return `${name} (disabled)`;
-
-            const st = String(p.circuit_state || '').trim();
-            if (st && st !== 'closed') {
-                const d = String(p.circuit_open_in || '').trim();
-                return d ? `${name} (${st} ${d})` : `${name} (${st})`;
-            }
-
             return name;
         },
 
         providerStatusTitle(p) {
-            const base = this.providerStatusLabel(p);
+            const name = String((p && p.name) || '').trim();
+            if (!name) return '';
+
+            const label = String((p && p.label) || '').trim();
+            const base = label || name;
             if (!base) return '';
 
-            const detail = String(p.detail || '').trim();
+            const detail = String((p && p.detail) || '').trim();
             let title = detail ? `${base}\n${detail}` : base;
 
-            const available = Number(p.available_key_count || 0);
-            const total = Number(p.key_count || 0);
+            const available = Number((p && p.available_key_count) || 0);
+            const total = Number((p && p.key_count) || 0);
             if (total > 0) {
                 title = `${title}\nKeys available: ${available}/${total}`;
             }
 
-            const skip = String(p.skip_reason || '').trim();
+            const skip = String((p && p.skip_reason) || '').trim();
             if (skip !== 'deactivated') return title;
 
-            const msg = String(p.deactivated_message || '').trim();
+            const msg = String((p && p.deactivated_message) || '').trim();
             if (!msg) return title;
 
             const max = 300;
