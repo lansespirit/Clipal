@@ -12,6 +12,12 @@
 
 **Clipal** 是一款专为开发者生产力打造的本地 LLM API 反向代理与管理工具。如果你正在使用诸如 Claude Code、Continue、Aider 或 Cherry Studio 等 AI 工具，Clipal 将成为你的智能流量大管家。它将多个上游大模型服务统一收口，支持自动故障切换、API Key 轮询，并提供了一个美观的 Web UI——让你专注于写代码，而不是折腾配置文件。
 
+## 微信交流群
+
+扫描下方二维码加入 Clipal 微信交流群，和其他用户一起讨论使用方法、配置问题与产品反馈。
+
+![Clipal 微信交流群二维码](assets/wechat-group.png)
+
 ## ✨ 为什么选择 Clipal？（核心优势）
 
 ### 🚀 **一键 CLI 接管 (CLI Takeover)**

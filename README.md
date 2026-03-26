@@ -12,6 +12,12 @@
 
 **Clipal** is the local LLM API proxy built for developer productivity. If you use AI coding tools like Claude Code, Continue, Aider, or Cherry Studio, Clipal acts as your intelligent traffic controller. It consolidates multiple model providers, handles automatic failover, manages API keys, and offers a beautiful Web UI—so you can focus on coding, not configuring.
 
+## Join the WeChat Group
+
+Scan the QR code below to join the Clipal WeChat group and discuss usage, setup, and feedback with other users.
+
+![Clipal WeChat Group QR Code](assets/wechat-group.png)
+
 ## ✨ Why Clipal? (Superpowers)
 
 ### 🚀 **One-Click CLI Takeover**
