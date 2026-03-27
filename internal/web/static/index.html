@@ -48,7 +48,6 @@
                 </div>
             </div>
             <div class="header-info">
-                <span class="pill pill--xs pill--neutral pill--mono" x-text="tf('header.uptime', { uptime: status.uptime })"></span>
                 <div class="segmented-group locale-switcher" role="radiogroup" :aria-label="t('locale.label')">
                     <button type="button" class="segment-btn" role="radio" lang="en" x-ref="localeEn"
                         :class="{'active': locale === 'en'}" :aria-checked="locale === 'en'"

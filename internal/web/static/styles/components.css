@@ -65,15 +65,19 @@
     gap: 16px;
 }
 
-.locale-switcher {
-    padding: 3px;
-    gap: 3px;
+.segmented-group.locale-switcher {
+    padding: 1px;
+    gap: 1px;
+    border-radius: 11px;
 }
 
-.locale-switcher .segment-btn {
+.segmented-group.locale-switcher .segment-btn {
     flex: 0 0 auto;
-    min-width: 52px;
-    padding: 8px 12px;
+    min-width: 32px;
+    min-height: 22px;
+    padding: 0 7px;
+    font-size: 0.6875rem;
+    border-radius: 6px;
 }
 
 .theme-toggle {
