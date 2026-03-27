@@ -31,12 +31,18 @@
                         <h1>Clipal</h1>
                         <span class="pill pill--xs pill--neutral pill--mono" x-text="status.version"></span>
                     </div>
-                    <p class="brand-subtitle">Local ingress for Claude, OpenAI, and Gemini traffic</p>
+                    <p class="brand-subtitle" x-text="t('header.subtitle')"></p>
                 </div>
             </div>
             <div class="header-info">
-                <span class="pill pill--xs pill--neutral pill--mono" x-text="'Uptime: ' + status.uptime"></span>
-                <button @click="toggleTheme()" class="theme-toggle" :title="'Current theme: ' + themeLabel">
+                <span class="pill pill--xs pill--neutral pill--mono" x-text="tf('header.uptime', { uptime: status.uptime })"></span>
+                <div class="segmented-group locale-switcher" role="group" :aria-label="t('locale.label')">
+                    <button type="button" class="segment-btn" :class="{'active': locale === 'en'}"
+                        @click="setLocale('en')">EN</button>
+                    <button type="button" class="segment-btn" :class="{'active': locale === 'zh-CN'}"
+                        @click="setLocale('zh-CN')">中文</button>
+                </div>
+                <button @click="toggleTheme()" class="theme-toggle" :title="tf('theme.current', { theme: themeLabel })">
                     <span x-text="themeIcon"></span>
                 </button>
             </div>
@@ -46,29 +52,24 @@
         <nav class="tabs" role="tablist" aria-label="Sections">
             <button id="tabbtn-providers" role="tab" :tabindex="activeTab === 'providers' ? 0 : -1"
                 :aria-selected="activeTab === 'providers'" aria-controls="tab-providers"
-                @click="activeTab = 'providers'" :class="{'active': activeTab === 'providers'}" class="tab">
-                Providers
-            </button>
+                @click="activeTab = 'providers'" :class="{'active': activeTab === 'providers'}" class="tab"
+                x-text="t('nav.providers')"></button>
             <button id="tabbtn-integrations" role="tab" :tabindex="activeTab === 'integrations' ? 0 : -1"
                 :aria-selected="activeTab === 'integrations'" aria-controls="tab-integrations"
-                @click="activeTab = 'integrations'" :class="{'active': activeTab === 'integrations'}" class="tab">
-                CLI Takeover
-            </button>
+                @click="activeTab = 'integrations'" :class="{'active': activeTab === 'integrations'}" class="tab"
+                x-text="t('nav.integrations')"></button>
             <button id="tabbtn-settings" role="tab" :tabindex="activeTab === 'settings' ? 0 : -1"
                 :aria-selected="activeTab === 'settings'" aria-controls="tab-settings" @click="activeTab = 'settings'"
-                :class="{'active': activeTab === 'settings'}" class="tab">
-                Global Settings
-            </button>
+                :class="{'active': activeTab === 'settings'}" class="tab"
+                x-text="t('nav.settings')"></button>
             <button id="tabbtn-services" role="tab" :tabindex="activeTab === 'services' ? 0 : -1"
                 :aria-selected="activeTab === 'services'" aria-controls="tab-services" @click="activeTab = 'services'"
-                :class="{'active': activeTab === 'services'}" class="tab">
-                Services
-            </button>
+                :class="{'active': activeTab === 'services'}" class="tab"
+                x-text="t('nav.services')"></button>
             <button id="tabbtn-status" role="tab" :tabindex="activeTab === 'status' ? 0 : -1"
                 :aria-selected="activeTab === 'status'" aria-controls="tab-status" @click="activeTab = 'status'"
-                :class="{'active': activeTab === 'status'}" class="tab">
-                System Status
-            </button>
+                :class="{'active': activeTab === 'status'}" class="tab"
+                x-text="t('nav.status')"></button>
         </nav>
 
         <!-- Toast Messages -->
@@ -88,7 +89,7 @@
                             x-text="toastTypeLabel(toast.type)"></span>
                         <div class="toast__title" x-text="toast.title"></div>
                         <button type="button" class="toast__close" @click="dismissToast(toast.id)"
-                            aria-label="Dismiss notification">×</button>
+                            :aria-label="t('toast.dismissNotification')">×</button>
                     </div>
                     <div class="toast__message" x-text="toast.message"></div>
                 </div>
@@ -112,40 +113,38 @@
                     </div>
 
                     <button @click="openAddProviderModal()" class="btn btn-primary btn-full">
-                        <span x-text="'Add Provider to ' + clientLabel(selectedClient)"></span>
+                        <span x-text="tf('providers.addTo', { client: clientLabel(selectedClient) })"></span>
                     </button>
 
                     <!-- Client Mode (compact) -->
                     <div class="client-mode-row">
                         <div class="client-mode-left">
-                            <span class="client-mode-label">Mode</span>
+                            <span class="client-mode-label" x-text="t('providers.modeLabel')"></span>
                             <span class="mode-pill pill pill-xs" :class="clientConfig.mode === 'auto' ? 'mode-auto' : 'mode-manual'"
-                                x-text="clientConfig.mode === 'auto' ? 'Auto' : 'Manual'"></span>
-                            <span class="tooltip" aria-label="Mode help">
-                                <button type="button" class="info-btn" aria-label="Mode help">i</button>
+                                x-text="modeLabel(clientConfig.mode)"></span>
+                            <span class="tooltip" :aria-label="t('providers.modeLabel')">
+                                <button type="button" class="info-btn" :aria-label="t('providers.modeLabel')">i</button>
                                 <span class="tooltip-content" x-text="modeHelpText()"></span>
                             </span>
                         </div>
 
                         <div class="client-mode-middle" x-show="clientConfig.mode === 'manual'">
-                            <span class="client-mode-label">Pinned:</span>
+                            <span class="client-mode-label" x-text="t('providers.pinned')"></span>
                             <span class="pill pill--sm pill--neutral pill--mono"
-                                x-text="clientConfig.pinned_provider || 'None'"></span>
+                                x-text="clientConfig.pinned_provider || t('common.none')"></span>
                         </div>
 
                         <div class="client-mode-right">
                             <button type="button" class="btn btn-secondary btn-sm"
                                 :disabled="clientConfig.mode === 'auto' && !hasEnabledProviders"
-                                :title="(clientConfig.mode === 'auto' && !hasEnabledProviders) ? 'Enable a provider first' : ''"
+                                :title="modeToggleTitle()"
                                 @click="setClientMode(clientConfig.mode === 'auto' ? 'manual' : 'auto')"
-                                x-text="clientConfig.mode === 'auto' ? 'Switch to Manual' : 'Back to Auto'">
+                                x-text="modeToggleLabel()">
                             </button>
                         </div>
                     </div>
 
-                    <div class="form-hint" x-show="clientConfig.mode === 'manual'">
-                        Pin a provider by clicking 📌 on a provider card.
-                    </div>
+                    <div class="form-hint" x-show="clientConfig.mode === 'manual'" x-text="t('providers.pinHint')"></div>
                 </div>
             </div>
 
@@ -153,8 +152,7 @@
             <div class="card-grid">
                 <template x-if="providers.length === 0">
                     <div class="card u-text-center" style="grid-column: 1 / -1; padding: 60px;">
-                        <p style="color: var(--text-secondary)">No providers configured for <span
-                                x-text="clientLabel(selectedClient)"></span></p>
+                        <p style="color: var(--text-secondary)" x-text="tf('providers.empty', { client: clientLabel(selectedClient) })"></p>
                     </div>
                 </template>
 
@@ -166,17 +164,17 @@
                                     <span class="priority-badge badge badge-xs badge-outline badge-mono" x-text="'#' + provider.priority"></span>
                                     <h3 class="provider-name provider-card__title" x-text="provider.name"></h3>
                                     <template x-if="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider">
-                                        <span class="pin-badge badge badge-xs badge-warning" title="Pinned provider">Pinned</span>
+                                        <span class="pin-badge badge badge-xs badge-warning" :title="providerPinBadgeTitle()"
+                                            x-text="t('providers.pinBadge')"></span>
                                     </template>
                                 </div>
                                 <span
                                     :class="'provider-card__status ' + (provider.enabled ? 'provider-card__status--enabled' : 'provider-card__status--disabled')"
-                                    x-text="provider.enabled ? 'Active' : 'Disabled'">
+                                    x-text="providerStatusText(provider.enabled)">
                                 </span>
                             </div>
                             <div class="provider-card__controls">
-                                <label class="switch"
-                                    :title="(clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider) ? (provider.enabled ? 'Pinned provider cannot be disabled in manual mode' : 'Enable pinned provider') : (provider.enabled ? 'Disable' : 'Enable')">
+                                <label class="switch" :title="providerToggleTitle(provider)">
                                     <input type="checkbox" :checked="provider.enabled"
                                         :disabled="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider && provider.enabled"
                                         @change="toggleProvider(provider, $event)">
@@ -184,21 +182,21 @@
                                 </label>
                                 <button @click="pinProvider(provider.name)" class="icon-btn"
                                     :class="{'pin-active': clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider}"
-                                    :title="(clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider) ? 'Pinned provider' : 'Pin (Manual)'"
+                                    :title="providerPinTitle(provider)"
                                     :disabled="!provider.enabled">📌</button>
-                                <button @click="editProvider(provider)" class="icon-btn" title="Edit">✏️</button>
+                                <button @click="editProvider(provider)" class="icon-btn" :title="t('providers.edit')">✏️</button>
                                 <button @click="deleteProvider(provider.name)" class="icon-btn danger"
-                                    title="Delete">🗑️</button>
+                                    :title="t('providers.delete')">🗑️</button>
                             </div>
                         </div>
                         <div class="provider-card__details">
                             <div class="provider-card__detail">
-                                <span class="provider-card__detail-label">Base URL</span>
+                                <span class="provider-card__detail-label" x-text="t('providers.baseUrl')"></span>
                                 <span class="provider-card__detail-value" x-text="provider.base_url"></span>
                             </div>
                             <div class="provider-card__detail">
-                                <span class="provider-card__detail-label">API Keys</span>
-                                <span class="provider-card__detail-value" x-text="(provider.key_count || 0) + ' configured'"></span>
+                                <span class="provider-card__detail-label" x-text="t('providers.apiKeys')"></span>
+                                <span class="provider-card__detail-value" x-text="configuredKeyCountLabel(provider.key_count || 0)"></span>
                             </div>
                         </div>
                     </div>
@@ -213,15 +211,13 @@
             <form @submit.prevent="saveGlobalConfig()">
                 <div class="settings-page-header">
                     <div>
-                        <h3 class="provider-name">Global Settings</h3>
-                        <div class="settings-page-copy">
-                            Runtime defaults, recovery policy, routing strategy, and local observability.
-                        </div>
+                        <h3 class="provider-name" x-text="t('settings.title')"></h3>
+                        <div class="settings-page-copy" x-text="t('settings.subtitle')"></div>
                     </div>
                     <div class="settings-toolbar-actions">
-                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
-                        <button type="button" @click="exportConfig()" class="btn btn-secondary">Export</button>
-                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary" x-text="t('common.reset')"></button>
+                        <button type="button" @click="exportConfig()" class="btn btn-secondary" x-text="t('common.export')"></button>
+                        <button type="submit" class="btn btn-primary" x-text="t('common.save')"></button>
                     </div>
                 </div>
 
@@ -229,34 +225,34 @@
                     <section class="settings-panel">
                         <div class="settings-panel-header">
                             <div>
-                                <h3>Runtime</h3>
-                                <p class="settings-panel-copy">Basic listener and request buffering defaults.</p>
+                                <h3 x-text="t('settings.runtimeTitle')"></h3>
+                                <p class="settings-panel-copy" x-text="t('settings.runtimeCopy')"></p>
                             </div>
                         </div>
                         <div class="settings-panel-grid">
                             <div class="form-group">
-                                <label class="form-label">Listen Address</label>
+                                <label class="form-label" x-text="t('settings.listenAddress')"></label>
                                 <input type="text" x-model="globalConfig.listen_addr" class="form-input" required>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Port</label>
+                                <label class="form-label" x-text="t('settings.port')"></label>
                                 <input type="number" x-model.number="globalConfig.port" class="form-input" required min="1"
                                     max="65535">
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Log Level</label>
+                                <label class="form-label" x-text="t('settings.logLevel')"></label>
                                 <select x-model="globalConfig.log_level" class="form-select">
-                                    <option value="debug">Debug</option>
-                                    <option value="info">Info</option>
-                                    <option value="warn">Warn</option>
-                                    <option value="error">Error</option>
+                                    <option value="debug" x-text="levelLabel('debug')"></option>
+                                    <option value="info" x-text="levelLabel('info')"></option>
+                                    <option value="warn" x-text="levelLabel('warn')"></option>
+                                    <option value="error" x-text="levelLabel('error')"></option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Max Body Size</label>
+                                <label class="form-label" x-text="t('settings.maxBodySize')"></label>
                                 <input type="number" x-model.number="globalConfig.max_request_body_bytes" class="form-input"
                                     required min="1">
-                                <div class="form-hint">Bytes buffered for retryable requests.</div>
+                                <div class="form-hint" x-text="t('settings.maxBodySizeHint')"></div>
                             </div>
                         </div>
                     </section>
@@ -264,44 +260,44 @@
                     <section class="settings-panel">
                         <div class="settings-panel-header">
                             <div>
-                                <h3>Reliability</h3>
-                                <p class="settings-panel-copy">Timeouts, temporary deactivation, and circuit breaker behavior.</p>
+                                <h3 x-text="t('settings.reliabilityTitle')"></h3>
+                                <p class="settings-panel-copy" x-text="t('settings.reliabilityCopy')"></p>
                             </div>
                         </div>
                         <div class="settings-panel-grid">
                             <div class="form-group">
-                                <label class="form-label">Reactivate After</label>
+                                <label class="form-label" x-text="t('settings.reactivateAfter')"></label>
                                 <input type="text" x-model="globalConfig.reactivate_after" class="form-input" required>
-                                <div class="form-hint">How long a failed provider stays deactivated.</div>
+                                <div class="form-hint" x-text="t('settings.reactivateAfterHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Upstream Idle Timeout</label>
+                                <label class="form-label" x-text="t('settings.upstreamIdleTimeout')"></label>
                                 <input type="text" x-model="globalConfig.upstream_idle_timeout" class="form-input" required>
-                                <div class="form-hint">Set to 0 to disable stalled-stream protection.</div>
+                                <div class="form-hint" x-text="t('settings.upstreamIdleTimeoutHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Response Header Timeout</label>
+                                <label class="form-label" x-text="t('settings.responseHeaderTimeout')"></label>
                                 <input type="text" x-model="globalConfig.response_header_timeout" class="form-input" required>
-                                <div class="form-hint">Set to 0 to wait indefinitely for headers.</div>
+                                <div class="form-hint" x-text="t('settings.responseHeaderTimeoutHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Failure Threshold</label>
+                                <label class="form-label" x-text="t('settings.failureThreshold')"></label>
                                 <input type="number" x-model.number="globalConfig.circuit_breaker.failure_threshold"
                                     class="form-input" required min="0">
-                                <div class="form-hint">0 disables the circuit breaker.</div>
+                                <div class="form-hint" x-text="t('settings.failureThresholdHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Success Threshold</label>
+                                <label class="form-label" x-text="t('settings.successThreshold')"></label>
                                 <input type="number" x-model.number="globalConfig.circuit_breaker.success_threshold"
                                     class="form-input" required min="1">
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Open Timeout</label>
+                                <label class="form-label" x-text="t('settings.openTimeout')"></label>
                                 <input type="text" x-model="globalConfig.circuit_breaker.open_timeout" class="form-input"
                                     required>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Half-Open Max In-Flight</label>
+                                <label class="form-label" x-text="t('settings.halfOpenMaxInflight')"></label>
                                 <input type="number" x-model.number="globalConfig.circuit_breaker.half_open_max_inflight"
                                     class="form-input" required min="1">
                             </div>
@@ -311,44 +307,44 @@
                     <section class="settings-panel">
                         <div class="settings-panel-header">
                             <div>
-                                <h3>Logs & Alerts</h3>
-                                <p class="settings-panel-copy">Local logging, retention, and desktop notification behavior.</p>
+                                <h3 x-text="t('settings.logsAlertsTitle')"></h3>
+                                <p class="settings-panel-copy" x-text="t('settings.logsAlertsCopy')"></p>
                             </div>
                         </div>
                         <div class="settings-panel-grid">
                             <div class="form-group">
-                                <label class="form-label">Log Directory</label>
+                                <label class="form-label" x-text="t('settings.logDirectory')"></label>
                                 <input type="text" x-model="globalConfig.log_dir" class="form-input">
-                                <div class="form-hint">Leave empty to use the default config-dir logs folder.</div>
+                                <div class="form-hint" x-text="t('settings.logDirectoryHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Retention (Days)</label>
+                                <label class="form-label" x-text="t('settings.retentionDays')"></label>
                                 <input type="number" x-model.number="globalConfig.log_retention_days" class="form-input"
                                     min="0">
-                                <div class="form-hint">0 keeps logs forever.</div>
+                                <div class="form-hint" x-text="t('settings.retentionDaysHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Notification Level</label>
+                                <label class="form-label" x-text="t('settings.notificationLevel')"></label>
                                 <select x-model="globalConfig.notifications.min_level" class="form-select">
-                                    <option value="debug">Debug</option>
-                                    <option value="info">Info</option>
-                                    <option value="warn">Warn</option>
-                                    <option value="error">Error</option>
+                                    <option value="debug" x-text="levelLabel('debug')"></option>
+                                    <option value="info" x-text="levelLabel('info')"></option>
+                                    <option value="warn" x-text="levelLabel('warn')"></option>
+                                    <option value="error" x-text="levelLabel('error')"></option>
                                 </select>
                             </div>
                         </div>
                         <div class="settings-flag-grid">
                             <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.log_stdout">
-                                <span class="checkbox-text">Log to Stdout</span>
+                                <span class="checkbox-text" x-text="t('settings.logToStdout')"></span>
                             </label>
                             <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.notifications.enabled">
-                                <span class="checkbox-text">Desktop Notifications</span>
+                                <span class="checkbox-text" x-text="t('settings.desktopNotifications')"></span>
                             </label>
                             <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.notifications.provider_switch">
-                                <span class="checkbox-text">Notify on Provider Switch</span>
+                                <span class="checkbox-text" x-text="t('settings.notifyOnProviderSwitch')"></span>
                             </label>
                         </div>
                     </section>
@@ -356,46 +352,46 @@
                     <section class="settings-panel">
                         <div class="settings-panel-header">
                             <div>
-                                <h3>Routing Strategy</h3>
-                                <p class="settings-panel-copy">Expose only the routing controls that change user-visible behavior.</p>
+                                <h3 x-text="t('settings.routingTitle')"></h3>
+                                <p class="settings-panel-copy" x-text="t('settings.routingCopy')"></p>
                             </div>
                         </div>
                         <div class="settings-panel-grid">
                             <div class="form-group">
-                                <label class="form-label">Sticky Session TTL</label>
+                                <label class="form-label" x-text="t('settings.stickySessionTtl')"></label>
                                 <input type="text" x-model="globalConfig.routing.sticky_sessions.explicit_ttl" class="form-input">
-                                <div class="form-hint">Idle lifetime for explicit session bindings.</div>
+                                <div class="form-hint" x-text="t('settings.stickySessionTtlHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Short Retry-After Max</label>
+                                <label class="form-label" x-text="t('settings.shortRetryAfterMax')"></label>
                                 <input type="text" x-model="globalConfig.routing.busy_backpressure.short_retry_after_max" class="form-input">
-                                <div class="form-hint">Upper bound for honoring short upstream retry-after hints.</div>
+                                <div class="form-hint" x-text="t('settings.shortRetryAfterMaxHint')"></div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Max Inline Wait</label>
+                                <label class="form-label" x-text="t('settings.maxInlineWait')"></label>
                                 <input type="text" x-model="globalConfig.routing.busy_backpressure.max_inline_wait" class="form-input">
-                                <div class="form-hint">How long Clipal may wait before overflowing to another provider.</div>
+                                <div class="form-hint" x-text="t('settings.maxInlineWaitHint')"></div>
                             </div>
                         </div>
                         <div class="settings-flag-grid">
                             <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.routing.sticky_sessions.enabled">
-                                <span class="checkbox-text">Enable Sticky Sessions</span>
+                                <span class="checkbox-text" x-text="t('settings.enableStickySessions')"></span>
                             </label>
                             <label class="checkbox-label settings-flag-card">
                                 <input type="checkbox" x-model="globalConfig.routing.busy_backpressure.enabled">
-                                <span class="checkbox-text">Enable Busy Backpressure</span>
+                                <span class="checkbox-text" x-text="t('settings.enableBusyBackpressure')"></span>
                             </label>
                         </div>
                     </section>
                 </div>
 
                 <div class="settings-form-actions">
-                    <div class="form-hint">Saving updates `config.yaml`. Some runtime changes may require restart to take full effect.</div>
+                    <div class="form-hint" x-text="t('settings.footerHint')"></div>
                     <div class="settings-toolbar-actions">
-                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary">Reset</button>
-                        <button type="button" @click="exportConfig()" class="btn btn-secondary">Export</button>
-                        <button type="submit" class="btn btn-primary">Save Settings</button>
+                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary" x-text="t('common.reset')"></button>
+                        <button type="button" @click="exportConfig()" class="btn btn-secondary" x-text="t('common.export')"></button>
+                        <button type="submit" class="btn btn-primary" x-text="t('settings.saveSettings')"></button>
                     </div>
                 </div>
             </form>
@@ -803,61 +799,61 @@
     <!-- Modals -->
     <div class="modal-backdrop" :class="{'show': showAddProviderModal || showEditProviderModal}"
         @keydown.escape.window="closeModals()" @click.self="closeModals()">
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+                <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div class="modal-header">
-                <h2 id="modal-title" x-text="showEditProviderModal ? 'Edit Provider' : 'Add Provider'"></h2>
-                <button @click="closeModals()" class="icon-btn" style="font-size: 18px;" aria-label="Close modal">
+                <h2 id="modal-title" x-text="showEditProviderModal ? t('modal.provider.editTitle') : t('modal.provider.addTitle')"></h2>
+                <button @click="closeModals()" class="icon-btn" style="font-size: 18px;" :aria-label="t('modal.provider.close')">
                     &times;
                 </button>
             </div>
             <form @submit.prevent="saveProvider()">
                 <div class="modal-body">
                     <div class="form-group">
-                        <label class="form-label">Name *</label>
+                        <label class="form-label" x-text="t('modal.provider.name')"></label>
                         <input type="text" x-model="providerForm.name" class="form-input" required
                             placeholder="e.g. provider-primary">
-                        <div class="form-hint">Letters, numbers, dot (.), underscore (_), and hyphen (-).</div>
+                        <div class="form-hint" x-text="t('modal.provider.nameHint')"></div>
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Base URL *</label>
+                        <label class="form-label" x-text="t('modal.provider.baseUrl')"></label>
                         <input type="text" x-model="providerForm.base_url" class="form-input" required
                             placeholder="https://api.example.com">
                     </div>
 
                     <div class="form-group">
                         <div class="form-field-header">
-                            <label class="form-label" x-text="showEditProviderModal ? 'API Keys' : 'API Keys *'"></label>
-                            <span class="form-kicker">One API key per line</span>
+                            <label class="form-label" x-text="showEditProviderModal ? t('modal.provider.apiKeys') : t('modal.provider.apiKeysRequired')"></label>
+                            <span class="form-kicker" x-text="t('modal.provider.onePerLine')"></span>
                         </div>
                         <textarea x-model="providerForm.api_keys_text" class="form-input form-textarea" rows="4"
                             :required="!showEditProviderModal"
                             placeholder="sk-xxx&#10;sk-yyy"></textarea>
                         <div class="form-meta">
-                            <span class="form-meta-label">Saved as</span>
-                            <span class="pill pill--xs pill--neutral pill--mono">1 line -> api_key</span>
-                            <span class="pill pill--xs pill--neutral pill--mono">2+ lines -> api_keys</span>
+                            <span class="form-meta-label" x-text="t('modal.provider.savedAs')"></span>
+                            <span class="pill pill--xs pill--neutral pill--mono" x-text="t('modal.provider.savedAsSingle')"></span>
+                            <span class="pill pill--xs pill--neutral pill--mono" x-text="t('modal.provider.savedAsMultiple')"></span>
                         </div>
                         <div class="form-hint" x-show="showEditProviderModal && editingProviderKeyCount > 0"
-                            x-text="'Leave empty to keep the current ' + editingProviderKeyCount + ' configured key' + (editingProviderKeyCount === 1 ? '' : 's') + '.'"></div>
+                            x-text="providerEditKeyHint()"></div>
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Priority</label>
+                        <label class="form-label" x-text="t('modal.provider.priority')"></label>
                         <input type="number" x-model.number="providerForm.priority" class="form-input" min="1">
-                        <div class="form-hint">Smaller numbers are tried first.</div>
+                        <div class="form-hint" x-text="t('modal.provider.priorityHint')"></div>
                     </div>
 
                     <div class="form-group">
                         <label class="checkbox-label">
                             <input type="checkbox" x-model="providerForm.enabled">
-                            <span class="checkbox-text">Enabled</span>
+                            <span class="checkbox-text" x-text="t('common.enabled')"></span>
                         </label>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" @click="closeModals()" class="btn btn-secondary">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Provider</button>
+                    <button type="button" @click="closeModals()" class="btn btn-secondary" x-text="t('common.cancel')"></button>
+                    <button type="submit" class="btn btn-primary" x-text="t('modal.provider.saveProvider')"></button>
                 </div>
             </form>
         </div>

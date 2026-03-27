@@ -194,10 +194,16 @@ func TestServeStatic_ContentTypeAndNotFound(t *testing.T) {
 		`id="tabbtn-settings"`,
 		`id="tabbtn-services"`,
 		`id="tabbtn-status"`,
-		`CLI Takeover`,
-		`Global Settings`,
-		`Services`,
-		`System Status`,
+		`locale-switcher`,
+		`@click="setLocale('en')"`,
+		`@click="setLocale('zh-CN')"`,
+		`>EN<`,
+		`>中文<`,
+		`x-text="t('nav.integrations')"`,
+		`x-text="t('nav.settings')"`,
+		`x-text="t('nav.services')"`,
+		`x-text="t('nav.status')"`,
+		`x-text="showEditProviderModal ? t('modal.provider.editTitle') : t('modal.provider.addTitle')"`,
 	} {
 		if !strings.Contains(index, want) {
 			t.Fatalf("index missing %q", want)
@@ -232,9 +238,14 @@ func TestServeStatic_ServesBrandIconAndUpdatedLabels(t *testing.T) {
 	}
 	js := w.Body.String()
 	for _, want := range []string{
-		`{ value: 'claude', label: 'Claude' }`,
-		`{ value: 'openai', label: 'OpenAI' }`,
-		`{ value: 'gemini', label: 'Gemini' }`,
+		`locale: 'en'`,
+		`supportedLocales: ['en', 'zh-CN']`,
+		`localStorage.getItem('clipal.locale')`,
+		`localStorage.setItem('clipal.locale', this.locale)`,
+		`messages: {`,
+		`t(key) {`,
+		`tf(key, params = {}) {`,
+		`setLocale(locale) {`,
 		`return 'Gemini CLI';`,
 		`return 'Continue';`,
 		`return 'Aider';`,
@@ -339,8 +350,8 @@ func TestIntegrations_UIAndRouteAreRegistered(t *testing.T) {
 		t.Fatalf("index status=%d body=%s", w.Code, w.Body.String())
 	}
 	index := w.Body.String()
-	if !strings.Contains(index, "CLI Takeover") {
-		t.Fatalf("index missing integrations tab: %s", index)
+	if !strings.Contains(index, `x-text="t('nav.integrations')"`) {
+		t.Fatalf("index missing integrations translation hook: %s", index)
 	}
 	for _, want := range []string{
 		"This only edits your user-level config file.",
@@ -356,6 +367,7 @@ func TestIntegrations_UIAndRouteAreRegistered(t *testing.T) {
 		"integration-card-summary-row",
 		"action-shell",
 		"action-tooltip",
+		`x-text="t('nav.integrations')"`,
 	} {
 		if !strings.Contains(index, want) {
 			t.Fatalf("index missing %q: %s", want, index)
@@ -374,6 +386,8 @@ func TestIntegrations_UIAndRouteAreRegistered(t *testing.T) {
 		"Claude Code",
 		"Codex CLI",
 		"OpenCode",
+		`messages: {`,
+		`setLocale(locale) {`,
 		"Restart the client or open a new session",
 		"ANTHROPIC_AUTH_TOKEN is left untouched",
 		`wire_api = "responses"`,

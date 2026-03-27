@@ -65,6 +65,17 @@
     gap: 16px;
 }
 
+.locale-switcher {
+    padding: 3px;
+    gap: 3px;
+}
+
+.locale-switcher .segment-btn {
+    flex: 0 0 auto;
+    min-width: 52px;
+    padding: 8px 12px;
+}
+
 .theme-toggle {
     background: transparent;
     border: none;

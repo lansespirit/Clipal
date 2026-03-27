@@ -3,12 +3,344 @@ function app() {
         // State
         isLoading: false,
         theme: localStorage.getItem('theme') || 'system',
+        locale: 'en',
+        supportedLocales: ['en', 'zh-CN'],
         activeTab: 'providers',
         servicePoll: null,
         selectedClient: 'claude',
         integrations: [],
         integrationBusyProduct: '',
         serviceBusyAction: '',
+        messages: {
+            en: {
+                meta: {
+                    title: 'Clipal Management'
+                },
+                header: {
+                    subtitle: 'Local ingress for Claude, OpenAI, and Gemini traffic',
+                    uptime: 'Uptime: {uptime}'
+                },
+                nav: {
+                    providers: 'Providers',
+                    integrations: 'CLI Takeover',
+                    settings: 'Global Settings',
+                    services: 'Services',
+                    status: 'System Status'
+                },
+                common: {
+                    none: 'None',
+                    save: 'Save',
+                    reset: 'Reset',
+                    export: 'Export',
+                    cancel: 'Cancel',
+                    enabled: 'Enabled',
+                    disabled: 'Disabled',
+                    active: 'Active'
+                },
+                locale: {
+                    label: 'Language'
+                },
+                theme: {
+                    current: 'Current theme: {theme}',
+                    system: 'System',
+                    light: 'Light',
+                    dark: 'Dark'
+                },
+                providers: {
+                    addTo: 'Add Provider to {client}',
+                    modeLabel: 'Mode',
+                    modeAuto: 'Auto',
+                    modeManual: 'Manual',
+                    pinned: 'Pinned:',
+                    switchToManual: 'Switch to Manual',
+                    backToAuto: 'Back to Auto',
+                    enableProviderFirst: 'Enable a provider first',
+                    pinHint: 'Pin a provider by clicking 📌 on a provider card.',
+                    empty: 'No providers configured for {client}',
+                    pinBadge: 'Pinned',
+                    baseUrl: 'Base URL',
+                    apiKeys: 'API Keys',
+                    configuredCount: '{count} configured',
+                    pinTitle: 'Pin (Manual)',
+                    edit: 'Edit',
+                    delete: 'Delete',
+                    disable: 'Disable',
+                    enable: 'Enable',
+                    pinnedProvider: 'Pinned provider',
+                    pinnedProviderCannotDisable: 'Pinned provider cannot be disabled in manual mode',
+                    enablePinnedProvider: 'Enable pinned provider',
+                    modeHelpManual: 'Manual (Pinned)\nAlways use the pinned provider.\nNo failover; failures return errors.',
+                    modeHelpAuto: 'Auto (Failover)\nTries enabled providers by priority.\nSwitches on failures.',
+                    enableBeforeManual: 'Enable a provider before switching to manual mode',
+                    enableBeforePinning: 'Enable the provider before pinning it',
+                    switchedToAutoTitle: '{client} switched to Auto',
+                    switchedToAutoMessage: 'Failover now follows enabled providers by priority.',
+                    switchedToManualTitle: '{client} switched to Manual',
+                    switchedToManualMessagePinned: 'Pinned to {provider}. Requests stay on this provider until you switch back to Auto.',
+                    switchedToManualMessage: 'Requests now stay on the pinned provider until you switch back to Auto.',
+                    pinnedTitle: 'Pinned {client} to {provider}',
+                    pinnedMessage: 'New requests will stay on this provider until you switch back to Auto.',
+                    enabledTitle: 'Enabled {provider} for {client}',
+                    enabledMessage: 'It is available again for failover selection.',
+                    disabledTitle: 'Disabled {provider} for {client}',
+                    disabledMessage: 'It has been removed from failover selection.',
+                    updatedTitle: 'Updated provider {provider}',
+                    updatedMessage: 'Changes are now active for {client}.',
+                    addedTitle: 'Added provider {provider}',
+                    addedMessage: 'The provider is now available for {client}.',
+                    deleteConfirm: 'Are you sure you want to delete provider "{name}"?',
+                    deletedTitle: 'Deleted provider {name}',
+                    deletedMessage: 'It has been removed from {client}\'s provider list.'
+                },
+                modal: {
+                    provider: {
+                        addTitle: 'Add Provider',
+                        editTitle: 'Edit Provider',
+                        close: 'Close modal',
+                        name: 'Name *',
+                        nameHint: 'Letters, numbers, dot (.), underscore (_), and hyphen (-).',
+                        baseUrl: 'Base URL *',
+                        apiKeys: 'API Keys',
+                        apiKeysRequired: 'API Keys *',
+                        onePerLine: 'One API key per line',
+                        savedAs: 'Saved as',
+                        savedAsSingle: '1 line -> api_key',
+                        savedAsMultiple: '2+ lines -> api_keys',
+                        keepExistingKeys: 'Leave empty to keep the current {count} configured key{suffix}.',
+                        priority: 'Priority',
+                        priorityHint: 'Smaller numbers are tried first.',
+                        saveProvider: 'Save Provider'
+                    }
+                },
+                settings: {
+                    title: 'Global Settings',
+                    subtitle: 'Runtime defaults, recovery policy, routing strategy, and local observability.',
+                    runtimeTitle: 'Runtime',
+                    runtimeCopy: 'Basic listener and request buffering defaults.',
+                    listenAddress: 'Listen Address',
+                    port: 'Port',
+                    logLevel: 'Log Level',
+                    maxBodySize: 'Max Body Size',
+                    maxBodySizeHint: 'Bytes buffered for retryable requests.',
+                    reliabilityTitle: 'Reliability',
+                    reliabilityCopy: 'Timeouts, temporary deactivation, and circuit breaker behavior.',
+                    reactivateAfter: 'Reactivate After',
+                    reactivateAfterHint: 'How long a failed provider stays deactivated.',
+                    upstreamIdleTimeout: 'Upstream Idle Timeout',
+                    upstreamIdleTimeoutHint: 'Set to 0 to disable stalled-stream protection.',
+                    responseHeaderTimeout: 'Response Header Timeout',
+                    responseHeaderTimeoutHint: 'Set to 0 to wait indefinitely for headers.',
+                    failureThreshold: 'Failure Threshold',
+                    failureThresholdHint: '0 disables the circuit breaker.',
+                    successThreshold: 'Success Threshold',
+                    openTimeout: 'Open Timeout',
+                    halfOpenMaxInflight: 'Half-Open Max In-Flight',
+                    logsAlertsTitle: 'Logs & Alerts',
+                    logsAlertsCopy: 'Local logging, retention, and desktop notification behavior.',
+                    logDirectory: 'Log Directory',
+                    logDirectoryHint: 'Leave empty to use the default config-dir logs folder.',
+                    retentionDays: 'Retention (Days)',
+                    retentionDaysHint: '0 keeps logs forever.',
+                    notificationLevel: 'Notification Level',
+                    logToStdout: 'Log to Stdout',
+                    desktopNotifications: 'Desktop Notifications',
+                    notifyOnProviderSwitch: 'Notify on Provider Switch',
+                    routingTitle: 'Routing Strategy',
+                    routingCopy: 'Expose only the routing controls that change user-visible behavior.',
+                    stickySessionTtl: 'Sticky Session TTL',
+                    stickySessionTtlHint: 'Idle lifetime for explicit session bindings.',
+                    shortRetryAfterMax: 'Short Retry-After Max',
+                    shortRetryAfterMaxHint: 'Upper bound for honoring short upstream retry-after hints.',
+                    maxInlineWait: 'Max Inline Wait',
+                    maxInlineWaitHint: 'How long Clipal may wait before overflowing to another provider.',
+                    enableStickySessions: 'Enable Sticky Sessions',
+                    enableBusyBackpressure: 'Enable Busy Backpressure',
+                    footerHint: 'Saving updates `config.yaml`. Some runtime changes may require restart to take full effect.',
+                    saveSettings: 'Save Settings',
+                    saveSuccess: 'Configuration saved. Some changes may require restart.',
+                    exportSuccess: 'Configuration exported successfully',
+                    exportFailure: 'Failed to export configuration'
+                },
+                toast: {
+                    success: 'Success',
+                    requestFailed: 'Request failed',
+                    notice: 'Notice',
+                    error: 'Error',
+                    info: 'Info',
+                    dismissNotification: 'Dismiss notification'
+                },
+                level: {
+                    debug: 'Debug',
+                    info: 'Info',
+                    warn: 'Warn',
+                    error: 'Error'
+                }
+            },
+            'zh-CN': {
+                meta: {
+                    title: 'Clipal 管理界面'
+                },
+                header: {
+                    subtitle: '面向 Claude、OpenAI 和 Gemini 流量的本地入口',
+                    uptime: '运行时长：{uptime}'
+                },
+                nav: {
+                    providers: 'Providers',
+                    integrations: 'CLI 接管',
+                    settings: '全局设置',
+                    services: '服务',
+                    status: '系统状态'
+                },
+                common: {
+                    none: '无',
+                    save: '保存',
+                    reset: '重置',
+                    export: '导出',
+                    cancel: '取消',
+                    enabled: '已启用',
+                    disabled: '已禁用',
+                    active: '可用'
+                },
+                locale: {
+                    label: '语言'
+                },
+                theme: {
+                    current: '当前主题：{theme}',
+                    system: '跟随系统',
+                    light: '浅色',
+                    dark: '深色'
+                },
+                providers: {
+                    addTo: '为 {client} 添加 Provider',
+                    modeLabel: '模式',
+                    modeAuto: '自动',
+                    modeManual: '手动',
+                    pinned: '固定：',
+                    switchToManual: '切到手动',
+                    backToAuto: '返回自动',
+                    enableProviderFirst: '请先启用一个 Provider',
+                    pinHint: '点击 Provider 卡片上的 📌 可固定 Provider。',
+                    empty: '{client} 还没有配置任何 Provider',
+                    pinBadge: '已固定',
+                    baseUrl: 'Base URL',
+                    apiKeys: 'API Keys',
+                    configuredCount: '已配置 {count} 个',
+                    pinTitle: '固定到手动模式',
+                    edit: '编辑',
+                    delete: '删除',
+                    disable: '禁用',
+                    enable: '启用',
+                    pinnedProvider: '已固定 Provider',
+                    pinnedProviderCannotDisable: '手动模式下不能禁用已固定的 Provider',
+                    enablePinnedProvider: '先启用已固定的 Provider',
+                    modeHelpManual: '手动（固定）\n始终使用固定的 Provider。\n不进行故障切换，失败会直接报错。',
+                    modeHelpAuto: '自动（故障切换）\n按优先级尝试已启用的 Provider。\n失败时自动切换。',
+                    enableBeforeManual: '切到手动模式前请先启用一个 Provider',
+                    enableBeforePinning: '固定前请先启用该 Provider',
+                    switchedToAutoTitle: '{client} 已切到自动模式',
+                    switchedToAutoMessage: '故障切换将按已启用 Provider 的优先级进行。',
+                    switchedToManualTitle: '{client} 已切到手动模式',
+                    switchedToManualMessagePinned: '已固定到 {provider}。在切回自动模式前，请求都会停留在这个 Provider 上。',
+                    switchedToManualMessage: '在切回自动模式前，请求都会停留在固定的 Provider 上。',
+                    pinnedTitle: '已将 {client} 固定到 {provider}',
+                    pinnedMessage: '后续请求会停留在这个 Provider 上，直到你切回自动模式。',
+                    enabledTitle: '已为 {client} 启用 {provider}',
+                    enabledMessage: '它现在会重新参与故障切换选择。',
+                    disabledTitle: '已为 {client} 禁用 {provider}',
+                    disabledMessage: '它已从故障切换选择中移除。',
+                    updatedTitle: '已更新 Provider {provider}',
+                    updatedMessage: '{client} 的改动已经生效。',
+                    addedTitle: '已添加 Provider {provider}',
+                    addedMessage: '这个 Provider 现在可供 {client} 使用。',
+                    deleteConfirm: '确认删除 Provider “{name}” 吗？',
+                    deletedTitle: '已删除 Provider {name}',
+                    deletedMessage: '它已从 {client} 的 Provider 列表中移除。'
+                },
+                modal: {
+                    provider: {
+                        addTitle: '添加 Provider',
+                        editTitle: '编辑 Provider',
+                        close: '关闭弹窗',
+                        name: '名称 *',
+                        nameHint: '允许字母、数字、点号 (.)、下划线 (_) 和连字符 (-)。',
+                        baseUrl: 'Base URL *',
+                        apiKeys: 'API Keys',
+                        apiKeysRequired: 'API Keys *',
+                        onePerLine: '每行一个 API Key',
+                        savedAs: '保存方式',
+                        savedAsSingle: '1 行 -> api_key',
+                        savedAsMultiple: '2 行及以上 -> api_keys',
+                        keepExistingKeys: '留空则保留当前已配置的 {count} 个 key{suffix}。',
+                        priority: '优先级',
+                        priorityHint: '数字越小越先尝试。',
+                        saveProvider: '保存 Provider'
+                    }
+                },
+                settings: {
+                    title: '全局设置',
+                    subtitle: '运行时默认项、恢复策略、路由策略以及本地可观测性。',
+                    runtimeTitle: '运行时',
+                    runtimeCopy: '基础监听配置与请求缓冲默认项。',
+                    listenAddress: '监听地址',
+                    port: '端口',
+                    logLevel: '日志级别',
+                    maxBodySize: '最大请求体大小',
+                    maxBodySizeHint: '用于可重试请求的缓冲字节数。',
+                    reliabilityTitle: '可靠性',
+                    reliabilityCopy: '超时、临时停用和熔断器行为。',
+                    reactivateAfter: '恢复激活时间',
+                    reactivateAfterHint: '失败的 Provider 会停用多久后再恢复。',
+                    upstreamIdleTimeout: '上游空闲超时',
+                    upstreamIdleTimeoutHint: '设为 0 可关闭流式响应停滞保护。',
+                    responseHeaderTimeout: '响应头超时',
+                    responseHeaderTimeoutHint: '设为 0 表示无限等待响应头。',
+                    failureThreshold: '失败阈值',
+                    failureThresholdHint: '设为 0 可关闭熔断器。',
+                    successThreshold: '成功阈值',
+                    openTimeout: '打开超时',
+                    halfOpenMaxInflight: '半开最大并发',
+                    logsAlertsTitle: '日志与提醒',
+                    logsAlertsCopy: '本地日志、保留策略和桌面通知行为。',
+                    logDirectory: '日志目录',
+                    logDirectoryHint: '留空则使用默认的配置目录 logs 文件夹。',
+                    retentionDays: '保留天数',
+                    retentionDaysHint: '设为 0 表示永久保留日志。',
+                    notificationLevel: '通知级别',
+                    logToStdout: '输出到 Stdout',
+                    desktopNotifications: '桌面通知',
+                    notifyOnProviderSwitch: 'Provider 切换时通知',
+                    routingTitle: '路由策略',
+                    routingCopy: '只暴露会影响用户可见行为的路由控制项。',
+                    stickySessionTtl: '粘性会话 TTL',
+                    stickySessionTtlHint: '显式会话绑定的空闲生存时间。',
+                    shortRetryAfterMax: '短 Retry-After 上限',
+                    shortRetryAfterMaxHint: '对上游较短 retry-after 提示的最大遵从值。',
+                    maxInlineWait: '最大内联等待',
+                    maxInlineWaitHint: 'Clipal 在溢出到其他 Provider 前可等待的最长时间。',
+                    enableStickySessions: '启用粘性会话',
+                    enableBusyBackpressure: '启用 Busy Backpressure',
+                    footerHint: '保存会更新 `config.yaml`。部分运行时改动需要重启后才会完全生效。',
+                    saveSettings: '保存设置',
+                    saveSuccess: '配置已保存。部分改动可能需要重启。',
+                    exportSuccess: '配置导出成功',
+                    exportFailure: '配置导出失败'
+                },
+                toast: {
+                    success: '成功',
+                    requestFailed: '请求失败',
+                    notice: '提示',
+                    error: '错误',
+                    info: '信息',
+                    dismissNotification: '关闭通知'
+                },
+                level: {
+                    debug: '调试',
+                    info: '信息',
+                    warn: '警告',
+                    error: '错误'
+                }
+            }
+        },
         clientOptions: [
             { value: 'claude', label: 'Claude' },
             { value: 'openai', label: 'OpenAI' },
@@ -132,8 +464,56 @@ function app() {
             };
         },
 
+        normalizeLocale(locale) {
+            const value = String(locale || '').trim();
+            return this.supportedLocales.includes(value) ? value : 'en';
+        },
+
+        lookupMessage(locale, key) {
+            const root = this.messages[this.normalizeLocale(locale)];
+            return String(key || '')
+                .split('.')
+                .filter(Boolean)
+                .reduce((value, part) => {
+                    if (!value || typeof value !== 'object' || !(part in value)) {
+                        return null;
+                    }
+                    return value[part];
+                }, root);
+        },
+
+        t(key) {
+            return this.lookupMessage(this.locale, key)
+                ?? this.lookupMessage('en', key)
+                ?? key;
+        },
+
+        tf(key, params = {}) {
+            return String(this.t(key)).replace(/\{(\w+)\}/g, (_, name) => {
+                return Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : `{${name}}`;
+            });
+        },
+
+        applyLocale() {
+            document.documentElement.lang = this.locale === 'zh-CN' ? 'zh-CN' : 'en';
+            document.title = this.t('meta.title');
+        },
+
+        initLocale() {
+            const stored = localStorage.getItem('clipal.locale');
+            this.locale = this.normalizeLocale(stored);
+            this.applyLocale();
+        },
+
+        setLocale(locale) {
+            this.locale = this.normalizeLocale(locale);
+            localStorage.setItem('clipal.locale', this.locale);
+            this.applyLocale();
+        },
+
         // Initialization
         async init() {
+            this.initLocale();
             this.initTheme();
             
             // Initial data load
@@ -207,7 +587,14 @@ function app() {
         },
 
         get themeLabel() {
-            return this.theme.charAt(0).toUpperCase() + this.theme.slice(1);
+            switch (this.theme) {
+                case 'light':
+                    return this.t('theme.light');
+                case 'dark':
+                    return this.t('theme.dark');
+                default:
+                    return this.t('theme.system');
+            }
         },
 
         scopeLabel(scope) {
@@ -744,15 +1131,76 @@ function app() {
             return this.clientLabel(this.selectedClient);
         },
 
+        modeLabel(mode) {
+            return String(mode || '').trim() === 'manual'
+                ? this.t('providers.modeManual')
+                : this.t('providers.modeAuto');
+        },
+
+        modeToggleLabel() {
+            return String(this.clientConfig.mode || '').trim() === 'auto'
+                ? this.t('providers.switchToManual')
+                : this.t('providers.backToAuto');
+        },
+
+        modeToggleTitle() {
+            return String(this.clientConfig.mode || '').trim() === 'auto' && !this.hasEnabledProviders
+                ? this.t('providers.enableProviderFirst')
+                : '';
+        },
+
+        configuredKeyCountLabel(count) {
+            return this.tf('providers.configuredCount', { count: Number(count || 0) });
+        },
+
+        providerPinBadgeTitle() {
+            return this.t('providers.pinnedProvider');
+        },
+
+        providerStatusText(enabled) {
+            return enabled ? this.t('common.active') : this.t('common.disabled');
+        },
+
+        providerToggleTitle(provider) {
+            const isPinned = String(this.clientConfig.mode || '').trim() === 'manual'
+                && provider
+                && provider.name === this.clientConfig.pinned_provider;
+            if (isPinned) {
+                return provider.enabled
+                    ? this.t('providers.pinnedProviderCannotDisable')
+                    : this.t('providers.enablePinnedProvider');
+            }
+            return provider && provider.enabled ? this.t('providers.disable') : this.t('providers.enable');
+        },
+
+        providerPinTitle(provider) {
+            const isPinned = String(this.clientConfig.mode || '').trim() === 'manual'
+                && provider
+                && provider.name === this.clientConfig.pinned_provider;
+            return isPinned ? this.t('providers.pinnedProvider') : this.t('providers.pinTitle');
+        },
+
+        providerEditKeyHint() {
+            return this.tf('modal.provider.keepExistingKeys', {
+                count: this.editingProviderKeyCount,
+                suffix: this.editingProviderKeyCount === 1 ? '' : 's'
+            });
+        },
+
+        levelLabel(level) {
+            const value = String(level || '').trim().toLowerCase();
+            return this.t(`level.${value}`);
+        },
+
         get hasEnabledProviders() {
             return (this.providers || []).some(p => !!p.enabled);
         },
 
         modeHelpText() {
             if ((this.clientConfig.mode || '') === 'manual') {
-                return 'Manual (Pinned)\nAlways use the pinned provider.\nNo failover; failures return errors.';
+                return this.t('providers.modeHelpManual');
             }
-            return 'Auto (Failover)\nTries enabled providers by priority.\nSwitches on failures.';
+            return this.t('providers.modeHelpAuto');
         },
 
         providerStatusLabel(p) {
@@ -833,7 +1281,7 @@ function app() {
             if (m !== 'auto' && m !== 'manual') return;
 
             if (m === 'manual' && !this.hasEnabledProviders) {
-                this.showAlert('error', 'Enable a provider before switching to manual mode');
+                this.showAlert('error', this.t('providers.enableBeforeManual'));
                 return;
             }
 
@@ -871,16 +1319,16 @@ function app() {
             const pinned = String(this.clientConfig.pinned_provider || '').trim();
             if (m === 'auto') {
                 await this.saveClientConfig({
-                    title: `${client} switched to Auto`,
-                    message: 'Failover now follows enabled providers by priority.'
+                    title: this.tf('providers.switchedToAutoTitle', { client }),
+                    message: this.t('providers.switchedToAutoMessage')
                 });
                 return;
             }
             await this.saveClientConfig({
-                title: `${client} switched to Manual`,
+                title: this.tf('providers.switchedToManualTitle', { client }),
                 message: pinned
-                    ? `Pinned to ${pinned}. Requests stay on this provider until you switch back to Auto.`
-                    : 'Requests now stay on the pinned provider until you switch back to Auto.'
+                    ? this.tf('providers.switchedToManualMessagePinned', { provider: pinned })
+                    : this.t('providers.switchedToManualMessage')
             });
         },
 
@@ -890,7 +1338,7 @@ function app() {
 
             const p = (this.providers || []).find(x => x && x.name === v);
             if (p && p.enabled === false) {
-                this.showAlert('error', 'Enable the provider before pinning it');
+                this.showAlert('error', this.t('providers.enableBeforePinning'));
                 return;
             }
 
@@ -898,8 +1346,8 @@ function app() {
             this.clientConfig.pinned_provider = v;
             const client = this.providerToastClientLabel();
             await this.saveClientConfig({
-                title: `Pinned ${client} to ${v}`,
-                message: 'New requests will stay on this provider until you switch back to Auto.'
+                title: this.tf('providers.pinnedTitle', { client, provider: v }),
+                message: this.t('providers.pinnedMessage')
             });
         },
 
@@ -921,14 +1369,14 @@ function app() {
                 if (newEnabled) {
                     this.showAlert(
                         'success',
-                        'It is available again for failover selection.',
-                        `Enabled ${provider.name} for ${client}`
+                        this.t('providers.enabledMessage'),
+                        this.tf('providers.enabledTitle', { provider: provider.name, client })
                     );
                 } else {
                     this.showAlert(
                         'success',
-                        'It has been removed from failover selection.',
-                        `Disabled ${provider.name} for ${client}`
+                        this.t('providers.disabledMessage'),
+                        this.tf('providers.disabledTitle', { provider: provider.name, client })
                     );
                 }
                 await this.refreshStatus();
@@ -967,8 +1415,8 @@ function app() {
                     );
                     this.showAlert(
                         'success',
-                        `Changes are now active for ${this.providerToastClientLabel()}.`,
-                        `Updated provider ${payload.name}`
+                        this.tf('providers.updatedMessage', { client: this.providerToastClientLabel() }),
+                        this.tf('providers.updatedTitle', { provider: payload.name })
                     );
                 } else {
                     // Add new provider
@@ -981,8 +1429,8 @@ function app() {
                     );
                     this.showAlert(
                         'success',
-                        `The provider is now available for ${this.providerToastClientLabel()}.`,
-                        `Added provider ${payload.name}`
+                        this.tf('providers.addedMessage', { client: this.providerToastClientLabel() }),
+                        this.tf('providers.addedTitle', { provider: payload.name })
                     );
                 }
 
@@ -1008,7 +1456,7 @@ function app() {
         },
 
         async deleteProvider(name) {
-            if (!confirm(`Are you sure you want to delete provider "${name}"?`)) {
+            if (!confirm(this.tf('providers.deleteConfirm', { name }))) {
                 return;
             }
 
@@ -1019,8 +1467,8 @@ function app() {
                 );
                 this.showAlert(
                     'success',
-                    `It has been removed from ${this.providerToastClientLabel()}'s provider list.`,
-                    `Deleted provider ${name}`
+                    this.tf('providers.deletedMessage', { client: this.providerToastClientLabel() }),
+                    this.tf('providers.deletedTitle', { name })
                 );
                 await this.loadProviders();
                 await this.refreshStatus();
@@ -1062,7 +1510,7 @@ function app() {
                     method: 'PUT',
                     body: JSON.stringify(this.globalConfig)
                 });
-                this.showAlert('success', 'Configuration saved. Some changes may require restart.');
+                this.showAlert('success', this.t('settings.saveSuccess'));
                 await this.refreshStatus();
             } catch (error) {
                 console.error('Failed to save global config:', error);
@@ -1081,9 +1529,9 @@ function app() {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
-                this.showAlert('success', 'Configuration exported successfully');
+                this.showAlert('success', this.t('settings.exportSuccess'));
             } catch (error) {
-                this.showAlert('error', 'Failed to export configuration');
+                this.showAlert('error', this.t('settings.exportFailure'));
                 console.error('Failed to export config:', error);
             }
         },
@@ -1091,22 +1539,22 @@ function app() {
         defaultToastTitle(type) {
             switch (String(type || '').trim()) {
                 case 'success':
-                    return 'Success';
+                    return this.t('toast.success');
                 case 'error':
-                    return 'Request failed';
+                    return this.t('toast.requestFailed');
                 default:
-                    return 'Notice';
+                    return this.t('toast.notice');
             }
         },
 
         toastTypeLabel(type) {
             switch (String(type || '').trim()) {
                 case 'success':
-                    return 'Success';
+                    return this.t('toast.success');
                 case 'error':
-                    return 'Error';
+                    return this.t('toast.error');
                 default:
-                    return 'Info';
+                    return this.t('toast.info');
             }
         },
 
