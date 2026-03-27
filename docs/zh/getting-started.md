@@ -3,7 +3,7 @@
 ## 1. 下载与安装
 
 从 [Releases](https://github.com/lansespirit/Clipal/releases) 下载对应平台的二进制，并放到你的 `PATH` 中。
-当前稳定版：[`v0.11.3`](https://github.com/lansespirit/Clipal/releases/tag/v0.11.3)
+当前稳定版：[`v0.11.4`](https://github.com/lansespirit/Clipal/releases/tag/v0.11.4)
 
 平台细节：
 
