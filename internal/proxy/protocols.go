@@ -69,6 +69,13 @@ const (
 	routingScopeGeminiStream      routingScope = "gemini_stream_generate_content"
 )
 
+var versionedPathRoots = []string{
+	"/upload/v1beta",
+	"/upload/v1",
+	"/v1beta",
+	"/v1",
+}
+
 func detectClipalRequestContext(path string) (RequestContext, bool) {
 	path = canonicalizeClipalPath(path)
 
@@ -186,7 +193,7 @@ func normalizeUpstreamPath(path string) string {
 }
 
 func canonicalizeClipalPath(path string) string {
-	path = normalizeUpstreamPath(path)
+	path = collapseNestedVersionedPath(normalizeUpstreamPath(path))
 
 	if isVersionedClipalPath(path) {
 		return path
@@ -200,6 +207,37 @@ func canonicalizeClipalPath(path string) string {
 	}
 	if canonical, ok := canonicalizeBareOpenAIPath(path); ok {
 		return canonical
+	}
+
+	return path
+}
+
+func collapseNestedVersionedPath(path string) string {
+	path = normalizeUpstreamPath(path)
+	for {
+		collapsed := collapseOneNestedVersionedPath(path)
+		if collapsed == path {
+			return path
+		}
+		path = collapsed
+	}
+}
+
+func collapseOneNestedVersionedPath(path string) string {
+	for _, root := range versionedPathRoots {
+		if !pathMatchesPrefix(path, root) {
+			continue
+		}
+
+		rest := strings.TrimPrefix(path, root)
+		if strings.TrimSpace(rest) == "" {
+			continue
+		}
+
+		rest = normalizeUpstreamPath(rest)
+		if isVersionedClipalPath(rest) {
+			return rest
+		}
 	}
 
 	return path

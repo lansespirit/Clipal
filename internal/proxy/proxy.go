@@ -1104,12 +1104,33 @@ func buildTargetURL(baseURL string, path string, rawQuery string) (string, error
 		return "", fmt.Errorf("invalid base_url %q: host is empty", baseURL)
 	}
 
+	path = stripDuplicateVersionedPrefix(parsedBase.Path, path)
+
 	// Join base path and request path, keeping exactly one slash.
 	parsedBase.Path = singleJoiningSlash(parsedBase.Path, path)
 	parsedBase.RawQuery = rawQuery
 	parsedBase.Fragment = ""
 
 	return parsedBase.String(), nil
+}
+
+func stripDuplicateVersionedPrefix(basePath string, requestPath string) string {
+	requestPath = normalizeUpstreamPath(requestPath)
+	basePath = normalizeUpstreamPath(basePath)
+
+	for _, root := range versionedPathRoots {
+		if !strings.HasSuffix(basePath, root) || !pathMatchesPrefix(requestPath, root) {
+			continue
+		}
+
+		trimmed := strings.TrimPrefix(requestPath, root)
+		if strings.TrimSpace(trimmed) == "" {
+			return "/"
+		}
+		return normalizeUpstreamPath(trimmed)
+	}
+
+	return requestPath
 }
 
 func singleJoiningSlash(a, b string) string {

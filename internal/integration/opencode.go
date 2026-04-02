@@ -25,7 +25,7 @@ func (m Manager) opencodeTargetPath() (string, error) {
 }
 
 func (m Manager) advertisedOpenCodeBaseURL(cfg *config.Config) string {
-	return m.advertisedBaseURL(cfg) + "/v1"
+	return m.advertisedBaseURL(cfg)
 }
 
 func (m Manager) opencodeStatus(cfg *config.Config) (Status, error) {

@@ -108,7 +108,7 @@ func TestOpenCodeApply_CreatesProviderAndSwitchesModel(t *testing.T) {
 	if options == nil {
 		t.Fatalf("clipal options missing")
 	}
-	if got, _ := options["baseURL"].(string); got != "http://127.0.0.1:4455/clipal/v1" {
+	if got, _ := options["baseURL"].(string); got != "http://127.0.0.1:4455/clipal" {
 		t.Fatalf("clipal baseURL = %q", got)
 	}
 	if got, _ := options["apiKey"].(string); got != "clipal" {

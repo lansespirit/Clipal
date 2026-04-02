@@ -61,7 +61,7 @@ Edit `~/.config/opencode/opencode.json`:
       "npm": "@ai-sdk/openai-compatible",
       "name": "Clipal",
       "options": {
-        "baseURL": "http://127.0.0.1:3333/clipal/v1",
+        "baseURL": "http://127.0.0.1:3333/clipal",
         "apiKey": "clipal"
       },
       "models": {
@@ -73,6 +73,8 @@ Edit `~/.config/opencode/opencode.json`:
   }
 }
 ```
+
+- Keep the OpenCode `baseURL` at `http://127.0.0.1:3333/clipal`; do not append `/v1` manually
 
 Notes:
 

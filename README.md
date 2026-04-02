@@ -74,7 +74,7 @@ After that, guide me through using the Web UI to enable CLI takeover and add my 
 ```
 
 ### 1. Install Clipal
-Download the standalone binary for your OS from [Releases](https://github.com/lansespirit/Clipal/releases) (Current stable release: [`v0.11.6`](https://github.com/lansespirit/Clipal/releases/tag/v0.11.6)) and put it on your `PATH`.
+Download the standalone binary for your OS from [Releases](https://github.com/lansespirit/Clipal/releases) (Current stable release: [`v0.11.7`](https://github.com/lansespirit/Clipal/releases/tag/v0.11.7)) and put it on your `PATH`.
 ```bash
 chmod +x clipal*
 ./clipal* --version

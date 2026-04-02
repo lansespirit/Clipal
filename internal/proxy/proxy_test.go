@@ -95,6 +95,24 @@ func TestBuildTargetURL(t *testing.T) {
 			wantURL: "https://example.com/api/v1/messages",
 		},
 		{
+			name:    "deduplicates-terminal-v1-prefix",
+			baseURL: "https://example.com/v1",
+			path:    "/v1/responses",
+			wantURL: "https://example.com/v1/responses",
+		},
+		{
+			name:    "deduplicates-terminal-v1beta-prefix",
+			baseURL: "https://example.com/v1beta",
+			path:    "/v1beta/models/gemini-2.5-pro:generateContent",
+			wantURL: "https://example.com/v1beta/models/gemini-2.5-pro:generateContent",
+		},
+		{
+			name:    "deduplicates-terminal-upload-v1beta-prefix",
+			baseURL: "https://example.com/upload/v1beta",
+			path:    "/upload/v1beta/files",
+			wantURL: "https://example.com/upload/v1beta/files",
+		},
+		{
 			name:     "query-preserved",
 			baseURL:  "https://example.com",
 			path:     "/v1/messages",

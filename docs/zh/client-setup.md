@@ -61,7 +61,7 @@ wire_api = "responses"
       "npm": "@ai-sdk/openai-compatible",
       "name": "Clipal",
       "options": {
-        "baseURL": "http://127.0.0.1:3333/clipal/v1",
+        "baseURL": "http://127.0.0.1:3333/clipal",
         "apiKey": "clipal"
       },
       "models": {
@@ -73,6 +73,8 @@ wire_api = "responses"
   }
 }
 ```
+
+- OpenCode 的 `baseURL` 保持为 `http://127.0.0.1:3333/clipal` 即可，不要手动再补 `/v1`
 
 说明：
 

@@ -167,6 +167,29 @@ func TestClipalBareResponsesPathCanonicalizesToV1(t *testing.T) {
 	}
 }
 
+func TestClipalDuplicateV1ResponsesPathCanonicalizesToSingleV1(t *testing.T) {
+	t.Parallel()
+
+	router := newUnifiedIngressTestRouter()
+
+	var codexCalls int32
+	installPathAssertingTransport(router.proxies[ClientOpenAI], "codex", "/v1/responses", "codex-ok", &codexCalls)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/v1/responses", bytes.NewReader([]byte(`{"x":1}`)))
+	router.handleRequest(rr, req)
+
+	if rr.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d body=%s", rr.Result().StatusCode, http.StatusOK, rr.Body.String())
+	}
+	if got := rr.Body.String(); got != "codex-ok" {
+		t.Fatalf("body: got %q want %q", got, "codex-ok")
+	}
+	if got := atomic.LoadInt32(&codexCalls); got != 1 {
+		t.Fatalf("codex calls: got %d want 1", got)
+	}
+}
+
 func TestClipalBareResponsesResourcePathCanonicalizesToV1(t *testing.T) {
 	t.Parallel()
 
