@@ -374,6 +374,11 @@ section {
   color: var(--gold);
 }
 
+.lang-label.active {
+  color: var(--gold);
+  font-weight: 700;
+}
+
 .lang-sep {
   color: var(--text-muted);
 }
@@ -2228,3 +2233,488 @@ section {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* ── EXTRACTED INLINE STYLES ─────────────────────────────── */
+
+/* -- SVG Failover Diagram (Feature 02) -- */
+.svg-bg {
+  fill: rgba(0, 0, 0, 0.4);
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.svg-text {
+  fill: #a0a0a0;
+  font-size: 11px;
+  text-anchor: middle;
+  alignment-baseline: middle;
+}
+
+.svg-label {
+  fill: #666;
+  font-size: 10px;
+  font-weight: bold;
+  text-anchor: start;
+}
+
+.svg-key {
+  fill: #1a1a1a;
+  stroke: #333;
+  stroke-width: 1;
+  transition: all 0.2s;
+}
+
+.svg-err-text {
+  fill: #ef4444;
+  font-size: 9px;
+  opacity: 0;
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+.svg-ok-text {
+  fill: #10b981;
+  font-size: 9px;
+  opacity: 0;
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+.svg-arrow {
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1.5;
+  fill: none;
+  stroke-linejoin: round;
+}
+
+@keyframes mDot1 {
+  0%, 100% { opacity: 0; }
+  5% { transform: translate(100px, 67px); opacity: 1; }
+  15% { transform: translate(160px, 67px); opacity: 1; }
+  16% { opacity: 0; }
+}
+
+@keyframes mDot2 {
+  0%, 100% { opacity: 0; }
+  25% { transform: translate(210px, 85px); opacity: 0; }
+  26% { transform: translate(210px, 85px); opacity: 1; }
+  35% { transform: translate(210px, 110px); opacity: 1; }
+  36% { opacity: 0; }
+}
+
+@keyframes mDot3 {
+  0%, 100% { opacity: 0; }
+  45% { transform: translate(260px, 127px); opacity: 0; }
+  46% { transform: translate(260px, 127px); opacity: 1; }
+  52% { transform: translate(330px, 127px); }
+  56% { transform: translate(330px, 97px); }
+  65% { transform: translate(415px, 97px); opacity: 1; }
+  66% { opacity: 0; }
+}
+
+@keyframes flashRed1 {
+  16%, 26% { stroke: #ef4444; fill: rgba(239, 68, 68, 0.1); }
+}
+
+@keyframes showErr1 {
+  16%, 26% { opacity: 1; }
+}
+
+@keyframes flashRed2 {
+  36%, 46% { stroke: #ef4444; fill: rgba(239, 68, 68, 0.1); }
+}
+
+@keyframes showErr2 {
+  36%, 46% { opacity: 1; }
+}
+
+@keyframes flashGreen {
+  66%, 86% { stroke: #10b981; fill: rgba(16, 185, 129, 0.1); }
+}
+
+@keyframes showOk {
+  66%, 86% { opacity: 1; }
+}
+
+.anim-dot1 { animation: mDot1 6s infinite linear; }
+.anim-dot2 { animation: mDot2 6s infinite linear; }
+.anim-dot3 { animation: mDot3 6s infinite linear; }
+.anim-key1 { animation: flashRed1 6s infinite linear; }
+.anim-err1 { animation: showErr1 6s infinite linear; }
+.anim-key2 { animation: flashRed2 6s infinite linear; }
+.anim-err2 { animation: showErr2 6s infinite linear; }
+.anim-key3 { animation: flashGreen 6s infinite linear; }
+.anim-ok   { animation: showOk 6s infinite linear; }
+
+/* -- Blueprint / How It Works Section -- */
+.blueprint-container {
+  margin-top: 4rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  position: relative;
+}
+
+@media (min-width: 900px) {
+  .blueprint-container {
+    grid-template-columns: 240px 1fr 240px;
+    align-items: center;
+  }
+}
+
+.bp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  position: relative;
+  z-index: 2;
+}
+
+.bp-core {
+  background: rgba(30, 30, 30, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  padding: 2.5rem;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.bp-core::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  opacity: 0.6;
+}
+
+.bp-item {
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.bp-item:hover {
+  border-color: var(--gold);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.bp-core-item {
+  background: rgba(10, 10, 10, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  padding: 1.5rem;
+  position: relative;
+  transition: transform 0.3s ease, border-color 0.3s ease;
+  overflow: hidden;
+}
+
+.bp-core-item:hover {
+  transform: scale(1.02);
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.bp-core-item::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: 60px;
+  background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.1), transparent);
+  animation: bpScanline 3s linear infinite;
+}
+
+@keyframes bpScanline {
+  0%   { right: 100%; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { right: -60px; opacity: 0; }
+}
+
+.bp-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bp-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold);
+  animation: bpPulse 2s infinite;
+}
+
+@keyframes bpPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(1.3); }
+}
+
+.bp-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-base);
+  margin-bottom: 0.5rem;
+}
+
+.bp-desc {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* Flow Lines */
+.bp-flow {
+  position: absolute;
+  top: 50%;
+  width: 100%;
+  height: 2px;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .bp-flow { display: block; }
+}
+
+.bp-fline {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.bp-fline.left {
+  left: 240px;
+  right: calc(100% - 240px - 2rem);
+  width: auto;
+}
+
+.bp-fline.right {
+  left: auto;
+  right: 240px;
+  width: 4rem;
+}
+
+.bp-dot {
+  position: absolute;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--gold);
+  animation: bpFlowAnim 2s infinite linear;
+}
+
+.bp-fline.left .bp-dot  { animation-delay: 0s; }
+.bp-fline.right .bp-dot {
+  animation-delay: 0.5s;
+  background: #3b82f6;
+  box-shadow: 0 0 10px #3b82f6;
+}
+
+@keyframes bpFlowAnim {
+  0%   { left: 0; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+/* Mini Terminals */
+.bp-term {
+  background: #000;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  margin-top: 1rem;
+  color: #a0a0a0;
+  border: 1px solid #222;
+  overflow-x: auto;
+}
+
+.bp-term .diff-add { color: #4ec9b0; }
+.bp-term .str      { color: #ce9178; }
+
+/* Flowcharts */
+.fc-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  overflow-x: auto;
+}
+
+.fc-node {
+  padding: 4px 8px;
+  background: #222;
+  border-radius: 4px;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.fc-box {
+  padding: 4px 8px;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 4px;
+  color: #e9d5ff;
+  white-space: nowrap;
+}
+
+.fc-arr  { color: var(--gold); font-weight: bold; }
+
+.fc-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 2px solid #3b82f6;
+  padding-left: 8px;
+}
+
+.fc-key {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  background: #111;
+  border-radius: 4px;
+  color: #888;
+  white-space: nowrap;
+}
+
+.fc-key.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+}
+
+/* -- Mini SVG diagrams (Blueprint cards) -- */
+.mini-bg {
+  fill: rgba(0, 0, 0, 0.5);
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+
+.mini-txt {
+  fill: #a0a0a0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  alignment-baseline: middle;
+  text-anchor: middle;
+}
+
+.mini-arr {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 1.5;
+  stroke-dasharray: 3;
+  fill: none;
+}
+
+@keyframes miniPack1 {
+  0%   { transform: translateX(50px); opacity: 0; }
+  10%  { opacity: 1; }
+  40%  { transform: translateX(95px); opacity: 1; }
+  50%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes miniPack2 {
+  0%, 40% { opacity: 0; }
+  50%  { transform: translateX(180px); opacity: 0; }
+  60%  { opacity: 1; }
+  90%  { transform: translateX(225px); opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes scrubPulse {
+  30%, 60% { stroke: rgba(168, 85, 247, 0.7); }
+}
+
+.m-dot1  { animation: miniPack1 3s infinite linear; fill: #ef4444; }
+.m-dot2  { animation: miniPack2 3s infinite linear; fill: #10b981; }
+.m-scrub { animation: scrubPulse 3s infinite linear; }
+
+/* -- Blueprint path animations -- */
+@keyframes bpPath1 {
+  0%   { transform: translate(75px, 20px); opacity: 1; }
+  20%  { transform: translate(120px, 20px); opacity: 1; }
+  25%  { transform: translate(120px, 20px); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes bpFlashR {
+  20%, 30% { stroke: #ef4444; fill: rgba(239, 68, 68, 0.2); }
+}
+
+@keyframes bpPath2 {
+  0%, 40% { opacity: 0; }
+  45%  { transform: translate(125px, 30px); opacity: 1; }
+  65%  { transform: translate(125px, 45px); opacity: 1; }
+  70%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes bpFlashG {
+  65%, 85% { stroke: #10b981; fill: rgba(16, 185, 129, 0.2); }
+}
+
+.b-dot1 { animation: bpPath1 3s infinite linear; fill: #ef4444; }
+.b-dot2 { animation: bpPath2 3s infinite linear; fill: #10b981; }
+.b-k1   { animation: bpFlashR 3s infinite linear; }
+.b-k2   { animation: bpFlashG 3s infinite linear; }
+
+/* -- Header failover path animations -- */
+@keyframes hfPath1 {
+  0%   { transform: translateX(60px); opacity: 1; }
+  25%  { transform: translateX(100px); opacity: 1; }
+  30%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes hfPath2 {
+  0%, 45% { opacity: 0; }
+  50%  { transform: translateX(190px); opacity: 1; }
+  75%  { transform: translateX(230px); opacity: 1; }
+  80%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes hfBad {
+  25%, 45% { stroke: #ef4444; fill: rgba(239, 68, 68, 0.2); }
+}
+
+@keyframes hfOk {
+  75%, 95% { stroke: #10b981; fill: rgba(16, 185, 129, 0.2); }
+}
+
+.c-dot1 { animation: hfPath1 3s infinite linear; fill: #ef4444; }
+.c-dot2 { animation: hfPath2 3s infinite linear; fill: #10b981; }
+.c-b1   { animation: hfBad 3s infinite linear; }
+.c-b2   { animation: hfOk 3s infinite linear; }
