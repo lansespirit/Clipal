@@ -398,8 +398,8 @@
               <div class="fstrip-visual">
                 <div class="fstrip-screenshot-frame">
                   <img src="../assets/screenshots/webui-cli-takeover.png"
-                    alt="Clipal Web UI 界面 - 展示 Claude Code、Codex 和 Gemini 的一键接管功能及自动 settings.json 注入"
-                    width="600" height="400" loading="lazy">
+                    alt="Clipal Web UI 界面 - 展示 Claude Code、Codex 和 Gemini 的一键接管功能及自动 settings.json 注入" width="600"
+                    height="400" loading="lazy">
                 </div>
               </div>
             </div>
@@ -567,7 +567,8 @@
             <!-- Core 1 -->
             <div class="bp-core-item">
               <div class="bp-label">
-                <div class="bp-pulse" style="background:var(--green);box-shadow:0 0 8px var(--green)"></div> <span>AST 语法树精准合并</span>
+                <div class="bp-pulse" style="background:var(--green);box-shadow:0 0 8px var(--green)"></div> <span>AST
+                  语法树精准合并</span>
               </div>
               <div class="bp-title">非破坏性配置接管</div>
               <div class="bp-desc">不同于粗暴覆盖 settings.json，我们解析 JSON AST 仅精准注入
@@ -583,7 +584,8 @@
             <!-- Core 2 -->
             <div class="bp-core-item">
               <div class="bp-label">
-                <div class="bp-pulse" style="background:var(--gold);box-shadow:0 0 8px var(--gold)"></div> <span>协议级防篡改网关</span>
+                <div class="bp-pulse" style="background:var(--gold);box-shadow:0 0 8px var(--gold)"></div>
+                <span>协议级防篡改网关</span>
               </div>
               <div class="bp-title">Socket 级 Header 清洗</div>
               <div class="bp-desc">告别无限次要求 /login 的噩梦。Clipal 在代理网关层直接重写 Auth 请求并强制涤除导致握手失败的混乱
@@ -613,7 +615,8 @@
             <!-- Core 3 -->
             <div class="bp-core-item">
               <div class="bp-label">
-                <div class="bp-pulse" style="background:#3b82f6;box-shadow:0 0 8px #3b82f6"></div> <span>多密钥调度池与重试</span>
+                <div class="bp-pulse" style="background:#3b82f6;box-shadow:0 0 8px #3b82f6"></div>
+                <span>多密钥调度池与重试</span>
               </div>
               <div class="bp-title">429 智能分流与会话粘性</div>
               <div class="bp-desc">专为第三方 API 设计。单渠道配额耗尽或触发 429 限流？网关会在同一 Provider
@@ -640,7 +643,8 @@
             <!-- Core 4 -->
             <div class="bp-core-item">
               <div class="bp-label">
-                <div class="bp-pulse" style="background:#eab308;box-shadow:0 0 8px #eab308"></div> <span>多级 Provider 路由</span>
+                <div class="bp-pulse" style="background:#eab308;box-shadow:0 0 8px #eab308"></div> <span>多级 Provider
+                  路由</span>
               </div>
               <div class="bp-title">全局层级兜底 (Failover)</div>
               <div class="bp-desc">不怕单点全垒崩溃。如果你的主力 Provider 彻底宕机或者所有 Key
@@ -921,7 +925,8 @@
             <h4 class="faq-q">我能在 Claude Code 和基于 OpenAI 的工具中配合 OpenRouter 或 new-api 使用 Clipal 吗？</h4>
             <p class="faq-a">当然可以。Clipal 原生支持 <strong>OpenAI 兼容协议</strong>、<strong>Anthropic Claude</strong> 以及
               <strong>Google Gemini</strong> 协议。你可以将终端里的 Claude Code、基于 OpenAI 的 <strong>Codex</strong> 以及 Gemini CLI
-              流量，轻松转发至任意第三方提供商或本地端点。</p>
+              流量，轻松转发至任意第三方提供商或本地端点。
+            </p>
           </div>
 
           <div class="faq-item glass-card">
@@ -935,13 +940,15 @@
             <h4 class="faq-q">在 Codex 中使用 Clipal 会影响我的聊天历史记录或会话稳定性吗？</h4>
             <p class="faq-a">不会，反而会更稳。针对 <strong>Codex / OpenCode</strong>，Clipal 采用标准化的
               <code>model_provider = "clipal"</code> 配置。不同于其他频繁更换 Provider 标识（这会导致会话历史重置）的方案，Clipal 始终保持 Provider
-              标识一致，仅在后台无感切换 API 密钥或端点，从而完美保留你的所有上下文和历史记录。</p>
+              标识一致，仅在后台无感切换 API 密钥或端点，从而完美保留你的所有上下文和历史记录。
+            </p>
           </div>
 
           <div class="faq-item glass-card">
             <h4 class="faq-q">Clipal 与 cc-switch 有什么区别？</h4>
             <p class="faq-a">cc-switch 主要负责多配置切换，而 Clipal 是<strong>高性能本地网关</strong>，不仅支持
-              <code>settings.json</code> 的深度注入与接管，还支持复杂的多密钥 Token 池管理和实时请求观测。</p>
+              <code>settings.json</code> 的深度注入与接管，还支持复杂的多密钥 Token 池管理和实时请求观测。
+            </p>
           </div>
 
           <div class="faq-item glass-card">
@@ -992,7 +999,8 @@
             <h3 class="download-panel-title">选择你的平台下载</h3>
 
             <div class="platform-tabs" id="platform-tabs" role="tablist" aria-label="选择平台">
-              <button class="ptab active" role="tab" aria-selected="true" data-platform="mac-arm">macOS (Apple Silicon)</button>
+              <button class="ptab active" role="tab" aria-selected="true" data-platform="mac-arm">macOS (Apple
+                Silicon)</button>
               <button class="ptab" role="tab" aria-selected="false" data-platform="mac-intel">macOS (Intel)</button>
               <button class="ptab" role="tab" aria-selected="false" data-platform="linux-x64">Linux x86_64</button>
               <button class="ptab" role="tab" aria-selected="false" data-platform="linux-arm">Linux ARM64</button>
@@ -1033,8 +1041,9 @@
             <h3 class="community-panel-title">加入社区</h3>
             <p class="community-sub">与其他开发者交流配置心得、获取帮助、探讨新提供商接入。</p>
             <div class="qr-wrap">
-              <img src="../assets/community/wechat-group.png" alt="Clipal 微信开发者社区二维码 - 获取 Claude Code 和 Gemini 设置支持"
-                loading="lazy" width="180" height="180" class="qr-img">
+              <img src="https://github.com/lansespirit/Clipal/raw/main/assets/wechat-group.png"
+                alt="Clipal 微信开发者社区二维码 - 获取 Claude Code 和 Gemini 设置支持" loading="lazy" width="180" height="180"
+                class="qr-img">
               <p class="qr-label">扫码加入微信交流群</p>
             </div>
           </div>
@@ -1053,8 +1062,8 @@
           <span>Clipal</span>
         </a>
         <p class="footer-tagline">你的本地 LLM 网关</p>
-        <p class="footer-paiart">隶属 <a href="https://paiart.com" target="_blank"
-            rel="noopener noreferrer">PAIART</a> 生态 — 致力于构建个人 AI 社区。</p>
+        <p class="footer-paiart">隶属 <a href="https://paiart.com" target="_blank" rel="noopener noreferrer">PAIART</a> 生态
+          — 致力于构建个人 AI 社区。</p>
       </div>
 
       <nav class="footer-links" aria-label="页脚导航">
