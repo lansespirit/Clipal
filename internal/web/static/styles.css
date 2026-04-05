@@ -1398,27 +1398,40 @@ body {
     color: var(--text-tertiary);
 }
 
+.provider-settings-row {
+    display: flex;
+    gap: 24px;
+}
+
+.provider-priority-wrap {
+    flex: 1;
+}
+
+.provider-enabled-wrap {
+    display: flex;
+    flex-direction: column;
+}
+
+.toggle-layout {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    height: 40px;
+    margin-top: 10px;
+}
+
 .provider-overrides-group {
-    margin-top: 4px;
-    padding-top: 18px;
-    border-top: 1px solid var(--border);
+    margin-top: 10px;
+    margin-bottom: 0px;
+    padding: 20px 24px;
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
 }
 
 .provider-overrides-header {
-    display: grid;
-    gap: 6px;
-    margin-bottom: 12px;
-}
-
-.provider-overrides-title-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-
-.provider-overrides-title {
+    margin-bottom: 16px;
+    line-height: 1;
     font-size: var(--text-xs);
     font-weight: 700;
     color: var(--text-secondary);
@@ -1426,29 +1439,10 @@ body {
     letter-spacing: 0.08em;
 }
 
-.provider-overrides-badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 22px;
-    padding: 0 9px;
-    border-radius: 999px;
-    background: var(--bg-surface);
-    color: var(--text-tertiary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0.02em;
-}
-
-.provider-overrides-intro {
-    color: var(--text-secondary);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-}
-
 .provider-overrides-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 12px;
+    gap: 16px;
 }
 
 .provider-overrides-field {
@@ -1461,10 +1455,6 @@ body {
 .provider-overrides-field .form-label {
     margin-bottom: 0;
     font-size: var(--text-xs);
-}
-
-.provider-overrides-field .form-input {
-    height: 38px;
 }
 
 /* Components: Buttons (Proportions) */
@@ -1885,6 +1875,12 @@ input:checked+.slider:before {
         margin-left: 0;
     }
 
+    .provider-overrides-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
     .provider-overrides-grid {
         grid-template-columns: 1fr;
     }

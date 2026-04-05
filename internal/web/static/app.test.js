@@ -295,9 +295,12 @@ test('editProvider hydrates override fields directly into the form', () => {
     state.editProvider({
         name: 'openai-primary',
         base_url: 'https://example.com',
-        model: 'gpt-5.4',
-        reasoning_effort: 'high',
-        thinking_budget_tokens: 0,
+        overrides: {
+            model: 'gpt-5.4',
+            openai: {
+                reasoning_effort: 'high'
+            }
+        },
         key_count: 1,
         priority: 1,
         enabled: true

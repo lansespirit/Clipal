@@ -79,24 +79,20 @@
                 x-text="t('nav.integrations')"></button>
             <button id="tabbtn-settings" role="tab" :tabindex="activeTab === 'settings' ? 0 : -1"
                 :aria-selected="activeTab === 'settings'" aria-controls="tab-settings" @click="activeTab = 'settings'"
-                :class="{'active': activeTab === 'settings'}" class="tab"
-                x-text="t('nav.settings')"></button>
+                :class="{'active': activeTab === 'settings'}" class="tab" x-text="t('nav.settings')"></button>
             <button id="tabbtn-services" role="tab" :tabindex="activeTab === 'services' ? 0 : -1"
                 :aria-selected="activeTab === 'services'" aria-controls="tab-services" @click="activeTab = 'services'"
-                :class="{'active': activeTab === 'services'}" class="tab"
-                x-text="t('nav.services')"></button>
+                :class="{'active': activeTab === 'services'}" class="tab" x-text="t('nav.services')"></button>
             <button id="tabbtn-status" role="tab" :tabindex="activeTab === 'status' ? 0 : -1"
                 :aria-selected="activeTab === 'status'" aria-controls="tab-status" @click="activeTab = 'status'"
-                :class="{'active': activeTab === 'status'}" class="tab"
-                x-text="t('nav.status')"></button>
+                :class="{'active': activeTab === 'status'}" class="tab" x-text="t('nav.status')"></button>
         </nav>
 
         <!-- Toast Messages -->
         <div class="toast-stack" aria-live="polite" aria-atomic="false">
             <template x-for="toast in toasts" :key="toast.id">
                 <div class="toast" :class="`toast--${toast.type}`" :role="toast.type === 'error' ? 'alert' : 'status'"
-                    @mouseenter="pauseToast(toast.id)"
-                    @mouseleave="resumeToast(toast.id)"
+                    @mouseenter="pauseToast(toast.id)" @mouseleave="resumeToast(toast.id)"
                     x-transition:enter="transition ease-out duration-220"
                     x-transition:enter-start="opacity-0 translate-y-2 scale-[0.98]"
                     x-transition:enter-end="opacity-100 translate-y-0 scale-100"
@@ -139,7 +135,8 @@
                     <div class="client-mode-row">
                         <div class="client-mode-left">
                             <span class="client-mode-label" x-text="t('providers.modeLabel')"></span>
-                            <span class="mode-pill pill pill-xs" :class="clientConfig.mode === 'auto' ? 'mode-auto' : 'mode-manual'"
+                            <span class="mode-pill pill pill-xs"
+                                :class="clientConfig.mode === 'auto' ? 'mode-auto' : 'mode-manual'"
                                 x-text="modeLabel(clientConfig.mode)"></span>
                             <span class="tooltip" :aria-label="t('providers.modeLabel')">
                                 <button type="button" class="info-btn" :aria-label="t('providers.modeLabel')">i</button>
@@ -163,7 +160,8 @@
                         </div>
                     </div>
 
-                    <div class="form-hint" x-show="clientConfig.mode === 'manual'" x-text="t('providers.pinHint')"></div>
+                    <div class="form-hint" x-show="clientConfig.mode === 'manual'" x-text="t('providers.pinHint')">
+                    </div>
                 </div>
             </div>
 
@@ -171,7 +169,8 @@
             <div id="providers-list" class="card-grid">
                 <template x-if="providers.length === 0">
                     <div class="card u-text-center" style="grid-column: 1 / -1; padding: 60px;">
-                        <p style="color: var(--text-secondary)" x-text="tf('providers.empty', { client: clientLabel(selectedClient) })"></p>
+                        <p style="color: var(--text-secondary)"
+                            x-text="tf('providers.empty', { client: clientLabel(selectedClient) })"></p>
                     </div>
                 </template>
 
@@ -180,11 +179,13 @@
                         <div class="provider-card__header">
                             <div class="provider-card__info">
                                 <div class="provider-card__title-row">
-                                    <span class="priority-badge badge badge-xs badge-outline badge-mono" x-text="'#' + provider.priority"></span>
+                                    <span class="priority-badge badge badge-xs badge-outline badge-mono"
+                                        x-text="'#' + provider.priority"></span>
                                     <h3 class="provider-name provider-card__title" x-text="provider.name"></h3>
-                                    <template x-if="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider">
-                                        <span class="pin-badge badge badge-xs badge-warning" :title="providerPinBadgeTitle()"
-                                            x-text="t('providers.pinBadge')"></span>
+                                    <template
+                                        x-if="clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider">
+                                        <span class="pin-badge badge badge-xs badge-warning"
+                                            :title="providerPinBadgeTitle()" x-text="t('providers.pinBadge')"></span>
                                     </template>
                                 </div>
                                 <span
@@ -201,9 +202,9 @@
                                 </label>
                                 <button @click="pinProvider(provider.name)" class="icon-btn"
                                     :class="{'pin-active': clientConfig.mode === 'manual' && provider.name === clientConfig.pinned_provider}"
-                                    :title="providerPinTitle(provider)"
-                                    :disabled="!provider.enabled">📌</button>
-                                <button @click="editProvider(provider)" class="icon-btn" :title="t('providers.edit')">✏️</button>
+                                    :title="providerPinTitle(provider)" :disabled="!provider.enabled">📌</button>
+                                <button @click="editProvider(provider)" class="icon-btn"
+                                    :title="t('providers.edit')">✏️</button>
                                 <button @click="deleteProvider(provider.name)" class="icon-btn danger"
                                     :title="t('providers.delete')">🗑️</button>
                             </div>
@@ -215,19 +216,26 @@
                             </div>
                             <div class="provider-card__detail">
                                 <span class="provider-card__detail-label" x-text="t('providers.apiKeys')"></span>
-                                <span class="provider-card__detail-value" x-text="configuredKeyCountLabel(provider.key_count || 0)"></span>
+                                <span class="provider-card__detail-value"
+                                    x-text="configuredKeyCountLabel(provider.key_count || 0)"></span>
                             </div>
                             <div class="provider-card__detail" x-show="provider.overrides && provider.overrides.model">
                                 <span class="provider-card__detail-label" x-text="t('providers.model')"></span>
                                 <span class="provider-card__detail-value" x-text="provider.overrides.model"></span>
                             </div>
-                            <div class="provider-card__detail" x-show="provider.overrides && provider.overrides.openai && provider.overrides.openai.reasoning_effort">
-                                <span class="provider-card__detail-label" x-text="t('providers.reasoningEffort')"></span>
-                                <span class="provider-card__detail-value" x-text="provider.overrides.openai.reasoning_effort"></span>
+                            <div class="provider-card__detail"
+                                x-show="provider.overrides && provider.overrides.openai && provider.overrides.openai.reasoning_effort">
+                                <span class="provider-card__detail-label"
+                                    x-text="t('providers.reasoningEffort')"></span>
+                                <span class="provider-card__detail-value"
+                                    x-text="provider.overrides.openai.reasoning_effort"></span>
                             </div>
-                            <div class="provider-card__detail" x-show="provider.overrides && provider.overrides.claude && provider.overrides.claude.thinking_budget_tokens > 0">
-                                <span class="provider-card__detail-label" x-text="t('providers.thinkingBudgetTokens')"></span>
-                                <span class="provider-card__detail-value" x-text="provider.overrides.claude.thinking_budget_tokens"></span>
+                            <div class="provider-card__detail"
+                                x-show="provider.overrides && provider.overrides.claude && provider.overrides.claude.thinking_budget_tokens > 0">
+                                <span class="provider-card__detail-label"
+                                    x-text="t('providers.thinkingBudgetTokens')"></span>
+                                <span class="provider-card__detail-value"
+                                    x-text="provider.overrides.claude.thinking_budget_tokens"></span>
                             </div>
                         </div>
                     </div>
@@ -237,8 +245,8 @@
 
         <!-- Settings Tab -->
         <div id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" x-show="activeTab === 'settings'"
-            x-transition:enter="transition ease-out duration-200"
-            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2"
+            x-transition:enter-end="opacity-100 translate-y-0">
             <form @submit.prevent="saveGlobalConfig()">
                 <div class="settings-page-header">
                     <div>
@@ -246,8 +254,10 @@
                         <div class="settings-page-copy" x-text="t('settings.subtitle')"></div>
                     </div>
                     <div class="settings-toolbar-actions">
-                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary" x-text="t('common.reset')"></button>
-                        <button type="button" @click="exportConfig()" class="btn btn-secondary" x-text="t('common.export')"></button>
+                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary"
+                            x-text="t('common.reset')"></button>
+                        <button type="button" @click="exportConfig()" class="btn btn-secondary"
+                            x-text="t('common.export')"></button>
                         <button type="submit" class="btn btn-primary" x-text="t('common.save')"></button>
                     </div>
                 </div>
@@ -267,8 +277,8 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.port')"></label>
-                                <input type="number" x-model.number="globalConfig.port" class="form-input" required min="1"
-                                    max="65535">
+                                <input type="number" x-model.number="globalConfig.port" class="form-input" required
+                                    min="1" max="65535">
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.logLevel')"></label>
@@ -281,8 +291,8 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.maxBodySize')"></label>
-                                <input type="number" x-model.number="globalConfig.max_request_body_bytes" class="form-input"
-                                    required min="1">
+                                <input type="number" x-model.number="globalConfig.max_request_body_bytes"
+                                    class="form-input" required min="1">
                                 <div class="form-hint" x-text="t('settings.maxBodySizeHint')"></div>
                             </div>
                         </div>
@@ -303,12 +313,14 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.upstreamIdleTimeout')"></label>
-                                <input type="text" x-model="globalConfig.upstream_idle_timeout" class="form-input" required>
+                                <input type="text" x-model="globalConfig.upstream_idle_timeout" class="form-input"
+                                    required>
                                 <div class="form-hint" x-text="t('settings.upstreamIdleTimeoutHint')"></div>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.responseHeaderTimeout')"></label>
-                                <input type="text" x-model="globalConfig.response_header_timeout" class="form-input" required>
+                                <input type="text" x-model="globalConfig.response_header_timeout" class="form-input"
+                                    required>
                                 <div class="form-hint" x-text="t('settings.responseHeaderTimeoutHint')"></div>
                             </div>
                             <div class="form-group">
@@ -324,12 +336,13 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.openTimeout')"></label>
-                                <input type="text" x-model="globalConfig.circuit_breaker.open_timeout" class="form-input"
-                                    required>
+                                <input type="text" x-model="globalConfig.circuit_breaker.open_timeout"
+                                    class="form-input" required>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.halfOpenMaxInflight')"></label>
-                                <input type="number" x-model.number="globalConfig.circuit_breaker.half_open_max_inflight"
+                                <input type="number"
+                                    x-model.number="globalConfig.circuit_breaker.half_open_max_inflight"
                                     class="form-input" required min="1">
                             </div>
                         </div>
@@ -390,17 +403,21 @@
                         <div class="settings-panel-grid">
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.stickySessionTtl')"></label>
-                                <input type="text" x-model="globalConfig.routing.sticky_sessions.explicit_ttl" class="form-input">
+                                <input type="text" x-model="globalConfig.routing.sticky_sessions.explicit_ttl"
+                                    class="form-input">
                                 <div class="form-hint" x-text="t('settings.stickySessionTtlHint')"></div>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.shortRetryAfterMax')"></label>
-                                <input type="text" x-model="globalConfig.routing.busy_backpressure.short_retry_after_max" class="form-input">
+                                <input type="text"
+                                    x-model="globalConfig.routing.busy_backpressure.short_retry_after_max"
+                                    class="form-input">
                                 <div class="form-hint" x-text="t('settings.shortRetryAfterMaxHint')"></div>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.maxInlineWait')"></label>
-                                <input type="text" x-model="globalConfig.routing.busy_backpressure.max_inline_wait" class="form-input">
+                                <input type="text" x-model="globalConfig.routing.busy_backpressure.max_inline_wait"
+                                    class="form-input">
                                 <div class="form-hint" x-text="t('settings.maxInlineWaitHint')"></div>
                             </div>
                         </div>
@@ -420,8 +437,10 @@
                 <div class="settings-form-actions">
                     <div class="form-hint" x-text="t('settings.footerHint')"></div>
                     <div class="settings-toolbar-actions">
-                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary" x-text="t('common.reset')"></button>
-                        <button type="button" @click="exportConfig()" class="btn btn-secondary" x-text="t('common.export')"></button>
+                        <button type="button" @click="loadGlobalConfig()" class="btn btn-secondary"
+                            x-text="t('common.reset')"></button>
+                        <button type="button" @click="exportConfig()" class="btn btn-secondary"
+                            x-text="t('common.export')"></button>
                         <button type="submit" class="btn btn-primary" x-text="t('settings.saveSettings')"></button>
                     </div>
                 </div>
@@ -430,9 +449,8 @@
 
         <!-- Integrations Tab -->
         <div id="tab-integrations" role="tabpanel" aria-labelledby="tabbtn-integrations"
-            x-show="activeTab === 'integrations'"
-            x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2"
-            x-transition:enter-end="opacity-100 translate-y-0">
+            x-show="activeTab === 'integrations'" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
             <div class="card-grid">
                 <div class="card takeover-page__panel" style="grid-column: 1 / -1;">
                     <div class="takeover-page__header">
@@ -459,7 +477,8 @@
                     <div class="card integration-card">
                         <div class="integration-card-header">
                             <h3 class="provider-name integration-card-heading" x-text="integration.name"></h3>
-                            <span class="pill pill--compact pill--neutral pill--mono integration-card-status" :class="integrationStateClass(integration.state)"
+                            <span class="pill pill--compact pill--neutral pill--mono integration-card-status"
+                                :class="integrationStateClass(integration.state)"
                                 x-text="integrationStateLabel(integration.state)"></span>
                         </div>
 
@@ -474,7 +493,8 @@
                                     @click="runIntegrationAction(integration.product, 'apply')"
                                     x-text="integrationActionIsBusy(integration, 'apply') ? t('common.working') : integrationApplyLabel()">
                                 </button>
-                                <span x-show="integrationActionDisabledReason(integration, 'apply')" class="tooltip-content"
+                                <span x-show="integrationActionDisabledReason(integration, 'apply')"
+                                    class="tooltip-content"
                                     x-text="integrationActionDisabledReason(integration, 'apply')"></span>
                             </span>
                             <span class="action-shell"
@@ -487,13 +507,15 @@
                                     @click="runIntegrationAction(integration.product, 'rollback')"
                                     x-text="integrationActionIsBusy(integration, 'rollback') ? t('common.working') : integrationRollbackLabel()">
                                 </button>
-                                <span x-show="integrationActionDisabledReason(integration, 'rollback')" class="tooltip-content"
+                                <span x-show="integrationActionDisabledReason(integration, 'rollback')"
+                                    class="tooltip-content"
                                     x-text="integrationActionDisabledReason(integration, 'rollback')"></span>
                             </span>
                         </div>
 
                         <template x-if="integrationResultFor(integration)">
-                            <div class="integration-result" :class="integrationResultClass(integrationResultFor(integration))">
+                            <div class="integration-result"
+                                :class="integrationResultClass(integrationResultFor(integration))">
                                 <div class="integration-result__header">
                                     <span class="badge badge--xs badge--mono integration-result__badge"
                                         :class="integrationResultBadgeClass(integrationResultFor(integration))"
@@ -502,21 +524,26 @@
                                         @click="clearIntegrationResult(integration.product)"
                                         :aria-label="t('integrations.dismissResult')">×</button>
                                 </div>
-                                <div class="integration-result__title" x-text="integrationResultFor(integration).title"></div>
-                                <div class="integration-result__message" x-text="integrationResultFor(integration).message"></div>
+                                <div class="integration-result__title" x-text="integrationResultFor(integration).title">
+                                </div>
+                                <div class="integration-result__message"
+                                    x-text="integrationResultFor(integration).message"></div>
                             </div>
                         </template>
 
                         <details class="integration-preview-details">
                             <summary class="form-hint integration-card-summary integration-card-summary-row">
-                                <span class="integration-card-summary-label" x-text="t('integrations.detailsPreview')"></span>
-                                <span class="integration-card-summary-meta" x-text="integrationBackupMeta(integration)"></span>
+                                <span class="integration-card-summary-label"
+                                    x-text="t('integrations.detailsPreview')"></span>
+                                <span class="integration-card-summary-meta"
+                                    x-text="integrationBackupMeta(integration)"></span>
                             </summary>
 
                             <div class="integration-preview-grid" style="margin-top: 12px;">
                                 <div class="integration-preview-panel">
                                     <div class="kv-label" x-text="t('integrations.currentFile')"></div>
-                                    <pre class="integration-preview-code" x-text="integrationPreviewValue(integration.current_content, integrationCurrentPreviewEmptyLabel())"></pre>
+                                    <pre class="integration-preview-code"
+                                        x-text="integrationPreviewValue(integration.current_content, integrationCurrentPreviewEmptyLabel())"></pre>
                                 </div>
                                 <div class="integration-preview-panel">
                                     <div class="kv-label" x-text="integrationSecondaryPreviewLabel(integration)"></div>
@@ -532,8 +559,8 @@
 
         <!-- Services Tab -->
         <div id="tab-services" role="tabpanel" aria-labelledby="tabbtn-services" x-show="activeTab === 'services'"
-            x-transition:enter="transition ease-out duration-200"
-            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2"
+            x-transition:enter-end="opacity-100 translate-y-0">
             <div class="card-grid">
                 <div class="card service-panel" style="grid-column: 1 / -1;">
                     <div class="service-panel__header">
@@ -549,21 +576,22 @@
                                 :class="serviceStatus.installed ? 'pill-success' : 'pill-warning'"
                                 x-text="serviceStatus.installed ? t('services.installed') : t('services.notInstalled')"></button>
                             <button type="button" class="pill pill--sm pill--neutral pill--mono" disabled
-                                :class="serviceRuntimeClass()"
-                                x-text="serviceRuntimeLabel()"></button>
+                                :class="serviceRuntimeClass()" x-text="serviceRuntimeLabel()"></button>
                         </div>
                     </div>
 
                     <template x-if="!serviceStatus.supported">
                         <div class="card u-text-center" style="grid-column: 1 / -1; padding: 40px;">
-                            <p style="color: var(--text-secondary); margin-bottom: 10px;" x-text="t('services.unsupportedBuild')"></p>
+                            <p style="color: var(--text-secondary); margin-bottom: 10px;"
+                                x-text="t('services.unsupportedBuild')"></p>
                             <p class="form-hint" x-show="serviceStatus.error" x-text="serviceStatus.error"></p>
                         </div>
                     </template>
 
                     <template x-if="serviceStatus.supported && !serviceStatus.installed">
                         <div class="card u-text-center" style="grid-column: 1 / -1; padding: 40px;">
-                            <p style="color: var(--text-primary); font-weight: 600; margin-bottom: 10px;" x-text="t('services.autostartNotInstalled')"></p>
+                            <p style="color: var(--text-primary); font-weight: 600; margin-bottom: 10px;"
+                                x-text="t('services.autostartNotInstalled')"></p>
                             <p style="color: var(--text-secondary); margin-bottom: 18px;">
                                 <template x-if="serviceStatus.os === 'windows'">
                                     <span x-text="t('services.installWindows')"></span>
@@ -651,15 +679,14 @@
                                     <span x-show="serviceActionDisabledReason('uninstall')" class="tooltip-content"
                                         x-text="serviceActionDisabledReason('uninstall')"></span>
                                 </span>
-                                <button type="button" class="action-btn action-btn--secondary" @click="loadServiceStatus()"
-                                    x-text="t('services.check')"></button>
+                                <button type="button" class="action-btn action-btn--secondary"
+                                    @click="loadServiceStatus()" x-text="t('services.check')"></button>
                             </div>
 
                             <div class="service-action-secondary-row service-action-aside">
-                                <label class="checkbox-label service-force-toggle"
-                                    :title="t('services.forceHint')">
-                                <input type="checkbox" x-model="serviceForm.force">
-                                <span class="checkbox-text" x-text="t('services.force')"></span>
+                                <label class="checkbox-label service-force-toggle" :title="t('services.forceHint')">
+                                    <input type="checkbox" x-model="serviceForm.force">
+                                    <span class="checkbox-text" x-text="t('services.force')"></span>
                                 </label>
 
                                 <span class="action-shell"
@@ -692,8 +719,8 @@
 
         <!-- Status Tab -->
         <div id="tab-status" role="tabpanel" aria-labelledby="tabbtn-status" x-show="activeTab === 'status'"
-            x-transition:enter="transition ease-out duration-200"
-            x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+            x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2"
+            x-transition:enter-end="opacity-100 translate-y-0">
             <div class="card-grid">
                 <div class="card status-card status-system-card" style="grid-column: 1 / -1;">
                     <div class="status-card__header">
@@ -714,8 +741,8 @@
                                 <span x-show="globalConfig.circuit_breaker.failure_threshold > 0">
                                     <span x-text="statusCircuitBreakerSummary()"></span>
                                 </span>
-                                <span x-show="globalConfig.circuit_breaker.failure_threshold <= 0"
-                                    class="text-tertiary" x-text="t('statusPage.disabled')"></span>
+                                <span x-show="globalConfig.circuit_breaker.failure_threshold <= 0" class="text-tertiary"
+                                    x-text="t('statusPage.disabled')"></span>
                             </div>
                         </div>
                     </div>
@@ -740,7 +767,8 @@
                                 </div>
                             </div>
                             <div class="status-card__metrics">
-                                <span class="pill pill--compact pill--neutral pill--mono" x-text="statusMetricProviders(client.provider_count)"></span>
+                                <span class="pill pill--compact pill--neutral pill--mono"
+                                    x-text="statusMetricProviders(client.provider_count)"></span>
                                 <span class="pill pill--compact pill--neutral pill--mono"
                                     x-text="statusMetricEnabled((client.enabled_providers && client.enabled_providers.length) || 0)"></span>
                             </div>
@@ -749,16 +777,23 @@
                             <div class="status-card__activity-title" x-text="t('statusPage.recentActivity')"></div>
                             <div class="status-card__activity-item" x-show="client.last_switch">
                                 <span x-text="t('statusPage.lastSwitch')"></span>
-                                <span x-text="(client.last_switch && client.last_switch.label) ? client.last_switch.label : ''"></span>
-                                <span x-text="(client.last_switch && client.last_switch.detail) ? client.last_switch.detail : ''"></span>
-                                <span x-text="(client.last_switch && client.last_switch.at) ? client.last_switch.at : ''"></span>
+                                <span
+                                    x-text="(client.last_switch && client.last_switch.label) ? client.last_switch.label : ''"></span>
+                                <span
+                                    x-text="(client.last_switch && client.last_switch.detail) ? client.last_switch.detail : ''"></span>
+                                <span
+                                    x-text="(client.last_switch && client.last_switch.at) ? client.last_switch.at : ''"></span>
                             </div>
                             <div class="status-card__activity-item" x-show="client.last_request">
                                 <span x-text="t('statusPage.lastRequest')"></span>
-                                <span x-text="(client.last_request && client.last_request.label) ? client.last_request.label : ''"></span>
-                                <span x-text="(client.last_request && client.last_request.detail) ? client.last_request.detail : ''"></span>
-                                <span x-text="(client.last_request && client.last_request.bytes) ? ('(' + client.last_request.bytes + ' bytes)') : ''"></span>
-                                <span x-text="(client.last_request && client.last_request.at) ? client.last_request.at : ''"></span>
+                                <span
+                                    x-text="(client.last_request && client.last_request.label) ? client.last_request.label : ''"></span>
+                                <span
+                                    x-text="(client.last_request && client.last_request.detail) ? client.last_request.detail : ''"></span>
+                                <span
+                                    x-text="(client.last_request && client.last_request.bytes) ? ('(' + client.last_request.bytes + ' bytes)') : ''"></span>
+                                <span
+                                    x-text="(client.last_request && client.last_request.at) ? client.last_request.at : ''"></span>
                             </div>
                         </div>
                         <div class="status-card__groups">
@@ -770,8 +805,7 @@
                                             :key="group.key + ':' + p.name">
                                             <span class="chip pill pill-sm"
                                                 :class="providerStatusChipClass(group.key, p)"
-                                                :title="providerStatusTitle(p)"
-                                                x-text="providerStatusLabel(p)"></span>
+                                                :title="providerStatusTitle(p)" x-text="providerStatusLabel(p)"></span>
                                         </template>
                                     </div>
                                 </div>
@@ -786,89 +820,96 @@
     <!-- Modals -->
     <div class="modal-backdrop" :class="{'show': showAddProviderModal || showEditProviderModal}"
         @keydown.escape.window="closeModals()" @click.self="closeModals()">
-                <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div class="modal-header">
-                <h2 id="modal-title" x-text="showEditProviderModal ? t('modal.provider.editTitle') : t('modal.provider.addTitle')"></h2>
-                <button @click="closeModals()" class="icon-btn" style="font-size: 18px;" :aria-label="t('modal.provider.close')">
+                <h2 id="modal-title"
+                    x-text="showEditProviderModal ? t('modal.provider.editTitle') : t('modal.provider.addTitle')"></h2>
+                <button @click="closeModals()" class="icon-btn" style="font-size: 18px;"
+                    :aria-label="t('modal.provider.close')">
                     &times;
                 </button>
             </div>
             <form @submit.prevent="saveProvider()">
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label" x-text="t('modal.provider.name')"></label>
+                <div class="modal-body form-horizontal-grid">
+                    <label class="form-label" x-text="t('modal.provider.name')"></label>
+                    <div class="form-control-wrap">
                         <input type="text" x-model="providerForm.name" class="form-input" required
                             placeholder="e.g. provider-primary">
-                        <div class="form-hint" x-text="t('modal.provider.nameHint')"></div>
+                        <div class="form-hint" style="font-size: 11px;" x-text="t('modal.provider.nameHint')"></div>
                     </div>
 
-                    <div class="form-group">
-                        <label class="form-label" x-text="t('modal.provider.baseUrl')"></label>
+                    <label class="form-label" x-text="t('modal.provider.baseUrl')"></label>
+                    <div class="form-control-wrap">
                         <input type="text" x-model="providerForm.base_url" class="form-input" required
                             placeholder="https://api.example.com">
                     </div>
 
-                    <div class="form-group">
-                        <div class="form-field-header">
-                            <label class="form-label" x-text="showEditProviderModal ? t('modal.provider.apiKeys') : t('modal.provider.apiKeysRequired')"></label>
-                            <span class="form-kicker" x-text="t('modal.provider.onePerLine')"></span>
-                        </div>
+                    <label class="form-label"
+                        x-text="showEditProviderModal ? t('modal.provider.apiKeys') : t('modal.provider.apiKeysRequired')"></label>
+                    <div class="form-control-wrap">
                         <textarea x-model="providerForm.api_keys_text" class="form-input form-textarea" rows="4"
                             :required="!showEditProviderModal"
-                            placeholder="sk-xxx&#10;sk-yyy"></textarea>
-                        <div class="form-meta">
-                            <span class="form-meta-label" x-text="t('modal.provider.savedAs')"></span>
-                            <span class="pill pill--xs pill--neutral pill--mono" x-text="t('modal.provider.savedAsSingle')"></span>
-                            <span class="pill pill--xs pill--neutral pill--mono" x-text="t('modal.provider.savedAsMultiple')"></span>
+                            :placeholder="t('modal.provider.onePerLine') + '\n\nsk-xxx\nsk-yyy'"></textarea>
+                        <div class="form-meta"
+                            style="opacity: 0.85; margin-top: 4px; flex-wrap: nowrap; overflow: auto; padding-bottom: 4px;">
+                            <span class="form-meta-label" style="white-space: nowrap;"
+                                x-text="t('modal.provider.savedAs')"></span>
+                            <span class="pill pill--xs pill--neutral pill--mono"
+                                x-text="t('modal.provider.savedAsSingle')"></span>
+                            <span class="pill pill--xs pill--neutral pill--mono"
+                                x-text="t('modal.provider.savedAsMultiple')"></span>
                         </div>
                         <div class="form-hint" x-show="showEditProviderModal && editingProviderKeyCount > 0"
                             x-text="providerEditKeyHint()"></div>
                     </div>
 
-                    <div class="modal-form-grid" style="margin-bottom: 24px;">
-                        <div class="form-group" style="margin-bottom: 0;">
+                    <div class="form-grid-full modal-form-grid" style="align-items: center;">
+                        <div class="provider-overrides-field" style="margin-bottom: 0;">
                             <label class="form-label" x-text="t('modal.provider.priority')"></label>
-                            <input type="number" x-model.number="providerForm.priority" class="form-input" min="1">
-                            <div class="form-hint" x-text="t('modal.provider.priorityHint')"></div>
+                            <input type="number" x-model.number="providerForm.priority" class="form-input" min="1"
+                                style="width: 100px;">
                         </div>
-
-                        <div class="form-group" style="margin-bottom: 0; display: flex; align-items: flex-start; padding-top: 30px;">
-                            <label class="checkbox-label">
-                                <input type="checkbox" x-model="providerForm.enabled">
-                                <span class="checkbox-text" x-text="t('common.enabled')"></span>
-                            </label>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <div class="toggle-layout" style="margin-top: 0;">
+                                <label class="switch" :title="t('common.enabled')">
+                                    <input type="checkbox" x-model="providerForm.enabled">
+                                    <span class="slider"></span>
+                                </label>
+                                <span class="checkbox-text"
+                                    :style="providerForm.enabled ? 'color: var(--success);' : 'color: var(--text-tertiary);'"
+                                    x-text="providerForm.enabled ? t('common.enabled') : t('common.disabled')"></span>
+                            </div>
                         </div>
                     </div>
 
-                    <section class="form-group provider-overrides-group" x-show="providerHasAnyOverrideSupport()">
-                        <div class="provider-overrides-header">
-                            <div class="provider-overrides-title-row">
-                                <span class="provider-overrides-title" x-text="t('modal.provider.overridesTitle')"></span>
-                                <span class="provider-overrides-badge" x-text="t('modal.provider.overridesOptional')"></span>
-                            </div>
-                            <div class="provider-overrides-intro" x-text="t('modal.provider.overridesPanelHint')"></div>
-                        </div>
+                    <div class="form-grid-full form-group provider-overrides-group"
+                        x-show="providerHasAnyOverrideSupport()" style="margin-top: 0;">
+                        <div class="provider-overrides-header" x-text="t('modal.provider.overridesTitle')"></div>
 
                         <div class="provider-overrides-grid">
                             <div class="provider-overrides-field" x-show="providerSupportsModelOverride()">
                                 <label class="form-label" x-text="t('modal.provider.model')"></label>
-                                <input type="text" x-model="providerForm.model" class="form-input" placeholder="gpt-5.4">
+                                <input type="text" x-model="providerForm.model" class="form-input"
+                                    :placeholder="t('modal.provider.modelHint')">
                             </div>
 
                             <div class="provider-overrides-field" x-show="providerSupportsReasoningEffort()">
                                 <label class="form-label" x-text="t('modal.provider.reasoningEffort')"></label>
-                                <input type="text" x-model="providerForm.reasoning_effort" class="form-input" placeholder="high">
+                                <input type="text" x-model="providerForm.reasoning_effort" class="form-input"
+                                    placeholder="high">
                             </div>
 
                             <div class="provider-overrides-field" x-show="providerSupportsThinkingBudget()">
                                 <label class="form-label" x-text="t('modal.provider.thinkingBudgetTokens')"></label>
-                                <input type="number" x-model.number="providerForm.thinking_budget_tokens" class="form-input" min="0" placeholder="4096">
+                                <input type="number" x-model.number="providerForm.thinking_budget_tokens"
+                                    class="form-input" min="0" placeholder="4096">
                             </div>
                         </div>
-                    </section>
+                    </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" @click="closeModals()" class="btn btn-secondary" x-text="t('common.cancel')"></button>
+                    <button type="button" @click="closeModals()" class="btn btn-secondary"
+                        x-text="t('common.cancel')"></button>
                     <button type="submit" class="btn btn-primary" x-text="t('modal.provider.saveProvider')"></button>
                 </div>
             </form>
