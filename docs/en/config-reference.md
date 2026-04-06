@@ -60,6 +60,8 @@ providers:
 | `reactivate_after` | duration | `1h` | Auto-reactivation delay for temporarily deactivated providers; set `0` to disable temporary deactivation for auth, billing, and quota failures |
 | `upstream_idle_timeout` | duration | `3m` | Abort the current upstream attempt if no response body bytes arrive for too long |
 | `response_header_timeout` | duration | `2m` | Timeout while waiting for upstream response headers |
+| `upstream_proxy_mode` | string | `inherit` | Default upstream proxy mode for providers that use `proxy_mode: inherit`; `inherit` / `direct` / `custom` |
+| `upstream_proxy_url` | string | empty | Required when `upstream_proxy_mode: custom`; supports `http://`, `https://`, `socks5://`, and `socks5h://` proxy URLs |
 | `max_request_body_bytes` | int | `33554432` | Request body size limit, default 32 MiB |
 | `log_dir` | string | `<config-dir>/logs` | Log directory |
 | `log_retention_days` | int | `7` | Log retention days; `0` keeps logs forever; default is 7 days |
@@ -179,6 +181,8 @@ providers:
 | `base_url` | string | yes | Upstream API base URL |
 | `api_key` | string | one of two | Single API key |
 | `api_keys` | array | one of two | Multiple API keys, used in order |
+| `proxy_mode` | string | no | Upstream proxy mode for this provider; `inherit` follows the global default |
+| `proxy_url` | string | no | Required when `proxy_mode: custom`; supports `http://`, `https://`, `socks5://`, and `socks5h://` proxy URLs |
 | `priority` | int | no | Lower number = higher priority; omitted or `0` is treated as `1` |
 | `enabled` | bool | no | Defaults to `true` |
 | `model` | string | no | Force this provider to use a specific upstream model name for supported OpenAI and Claude requests |
@@ -189,6 +193,8 @@ providers:
 
 - Use `api_key` when you only have one key
 - Use `api_keys` when you want retries across multiple keys within the same provider
+- Use global `upstream_proxy_mode` / `upstream_proxy_url` to define the default proxy for inherited providers
+- Use provider `proxy_mode: direct` to bypass both the global default proxy and environment proxy settings
 - Use `model` when different upstream providers expose the same family under different model IDs
 - Use `reasoning_effort` and `thinking_budget_tokens` only when you want Clipal to override the client-sent defaults for that provider
 - For long-running background setups, this is a good default:

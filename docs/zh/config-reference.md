@@ -60,6 +60,8 @@ providers:
 | `reactivate_after` | duration | `1h` | provider 临时禁用后的自动恢复时间；设为 `0` 可禁用基于鉴权、计费、额度错误的临时禁用 |
 | `upstream_idle_timeout` | duration | `3m` | 上游响应 body 长时间无字节时中断当前尝试 |
 | `response_header_timeout` | duration | `2m` | 等待上游响应头的超时 |
+| `upstream_proxy_mode` | string | `inherit` | 作为默认值应用到 `proxy_mode: inherit` 的 provider；可选 `inherit` / `direct` / `custom` |
+| `upstream_proxy_url` | string | 空 | 当 `upstream_proxy_mode: custom` 时必填；支持 `http://`、`https://`、`socks5://` 和 `socks5h://` 代理 URL |
 | `max_request_body_bytes` | int | `33554432` | 请求体大小上限，默认 32 MiB |
 | `log_dir` | string | `<config-dir>/logs` | 日志目录 |
 | `log_retention_days` | int | `7` | 日志保留天数；`0` 表示永久保留；默认保留 7 天 |
@@ -179,6 +181,8 @@ providers:
 | `base_url` | string | 是 | 上游 API Base URL |
 | `api_key` | string | 二选一 | 单个 API Key |
 | `api_keys` | array | 二选一 | 多个 API Key，按顺序使用 |
+| `proxy_mode` | string | 否 | 该 provider 的上游代理模式；`inherit` 表示继承全局默认代理 |
+| `proxy_url` | string | 否 | 当 `proxy_mode: custom` 时必填；支持 `http://`、`https://`、`socks5://` 和 `socks5h://` 代理 URL |
 | `priority` | int | 否 | 数字越小优先级越高；省略或 `0` 时按 `1` 处理 |
 | `enabled` | bool | 否 | 是否启用，默认 `true` |
 | `model` | string | 否 | 对支持的 OpenAI / Claude 请求强制改写为这个上游模型名 |
@@ -189,6 +193,8 @@ providers:
 
 - 只有一个 key 时用 `api_key`
 - 需要同 provider 多 key 轮转时用 `api_keys`
+- 需要统一默认代理时，优先配置全局 `upstream_proxy_mode` / `upstream_proxy_url`
+- 需要让某个 provider 绕过全局默认代理和环境代理时，用 `proxy_mode: direct`
 - 不同上游对同一模型族使用不同模型 ID 时，可为该 provider 配置 `model`
 - 只有在你希望 Clipal 按 provider 覆盖客户端默认思考参数时，才配置 `reasoning_effort` 或 `thinking_budget_tokens`
 - 常驻后台运行时，建议：

@@ -74,7 +74,7 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 	}
 
 	//nolint:gosec // Clipal is a user-configured reverse proxy and intentionally forwards to the pinned upstream provider.
-	resp, err := cp.httpClient.Do(proxyReq)
+	resp, err := cp.upstreamHTTPClient(index).Do(proxyReq)
 	if err != nil {
 		if req.Context().Err() != nil {
 			cancelAttempt(nil)

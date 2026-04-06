@@ -66,6 +66,7 @@ function app() {
                     empty: 'No providers configured for {client}',
                     pinBadge: 'Pinned',
                     baseUrl: 'Base URL',
+                    proxy: 'Proxy',
                     apiKeys: 'API Keys',
                     usageTotal: 'Usage',
                     usageInOut: 'Input / Output',
@@ -104,7 +105,9 @@ function app() {
                     deleteConfirm: 'Are you sure you want to delete provider "{name}"?',
                     deletedTitle: 'Deleted provider {name}',
                     deletedMessage: 'It has been removed from {client}\'s provider list.',
-                    clientTypeLabel: 'Client Type'
+                    clientTypeLabel: 'Client Type',
+                    proxyDirect: 'Direct',
+                    proxyCustom: 'Custom'
                 },
                 modal: {
                     provider: {
@@ -114,6 +117,14 @@ function app() {
                         name: 'Name *',
                         nameHint: 'Letters, numbers, dot (.), underscore (_), and hyphen (-).',
                         baseUrl: 'Base URL *',
+                        proxyMode: 'Proxy Mode',
+                        proxyModeInherit: 'Inherit Environment',
+                        proxyModeDirect: 'Direct',
+                        proxyModeCustom: 'Custom Proxy',
+                        proxyUrl: 'Proxy URL',
+                        proxyUrlHint: 'http://127.0.0.1:7890',
+                        proxyUrlHelp: 'Supports http://, https://, socks5://, and socks5h:// proxy URLs.',
+                        keepExistingProxy: 'Leave empty to keep the current proxy ({proxy}).',
                         model: 'Model',
                         modelHint: 'model-id',
                         reasoningEffort: 'Reasoning Effort',
@@ -154,6 +165,14 @@ function app() {
                     upstreamIdleTimeoutHint: 'Set to 0 to disable stalled-stream protection.',
                     responseHeaderTimeout: 'Response Header Timeout',
                     responseHeaderTimeoutHint: 'Set to 0 to wait indefinitely for headers.',
+                    upstreamProxyMode: 'Default Upstream Proxy',
+                    upstreamProxyUrl: 'Default Proxy URL',
+                    upstreamProxyHint: 'Used by providers whose proxy mode is Inherit.',
+                    upstreamProxyUrlHelp: 'Supports http://, https://, socks5://, and socks5h:// proxy URLs.',
+                    proxyModeInherit: 'Inherit Environment',
+                    proxyModeDirect: 'Direct',
+                    proxyModeCustom: 'Custom Proxy',
+                    upstreamProxyUrlHint: 'http://127.0.0.1:7890',
                     failureThreshold: 'Failure Threshold',
                     failureThresholdHint: '0 disables the circuit breaker.',
                     successThreshold: 'Success Threshold',
@@ -356,6 +375,7 @@ function app() {
                     empty: '{client} 还没有配置任何 Provider',
                     pinBadge: '已固定',
                     baseUrl: 'Base URL',
+                    proxy: '代理',
                     apiKeys: 'API Keys',
                     usageTotal: '用量',
                     usageInOut: '输入 / 输出',
@@ -394,7 +414,9 @@ function app() {
                     deletedTitle: '已删除 Provider {name}',
                     deletedMessage: '它已从 {client} 的 Provider 列表中移除。',
                     clientTypeLabel: '客户端类型',
-                    dragToReorder: '拖拽调整优先级'
+                    dragToReorder: '拖拽调整优先级',
+                    proxyDirect: '直连',
+                    proxyCustom: '自定义'
                 },
                 modal: {
                     provider: {
@@ -404,6 +426,14 @@ function app() {
                         name: '名称 *',
                         nameHint: '允许字母、数字、点号 (.)、下划线 (_) 和连字符 (-)。',
                         baseUrl: 'Base URL *',
+                        proxyMode: '代理模式',
+                        proxyModeInherit: '继承环境变量',
+                        proxyModeDirect: '直连',
+                        proxyModeCustom: '自定义代理',
+                        proxyUrl: '代理 URL',
+                        proxyUrlHint: 'http://127.0.0.1:7890',
+                        proxyUrlHelp: '支持 http://、https://、socks5:// 和 socks5h:// 代理 URL。',
+                        keepExistingProxy: '留空则保留当前代理（{proxy}）。',
                         model: '模型',
                         modelHint: 'model-id',
                         reasoningEffort: '思考强度',
@@ -443,6 +473,14 @@ function app() {
                     upstreamIdleTimeoutHint: '设为 0 可关闭流式响应停滞保护。',
                     responseHeaderTimeout: '响应头超时',
                     responseHeaderTimeoutHint: '设为 0 表示无限等待响应头。',
+                    upstreamProxyMode: '默认上游代理',
+                    upstreamProxyUrl: '默认代理 URL',
+                    upstreamProxyHint: '对代理模式为“继承”的 Provider 生效。',
+                    upstreamProxyUrlHelp: '支持 http://、https://、socks5:// 和 socks5h:// 代理 URL。',
+                    proxyModeInherit: '继承环境变量',
+                    proxyModeDirect: '直连',
+                    proxyModeCustom: '自定义代理',
+                    upstreamProxyUrlHint: 'http://127.0.0.1:7890',
                     failureThreshold: '失败阈值',
                     failureThresholdHint: '设为 0 可关闭熔断器。',
                     successThreshold: '成功阈值',
@@ -612,6 +650,8 @@ function app() {
             reactivate_after: '',
             upstream_idle_timeout: '',
             response_header_timeout: '',
+            upstream_proxy_mode: 'inherit',
+            upstream_proxy_url: '',
             max_request_body_bytes: 0,
             log_dir: '',
             log_retention_days: 7,
@@ -672,6 +712,9 @@ function app() {
         providerForm: {
             name: '',
             base_url: '',
+            proxy_mode: 'inherit',
+            proxy_url: '',
+            proxy_url_hint: '',
             model: '',
             reasoning_effort: '',
             thinking_budget_tokens: 0,
@@ -1472,6 +1515,34 @@ function app() {
             return this.tf('modal.provider.keepExistingKeys', { count });
         },
 
+        normalizeProviderProxyMode(mode) {
+            const value = String(mode || '').trim().toLowerCase();
+            return ['inherit', 'direct', 'custom'].includes(value) ? value : 'inherit';
+        },
+
+        providerProxySummary(provider) {
+            const mode = this.normalizeProviderProxyMode(provider && provider.proxy_mode);
+            if (mode === 'direct') {
+                return this.t('providers.proxyDirect');
+            }
+            if (mode === 'custom') {
+                return String((provider && provider.proxy_url_hint) || '').trim() || this.t('providers.proxyCustom');
+            }
+            return '';
+        },
+
+        providerFormUsesCustomProxy() {
+            return this.normalizeProviderProxyMode(this.providerForm.proxy_mode) === 'custom';
+        },
+
+        providerEditProxyHint() {
+            const proxy = String(this.providerForm.proxy_url_hint || '').trim();
+            if (!proxy) {
+                return '';
+            }
+            return this.tf('modal.provider.keepExistingProxy', { proxy });
+        },
+
         providerOverrideSupport() {
             const support = this.clientConfig && this.clientConfig.override_support;
             if (!support || typeof support !== 'object') {
@@ -1877,9 +1948,16 @@ function app() {
                 const payload = {
                     name: this.providerForm.name,
                     base_url: this.providerForm.base_url,
+                    proxy_mode: this.normalizeProviderProxyMode(this.providerForm.proxy_mode),
                     priority: this.providerForm.priority,
                     enabled: this.providerForm.enabled
                 };
+                if (payload.proxy_mode === 'custom') {
+                    const proxyURL = String(this.providerForm.proxy_url || '').trim();
+                    if (proxyURL) {
+                        payload.proxy_url = proxyURL;
+                    }
+                }
                 const overrides = {};
                 if (this.providerSupportsModelOverride()) {
                     overrides.model = String(this.providerForm.model || '');
@@ -1948,6 +2026,9 @@ function app() {
             this.providerForm = {
                 name: provider.name,
                 base_url: provider.base_url,
+                proxy_mode: this.normalizeProviderProxyMode(provider.proxy_mode),
+                proxy_url: '',
+                proxy_url_hint: String(provider.proxy_url_hint || ''),
                 model: String((provider.overrides && provider.overrides.model) || ''),
                 reasoning_effort: String((provider.overrides && provider.overrides.openai && provider.overrides.openai.reasoning_effort) || ''),
                 thinking_budget_tokens: Number((provider.overrides && provider.overrides.claude && provider.overrides.claude.thinking_budget_tokens) || 0),
@@ -1990,6 +2071,9 @@ function app() {
             this.providerForm = {
                 name: '',
                 base_url: '',
+                proxy_mode: 'inherit',
+                proxy_url: '',
+                proxy_url_hint: '',
                 model: '',
                 reasoning_effort: '',
                 thinking_budget_tokens: 0,
@@ -2145,6 +2229,9 @@ function app() {
             this.providerForm = {
                 name: '',
                 base_url: '',
+                proxy_mode: 'inherit',
+                proxy_url: '',
+                proxy_url_hint: '',
                 model: '',
                 reasoning_effort: '',
                 thinking_budget_tokens: 0,

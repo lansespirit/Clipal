@@ -150,6 +150,27 @@ func TestFormatClientConfigYAML_SingleNormalizedKeyUsesAPIKeyField(t *testing.T)
 	}
 }
 
+func TestFormatClientConfigYAML_WritesProxySettingsOnlyWhenNeeded(t *testing.T) {
+	cc := config.ClientConfig{
+		Providers: []config.Provider{
+			{Name: "inherit", BaseURL: "https://a.example", APIKey: "k1", Priority: 1, Enabled: boolPtr(true)},
+			{Name: "direct", BaseURL: "https://b.example", APIKey: "k2", ProxyMode: config.ProviderProxyModeDirect, Priority: 2, Enabled: boolPtr(true)},
+			{Name: "custom", BaseURL: "https://c.example", APIKey: "k3", ProxyMode: config.ProviderProxyModeCustom, ProxyURL: "http://127.0.0.1:7890", Priority: 3, Enabled: boolPtr(true)},
+		},
+	}
+
+	got := string(formatClientConfigYAML("codex", cc))
+	if strings.Count(got, "proxy_mode:") != 2 {
+		t.Fatalf("expected exactly two proxy_mode entries, got:\n%s", got)
+	}
+	if !strings.Contains(got, `name: "direct"`) || !strings.Contains(got, `proxy_mode: "direct"`) {
+		t.Fatalf("expected direct proxy_mode, got:\n%s", got)
+	}
+	if !strings.Contains(got, `name: "custom"`) || !strings.Contains(got, `proxy_mode: "custom"`) || !strings.Contains(got, `proxy_url: "http://127.0.0.1:7890"`) {
+		t.Fatalf("expected custom proxy settings, got:\n%s", got)
+	}
+}
+
 func TestFormatClientConfigYAML_RoundTripAndEscapesSpecialCharacters(t *testing.T) {
 	cc := config.ClientConfig{
 		Providers: []config.Provider{
@@ -331,12 +352,16 @@ func TestFormatGlobalConfigYAML_RoundTripAndEscapesSpecialCharacters(t *testing.
 	gc.LogDir = "logs\r\nfolder\tcontrol\x01"
 	gc.LogRetentionDays = 7
 	gc.LogStdout = boolPtr(false)
+	gc.UpstreamProxyMode = config.ProviderProxyModeCustom
+	gc.UpstreamProxyURL = "http://127.0.0.1:7890"
 	gc.Notifications.ProviderSwitch = boolPtr(false)
 
 	got := string(formatGlobalConfigYAML(gc))
 	for _, want := range []string{
 		`listen_addr: "host\"quoted\"\\path"`,
 		`log_dir: "logs\r\nfolder\tcontrol\x01"`,
+		`upstream_proxy_mode: "custom" # inherit | direct | custom`,
+		`upstream_proxy_url: "http://127.0.0.1:7890"`,
 		`log_retention_days: 7 # default 7 days`,
 		`log_stdout: false`,
 		`provider_switch: false`,
@@ -359,6 +384,12 @@ func TestFormatGlobalConfigYAML_RoundTripAndEscapesSpecialCharacters(t *testing.
 	}
 	if loaded.Global.LogDir != gc.LogDir {
 		t.Fatalf("log_dir = %q, want %q", loaded.Global.LogDir, gc.LogDir)
+	}
+	if loaded.Global.NormalizedUpstreamProxyMode() != config.ProviderProxyModeCustom {
+		t.Fatalf("upstream_proxy_mode = %q, want custom", loaded.Global.NormalizedUpstreamProxyMode())
+	}
+	if loaded.Global.NormalizedUpstreamProxyURL() != "http://127.0.0.1:7890" {
+		t.Fatalf("upstream_proxy_url = %q", loaded.Global.NormalizedUpstreamProxyURL())
 	}
 	if loaded.Global.LogRetentionDays != 7 {
 		t.Fatalf("log_retention_days = %d, want 7", loaded.Global.LogRetentionDays)

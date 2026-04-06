@@ -77,6 +77,8 @@ providers:
   - name: p1
     base_url: https://example.com
     api_key: secret
+    proxy_mode: custom
+    proxy_url: http://proxy.internal:7890
     model: gpt-5.4
     reasoning_effort: high
     priority: 2
@@ -117,6 +119,9 @@ providers:
 	if _, ok := got[0]["base_url"]; !ok {
 		t.Fatalf("expected base_url in provider listing, got keys=%v", keys(got[0]))
 	}
+	if _, ok := got[0]["proxy_url"]; ok {
+		t.Fatalf("did not expect proxy_url in provider listing")
+	}
 	if got[0]["key_count"] != float64(1) {
 		t.Fatalf("expected key_count=1, got %v", got[0]["key_count"])
 	}
@@ -129,6 +134,12 @@ providers:
 	}
 	if first == nil {
 		t.Fatalf("expected provider p1 in listing, got %#v", got)
+	}
+	if first["proxy_mode"] != "custom" {
+		t.Fatalf("expected proxy_mode=custom, got %v", first["proxy_mode"])
+	}
+	if first["proxy_url_hint"] != "http://proxy.internal:7890" {
+		t.Fatalf("expected proxy_url_hint redaction, got %v", first["proxy_url_hint"])
 	}
 	overrides, ok := first["overrides"].(map[string]any)
 	if !ok {
@@ -324,15 +335,20 @@ providers:
 }
 
 func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
-	dir := t.TempDir()
-	api := NewAPI(dir, "test", nil)
+	for _, proxyURL := range []string{"http://127.0.0.1:7890", "socks5://127.0.0.1:1080"} {
+		t.Run(proxyURL, func(t *testing.T) {
+			dir := t.TempDir()
+			api := NewAPI(dir, "test", nil)
 
-	body := []byte(`{
+			body := []byte(`{
   "listen_addr": "127.0.0.1",
   "port": 3333,
   "log_level": "info",
   "reactivate_after": "10m",
   "upstream_idle_timeout": "1m",
+  "response_header_timeout": "30s",
+  "upstream_proxy_mode": "custom",
+  "upstream_proxy_url": "` + proxyURL + `",
   "max_request_body_bytes": 12345,
   "log_dir": "",
   "log_retention_days": 7,
@@ -361,41 +377,49 @@ func TestHandleUpdateGlobalConfig_AcceptsSnakeCaseNotifications(t *testing.T) {
   }
 }`)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/config/global/update", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	api.HandleUpdateGlobalConfig(w, req)
-	res := w.Result()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", res.StatusCode, w.Body.String())
-	}
+			req := httptest.NewRequest(http.MethodPut, "/api/config/global/update", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			api.HandleUpdateGlobalConfig(w, req)
+			res := w.Result()
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d body=%s", res.StatusCode, w.Body.String())
+			}
 
-	cfg, err := config.Load(dir)
-	if err != nil {
-		t.Fatalf("reload config: %v", err)
-	}
-	if !cfg.Global.Notifications.Enabled {
-		t.Fatalf("expected notifications.enabled=true")
-	}
-	if cfg.Global.Notifications.MinLevel != config.LogLevelWarn {
-		t.Fatalf("expected notifications.min_level=warn, got %q", cfg.Global.Notifications.MinLevel)
-	}
-	if cfg.Global.Notifications.ProviderSwitch == nil || *cfg.Global.Notifications.ProviderSwitch {
-		t.Fatalf("expected notifications.provider_switch=false, got %v", cfg.Global.Notifications.ProviderSwitch)
-	}
-	if !cfg.Global.Routing.StickySessions.Enabled {
-		t.Fatalf("expected routing.sticky_sessions.enabled=true")
-	}
-	if cfg.Global.Routing.StickySessions.ExplicitTTL != "45m" {
-		t.Fatalf("expected routing.sticky_sessions.explicit_ttl=45m, got %q", cfg.Global.Routing.StickySessions.ExplicitTTL)
-	}
-	if !cfg.Global.Routing.BusyBackpressure.Enabled {
-		t.Fatalf("expected routing.busy_backpressure.enabled=true")
-	}
-	if cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax != "5s" {
-		t.Fatalf("expected routing.busy_backpressure.short_retry_after_max=5s, got %q", cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax)
-	}
-	if cfg.Global.Routing.BusyBackpressure.MaxInlineWait != "12s" {
-		t.Fatalf("expected routing.busy_backpressure.max_inline_wait=12s, got %q", cfg.Global.Routing.BusyBackpressure.MaxInlineWait)
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatalf("reload config: %v", err)
+			}
+			if !cfg.Global.Notifications.Enabled {
+				t.Fatalf("expected notifications.enabled=true")
+			}
+			if cfg.Global.Notifications.MinLevel != config.LogLevelWarn {
+				t.Fatalf("expected notifications.min_level=warn, got %q", cfg.Global.Notifications.MinLevel)
+			}
+			if cfg.Global.Notifications.ProviderSwitch == nil || *cfg.Global.Notifications.ProviderSwitch {
+				t.Fatalf("expected notifications.provider_switch=false, got %v", cfg.Global.Notifications.ProviderSwitch)
+			}
+			if !cfg.Global.Routing.StickySessions.Enabled {
+				t.Fatalf("expected routing.sticky_sessions.enabled=true")
+			}
+			if cfg.Global.Routing.StickySessions.ExplicitTTL != "45m" {
+				t.Fatalf("expected routing.sticky_sessions.explicit_ttl=45m, got %q", cfg.Global.Routing.StickySessions.ExplicitTTL)
+			}
+			if !cfg.Global.Routing.BusyBackpressure.Enabled {
+				t.Fatalf("expected routing.busy_backpressure.enabled=true")
+			}
+			if cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax != "5s" {
+				t.Fatalf("expected routing.busy_backpressure.short_retry_after_max=5s, got %q", cfg.Global.Routing.BusyBackpressure.ShortRetryAfterMax)
+			}
+			if cfg.Global.Routing.BusyBackpressure.MaxInlineWait != "12s" {
+				t.Fatalf("expected routing.busy_backpressure.max_inline_wait=12s, got %q", cfg.Global.Routing.BusyBackpressure.MaxInlineWait)
+			}
+			if cfg.Global.NormalizedUpstreamProxyMode() != config.ProviderProxyModeCustom {
+				t.Fatalf("expected upstream_proxy_mode=custom, got %q", cfg.Global.NormalizedUpstreamProxyMode())
+			}
+			if cfg.Global.NormalizedUpstreamProxyURL() != proxyURL {
+				t.Fatalf("expected upstream_proxy_url to be saved, got %q", cfg.Global.NormalizedUpstreamProxyURL())
+			}
+		})
 	}
 }
 
@@ -418,6 +442,8 @@ func TestHandleUpdateGlobalConfig_AllowsClearingRoutingStrings(t *testing.T) {
   "reactivate_after": "10m",
   "upstream_idle_timeout": "1m",
   "response_header_timeout": "30s",
+  "upstream_proxy_mode": "direct",
+  "upstream_proxy_url": "",
   "max_request_body_bytes": 12345,
   "log_dir": "",
   "log_retention_days": 7,
@@ -467,6 +493,12 @@ func TestHandleUpdateGlobalConfig_AllowsClearingRoutingStrings(t *testing.T) {
 	if cfg.Global.Routing.BusyBackpressure.MaxInlineWait != "" {
 		t.Fatalf("expected routing.busy_backpressure.max_inline_wait to be cleared, got %q", cfg.Global.Routing.BusyBackpressure.MaxInlineWait)
 	}
+	if cfg.Global.NormalizedUpstreamProxyMode() != config.ProviderProxyModeDirect {
+		t.Fatalf("expected upstream_proxy_mode to be direct, got %q", cfg.Global.NormalizedUpstreamProxyMode())
+	}
+	if cfg.Global.NormalizedUpstreamProxyURL() != "" {
+		t.Fatalf("expected upstream_proxy_url to be cleared, got %q", cfg.Global.NormalizedUpstreamProxyURL())
+	}
 }
 
 func TestHandleAddProvider_AcceptsAPIKeys(t *testing.T) {
@@ -503,6 +535,9 @@ func TestHandleAddProvider_AcceptsAPIKeys(t *testing.T) {
 	}
 	if cfg.OpenAI.Providers[0].APIKey != "" {
 		t.Fatalf("expected multi-key provider to be persisted via api_keys")
+	}
+	if got := cfg.OpenAI.Providers[0].NormalizedProxyMode(); got != config.ProviderProxyModeInherit {
+		t.Fatalf("proxy_mode = %q, want %q", got, config.ProviderProxyModeInherit)
 	}
 	if got := cfg.OpenAI.Providers[0].ModelOverride(); got != "gpt-5.4" {
 		t.Fatalf("model = %q", got)
@@ -582,6 +617,197 @@ providers:
 	if got := cfg.OpenAI.Providers[2].Priority; got != 3 {
 		t.Fatalf("priority = %d, want 3", got)
 	}
+}
+
+func TestHandleAddProvider_AcceptsCustomProxy(t *testing.T) {
+	for _, proxyURL := range []string{"http://127.0.0.1:7890", "socks5://127.0.0.1:1080"} {
+		t.Run(proxyURL, func(t *testing.T) {
+			dir := t.TempDir()
+			api := NewAPI(dir, "test", nil)
+
+			body := []byte(`{
+  "name": "p1",
+  "base_url": "https://example.com",
+  "api_key": "key1",
+  "proxy_mode": "custom",
+  "proxy_url": "` + proxyURL + `",
+  "priority": 1,
+  "enabled": true
+}`)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/providers/codex", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			api.HandleAddProvider(w, req)
+			if w.Result().StatusCode != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+			}
+
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if got := cfg.OpenAI.Providers[0].NormalizedProxyMode(); got != config.ProviderProxyModeCustom {
+				t.Fatalf("proxy_mode = %q", got)
+			}
+			if got := cfg.OpenAI.Providers[0].NormalizedProxyURL(); got != proxyURL {
+				t.Fatalf("proxy_url = %q", got)
+			}
+		})
+	}
+}
+
+func TestHandleAddProvider_RejectsProxyURLWithoutCustomMode(t *testing.T) {
+	for _, mode := range []string{"direct", "inherit"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			api := NewAPI(dir, "test", nil)
+
+			body := []byte(`{
+  "name": "p1",
+  "base_url": "https://example.com",
+  "api_key": "key1",
+  "proxy_mode": "` + mode + `",
+  "proxy_url": "http://127.0.0.1:7890",
+  "priority": 1,
+  "enabled": true
+}`)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/providers/codex", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			api.HandleAddProvider(w, req)
+			if w.Result().StatusCode != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+			}
+
+			got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+			if got["error"] != "proxy_url requires proxy_mode custom" {
+				t.Fatalf("error = %#v", got["error"])
+			}
+
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if len(cfg.OpenAI.Providers) != 0 {
+				t.Fatalf("providers len = %d, want 0", len(cfg.OpenAI.Providers))
+			}
+		})
+	}
+}
+
+func TestHandleUpdateProvider_ProxySettings(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: key1
+    proxy_mode: custom
+    proxy_url: http://127.0.0.1:7890
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+
+	t.Run("retain existing custom proxy url", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{
+  "proxy_mode": "custom"
+}`)))
+		w := httptest.NewRecorder()
+		api.HandleUpdateProvider(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+
+		cfg, err := config.Load(dir)
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		if got := cfg.OpenAI.Providers[0].NormalizedProxyURL(); got != "http://127.0.0.1:7890" {
+			t.Fatalf("proxy_url = %q", got)
+		}
+	})
+
+	t.Run("switch to direct clears proxy url", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{
+  "proxy_mode": "direct"
+}`)))
+		w := httptest.NewRecorder()
+		api.HandleUpdateProvider(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+
+		cfg, err := config.Load(dir)
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		if got := cfg.OpenAI.Providers[0].NormalizedProxyMode(); got != config.ProviderProxyModeDirect {
+			t.Fatalf("proxy_mode = %q", got)
+		}
+		if got := cfg.OpenAI.Providers[0].NormalizedProxyURL(); got != "" {
+			t.Fatalf("proxy_url = %q, want empty", got)
+		}
+	})
+
+	t.Run("reject proxy url without mode", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{
+  "proxy_url": "http://127.0.0.1:8899"
+}`)))
+		w := httptest.NewRecorder()
+		api.HandleUpdateProvider(w, req)
+		if w.Result().StatusCode != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+	})
+
+	t.Run("reject proxy url without custom mode", func(t *testing.T) {
+		for _, mode := range []string{"direct", "inherit"} {
+			t.Run(mode, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: key1
+    proxy_mode: custom
+    proxy_url: http://127.0.0.1:7890
+    priority: 1
+`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+
+				api := NewAPI(dir, "test", nil)
+				req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{
+  "proxy_mode": "`+mode+`",
+  "proxy_url": "http://127.0.0.1:8899"
+}`)))
+				w := httptest.NewRecorder()
+				api.HandleUpdateProvider(w, req)
+				if w.Result().StatusCode != http.StatusBadRequest {
+					t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+				}
+
+				got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+				if got["error"] != "proxy_url requires proxy_mode custom" {
+					t.Fatalf("error = %#v", got["error"])
+				}
+
+				cfg, err := config.Load(dir)
+				if err != nil {
+					t.Fatalf("load config: %v", err)
+				}
+				if got := cfg.OpenAI.Providers[0].NormalizedProxyMode(); got != config.ProviderProxyModeCustom {
+					t.Fatalf("proxy_mode = %q, want %q", got, config.ProviderProxyModeCustom)
+				}
+				if got := cfg.OpenAI.Providers[0].NormalizedProxyURL(); got != "http://127.0.0.1:7890" {
+					t.Fatalf("proxy_url = %q", got)
+				}
+			})
+		}
+	})
 }
 
 func TestHandleGetClientConfig_ReturnsConfiguredModeAndPin(t *testing.T) {

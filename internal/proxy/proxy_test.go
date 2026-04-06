@@ -150,6 +150,128 @@ func TestBuildTargetURL(t *testing.T) {
 	}
 }
 
+func TestNewClientProxy_UsesProviderSpecificProxyModes(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://env-proxy:8080")
+
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
+		{Name: "inherit", BaseURL: "http://inherit.example", APIKey: "k1", Priority: 1},
+		{Name: "direct", BaseURL: "http://direct.example", APIKey: "k2", ProxyMode: config.ProviderProxyModeDirect, Priority: 2},
+		{Name: "custom", BaseURL: "http://custom.example", APIKey: "k3", ProxyMode: config.ProviderProxyModeCustom, ProxyURL: "http://custom-proxy:9090", Priority: 3},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	req, err := http.NewRequest(http.MethodGet, "http://upstream.example/v1/test", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+
+	inheritTransport, ok := cp.upstreamHTTPClient(0).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("inherit transport type = %T", cp.upstreamHTTPClient(0).Transport)
+	}
+	inheritProxy, err := inheritTransport.Proxy(req)
+	if err != nil {
+		t.Fatalf("inherit proxy: %v", err)
+	}
+	if inheritProxy == nil || inheritProxy.String() != "http://env-proxy:8080" {
+		t.Fatalf("inherit proxy = %v, want http://env-proxy:8080", inheritProxy)
+	}
+
+	directTransport, ok := cp.upstreamHTTPClient(1).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("direct transport type = %T", cp.upstreamHTTPClient(1).Transport)
+	}
+	if directTransport.Proxy != nil {
+		directProxy, err := directTransport.Proxy(req)
+		if err != nil {
+			t.Fatalf("direct proxy: %v", err)
+		}
+		if directProxy != nil {
+			t.Fatalf("direct proxy = %v, want nil", directProxy)
+		}
+	}
+
+	customTransport, ok := cp.upstreamHTTPClient(2).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("custom transport type = %T", cp.upstreamHTTPClient(2).Transport)
+	}
+	customProxy, err := customTransport.Proxy(req)
+	if err != nil {
+		t.Fatalf("custom proxy: %v", err)
+	}
+	if customProxy == nil || customProxy.String() != "http://custom-proxy:9090" {
+		t.Fatalf("custom proxy = %v, want http://custom-proxy:9090", customProxy)
+	}
+}
+
+func TestNewClientProxyWithGlobalProxy_UsesGlobalDefaultForInheritedProviders(t *testing.T) {
+	t.Parallel()
+
+	req, err := http.NewRequest(http.MethodGet, "http://upstream.example/v1/test", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+
+	directCP := newClientProxyWithGlobalProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
+		{Name: "inherit", BaseURL: "http://inherit.example", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{}, config.ProviderProxyModeDirect, "")
+
+	directTransport, ok := directCP.upstreamHTTPClient(0).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("direct transport type = %T", directCP.upstreamHTTPClient(0).Transport)
+	}
+	if directTransport.Proxy != nil {
+		directProxy, err := directTransport.Proxy(req)
+		if err != nil {
+			t.Fatalf("direct proxy: %v", err)
+		}
+		if directProxy != nil {
+			t.Fatalf("direct proxy = %v, want nil", directProxy)
+		}
+	}
+
+	customCP := newClientProxyWithGlobalProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
+		{Name: "inherit", BaseURL: "http://inherit.example", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{}, config.ProviderProxyModeCustom, "http://global-proxy:8081")
+
+	customTransport, ok := customCP.upstreamHTTPClient(0).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("custom transport type = %T", customCP.upstreamHTTPClient(0).Transport)
+	}
+	customProxy, err := customTransport.Proxy(req)
+	if err != nil {
+		t.Fatalf("custom proxy: %v", err)
+	}
+	if customProxy == nil || customProxy.String() != "http://global-proxy:8081" {
+		t.Fatalf("custom proxy = %v, want http://global-proxy:8081", customProxy)
+	}
+}
+
+func TestNewClientProxy_UsesCustomSocksProxy(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
+		{Name: "custom-socks", BaseURL: "http://custom.example", APIKey: "k1", ProxyMode: config.ProviderProxyModeCustom, ProxyURL: "socks5://custom-proxy:1080", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+
+	req, err := http.NewRequest(http.MethodGet, "https://upstream.example/v1/test", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+
+	transport, ok := cp.upstreamHTTPClient(0).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T", cp.upstreamHTTPClient(0).Transport)
+	}
+
+	customProxy, err := transport.Proxy(req)
+	if err != nil {
+		t.Fatalf("custom proxy: %v", err)
+	}
+	if customProxy == nil || customProxy.String() != "socks5://custom-proxy:1080" {
+		t.Fatalf("custom proxy = %v, want socks5://custom-proxy:1080", customProxy)
+	}
+}
+
 func TestAddForwardedHeaders(t *testing.T) {
 	t.Parallel()
 

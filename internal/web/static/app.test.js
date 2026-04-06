@@ -141,6 +141,7 @@ test('saveProvider includes OpenAI override fields in payload', async () => {
     assert.deepEqual(calls[0].options, {
         name: 'openai-primary',
         base_url: 'https://example.com',
+        proxy_mode: 'inherit',
         priority: 1,
         enabled: true,
         overrides: {
@@ -192,6 +193,7 @@ test('saveProvider includes Claude thinking budget override in payload', async (
     assert.deepEqual(calls[0].options, {
         name: 'claude-primary',
         base_url: 'https://example.com',
+        proxy_mode: 'inherit',
         priority: 2,
         enabled: false,
         overrides: {
@@ -287,6 +289,7 @@ test('openAddProviderModal sets next priority for provider form', () => {
 
     assert.equal(state.showAddProviderModal, true);
     assert.equal(state.providerForm.priority, 4);
+    assert.equal(state.providerForm.proxy_mode, 'inherit');
 });
 
 test('editProvider hydrates override fields directly into the form', () => {
@@ -295,6 +298,8 @@ test('editProvider hydrates override fields directly into the form', () => {
     state.editProvider({
         name: 'openai-primary',
         base_url: 'https://example.com',
+        proxy_mode: 'custom',
+        proxy_url_hint: 'http://127.0.0.1:7890',
         overrides: {
             model: 'gpt-5.4',
             openai: {
@@ -307,9 +312,52 @@ test('editProvider hydrates override fields directly into the form', () => {
     });
 
     assert.equal(state.showEditProviderModal, true);
+    assert.equal(state.providerForm.proxy_mode, 'custom');
+    assert.equal(state.providerForm.proxy_url, '');
+    assert.equal(state.providerForm.proxy_url_hint, 'http://127.0.0.1:7890');
     assert.equal(state.providerForm.model, 'gpt-5.4');
     assert.equal(state.providerForm.reasoning_effort, 'high');
     assert.equal(state.providerForm.thinking_budget_tokens, 0);
+});
+
+test('saveProvider includes custom proxy settings when configured', async () => {
+    const state = loadApp();
+    const calls = [];
+    state.selectedClient = 'openai';
+    state.providerForm = {
+        name: 'openai-proxy',
+        base_url: 'https://example.com',
+        proxy_mode: 'custom',
+        proxy_url: 'http://127.0.0.1:7890',
+        proxy_url_hint: '',
+        model: '',
+        reasoning_effort: '',
+        thinking_budget_tokens: 0,
+        api_keys_text: 'key-1',
+        priority: 1,
+        enabled: true
+    };
+    state.apiCall = async (url, options) => {
+        calls.push({ url, options: JSON.parse(options.body) });
+        return {};
+    };
+    state.showAlert = () => {};
+    state.closeModals = () => {};
+    state.loadProviders = async () => {};
+    state.refreshStatus = async () => {};
+
+    await state.saveProvider();
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].options, {
+        name: 'openai-proxy',
+        base_url: 'https://example.com',
+        proxy_mode: 'custom',
+        proxy_url: 'http://127.0.0.1:7890',
+        priority: 1,
+        enabled: true,
+        api_key: 'key-1'
+    });
 });
 
 test('saveProvider omits unsupported override fields for gemini', async () => {
@@ -319,6 +367,9 @@ test('saveProvider omits unsupported override fields for gemini', async () => {
     state.providerForm = {
         name: 'gemini-primary',
         base_url: 'https://example.com',
+        proxy_mode: 'inherit',
+        proxy_url: '',
+        proxy_url_hint: '',
         model: 'gemini-2.5-pro',
         reasoning_effort: 'high',
         thinking_budget_tokens: 2048,
@@ -342,6 +393,7 @@ test('saveProvider omits unsupported override fields for gemini', async () => {
     assert.deepEqual(calls[0].options, {
         name: 'gemini-primary',
         base_url: 'https://example.com',
+        proxy_mode: 'inherit',
         priority: 1,
         enabled: true,
         api_key: 'key-1'

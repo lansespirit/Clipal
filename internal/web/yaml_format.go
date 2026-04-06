@@ -62,6 +62,12 @@ func formatClientConfigYAML(clientType string, cc config.ClientConfig) []byte {
 
 		writeBufferString(&b, fmt.Sprintf("  - name: %s\n", yamlDoubleQuote(p.Name)))
 		writeBufferString(&b, fmt.Sprintf("    base_url: %s\n", yamlDoubleQuote(p.BaseURL)))
+		if p.NormalizedProxyMode() != config.ProviderProxyModeInherit {
+			writeBufferString(&b, fmt.Sprintf("    proxy_mode: %s\n", yamlDoubleQuote(string(p.NormalizedProxyMode()))))
+		}
+		if p.NormalizedProxyMode() == config.ProviderProxyModeCustom && p.NormalizedProxyURL() != "" {
+			writeBufferString(&b, fmt.Sprintf("    proxy_url: %s\n", yamlDoubleQuote(p.NormalizedProxyURL())))
+		}
 		keys := p.NormalizedAPIKeys()
 		if len(keys) <= 1 {
 			writeBufferString(&b, fmt.Sprintf("    api_key: %s\n", yamlDoubleQuote(p.PrimaryAPIKey())))
@@ -111,6 +117,10 @@ func formatGlobalConfigYAML(gc config.GlobalConfig) []byte {
 	writeBufferString(&b, "# How long to wait for the upstream to return response headers.\n")
 	writeBufferString(&b, "# Set to 0 to disable.\n")
 	writeBufferString(&b, fmt.Sprintf("response_header_timeout: %s\n", yamlDoubleQuote(strings.TrimSpace(gc.ResponseHeaderTimeout))))
+	writeBufferString(&b, "# Default upstream proxy for providers whose proxy_mode is inherit.\n")
+	writeBufferString(&b, fmt.Sprintf("upstream_proxy_mode: %s # inherit | direct | custom\n", yamlDoubleQuote(string(gc.NormalizedUpstreamProxyMode()))))
+	writeBufferString(&b, "# Supported proxy URLs: http://, https://, socks5://, socks5h://\n")
+	writeBufferString(&b, fmt.Sprintf("upstream_proxy_url: %s\n", yamlDoubleQuote(gc.NormalizedUpstreamProxyURL())))
 	writeBufferString(&b, "# Max request body size in bytes (clipal buffers request bodies for retries).\n")
 	writeBufferString(&b, fmt.Sprintf("max_request_body_bytes: %d\n\n", gc.MaxRequestBody))
 

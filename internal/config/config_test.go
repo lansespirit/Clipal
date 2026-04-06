@@ -705,3 +705,137 @@ func TestGetConfigDir_RespectsEnvironmentOverride(t *testing.T) {
 		t.Fatalf("GetConfigDir = %q, want %q", got, want)
 	}
 }
+
+func TestLoad_ProviderProxyModeDefaultsToInherit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeClientConfigFile(t, dir, "openai.yaml", `
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: key
+    priority: 1
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.OpenAI.Providers[0].NormalizedProxyMode(); got != ProviderProxyModeInherit {
+		t.Fatalf("proxy mode = %q, want %q", got, ProviderProxyModeInherit)
+	}
+	if got := cfg.OpenAI.Providers[0].NormalizedProxyURL(); got != "" {
+		t.Fatalf("proxy url = %q, want empty", got)
+	}
+}
+
+func TestValidate_ProviderProxySettings(t *testing.T) {
+	t.Parallel()
+
+	base := &Config{
+		Global: DefaultGlobalConfig(),
+		Claude: ClientConfig{Mode: ClientModeAuto},
+		OpenAI: ClientConfig{Mode: ClientModeAuto},
+		Gemini: ClientConfig{Mode: ClientModeAuto},
+	}
+
+	makeProvider := func(mode ProviderProxyMode, proxyURL string) Provider {
+		return Provider{
+			Name:      "p1",
+			BaseURL:   "https://example.com",
+			APIKey:    "key",
+			ProxyMode: mode,
+			ProxyURL:  proxyURL,
+			Priority:  1,
+		}
+	}
+
+	t.Run("accepts direct", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeDirect, "")}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("accepts custom http proxy", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeCustom, "http://127.0.0.1:7890")}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("accepts custom socks5 proxy", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeCustom, "socks5://127.0.0.1:1080")}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("accepts custom socks5h proxy", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeCustom, "socks5h://127.0.0.1:1080")}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("rejects custom proxy without url", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeCustom, "")}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "proxy_url is required") {
+			t.Fatalf("Validate err = %v", err)
+		}
+	})
+
+	t.Run("rejects unsupported proxy scheme", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeCustom, "ftp://127.0.0.1:21")}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "proxy_url scheme must be http, https, socks5, or socks5h") {
+			t.Fatalf("Validate err = %v", err)
+		}
+	})
+
+	t.Run("rejects proxy url without custom mode", func(t *testing.T) {
+		cfg := *base
+		cfg.OpenAI.Providers = []Provider{makeProvider(ProviderProxyModeDirect, "http://127.0.0.1:7890")}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "proxy_url requires proxy_mode custom") {
+			t.Fatalf("Validate err = %v", err)
+		}
+	})
+}
+
+func TestValidate_GlobalUpstreamProxySettings(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Global: DefaultGlobalConfig(),
+		Claude: ClientConfig{Mode: ClientModeAuto},
+		OpenAI: ClientConfig{Mode: ClientModeAuto},
+		Gemini: ClientConfig{Mode: ClientModeAuto},
+	}
+
+	cfg.Global.UpstreamProxyMode = ProviderProxyModeCustom
+	cfg.Global.UpstreamProxyURL = "http://127.0.0.1:7890"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	cfg.Global.UpstreamProxyURL = "socks5://127.0.0.1:1080"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	cfg.Global.UpstreamProxyURL = "socks5h://127.0.0.1:1080"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	cfg.Global.UpstreamProxyURL = "ftp://127.0.0.1:21"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "proxy_url scheme must be http, https, socks5, or socks5h") {
+		t.Fatalf("Validate err = %v", err)
+	}
+}

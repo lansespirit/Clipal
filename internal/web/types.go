@@ -5,6 +5,8 @@ package web
 // and lets us redact sensitive fields like API keys.
 
 import (
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
@@ -20,6 +22,8 @@ type GlobalConfigRequest struct {
 	ReactivateAfter       string                      `json:"reactivate_after"`
 	UpstreamIdleTimeout   string                      `json:"upstream_idle_timeout"`
 	ResponseHeaderTimeout string                      `json:"response_header_timeout"`
+	UpstreamProxyMode     string                      `json:"upstream_proxy_mode"`
+	UpstreamProxyURL      string                      `json:"upstream_proxy_url"`
 	MaxRequestBodyBytes   int64                       `json:"max_request_body_bytes"`
 	LogDir                string                      `json:"log_dir"`
 	LogRetentionDays      int                         `json:"log_retention_days"`
@@ -66,6 +70,8 @@ type GlobalConfigResponse struct {
 	ReactivateAfter       string                       `json:"reactivate_after"`
 	UpstreamIdleTimeout   string                       `json:"upstream_idle_timeout"`
 	ResponseHeaderTimeout string                       `json:"response_header_timeout"`
+	UpstreamProxyMode     string                       `json:"upstream_proxy_mode"`
+	UpstreamProxyURL      string                       `json:"upstream_proxy_url"`
 	MaxRequestBodyBytes   int64                        `json:"max_request_body_bytes"`
 	LogDir                string                       `json:"log_dir"`
 	LogRetentionDays      int                          `json:"log_retention_days"`
@@ -163,6 +169,8 @@ type ProviderRequest struct {
 	BaseURL   string                    `json:"base_url"`
 	APIKey    string                    `json:"api_key,omitempty"`
 	APIKeys   []string                  `json:"api_keys,omitempty"`
+	ProxyMode *string                   `json:"proxy_mode,omitempty"`
+	ProxyURL  *string                   `json:"proxy_url,omitempty"`
 	Overrides *ProviderOverridesRequest `json:"overrides,omitempty"`
 	// Priority is 1-based. Omit to keep existing value (on updates) or to
 	// auto-assign the next priority (on create).
@@ -172,13 +180,15 @@ type ProviderRequest struct {
 
 // ProviderResponse is returned for provider listings (never includes api_key).
 type ProviderResponse struct {
-	Name      string                     `json:"name"`
-	BaseURL   string                     `json:"base_url"`
-	Priority  int                        `json:"priority"`
-	Enabled   bool                       `json:"enabled"`
-	KeyCount  int                        `json:"key_count"`
-	Usage     *ProviderUsageResponse     `json:"usage,omitempty"`
-	Overrides *ProviderOverridesResponse `json:"overrides,omitempty"`
+	Name         string                     `json:"name"`
+	BaseURL      string                     `json:"base_url"`
+	ProxyMode    string                     `json:"proxy_mode"`
+	ProxyURLHint string                     `json:"proxy_url_hint,omitempty"`
+	Priority     int                        `json:"priority"`
+	Enabled      bool                       `json:"enabled"`
+	KeyCount     int                        `json:"key_count"`
+	Usage        *ProviderUsageResponse     `json:"usage,omitempty"`
+	Overrides    *ProviderOverridesResponse `json:"overrides,omitempty"`
 }
 
 type ProviderUsageResponse struct {
@@ -216,6 +226,8 @@ type ProviderExport struct {
 	BaseURL   string                     `json:"base_url"`
 	APIKey    string                     `json:"api_key,omitempty"`
 	APIKeys   []string                   `json:"api_keys,omitempty"`
+	ProxyMode string                     `json:"proxy_mode,omitempty"`
+	ProxyURL  string                     `json:"proxy_url,omitempty"`
 	Priority  int                        `json:"priority"`
 	Enabled   *bool                      `json:"enabled,omitempty"`
 	Overrides *ProviderOverridesResponse `json:"overrides,omitempty"`
@@ -360,6 +372,8 @@ func toGlobalConfigResponse(gc config.GlobalConfig) GlobalConfigResponse {
 		ReactivateAfter:       gc.ReactivateAfter,
 		UpstreamIdleTimeout:   gc.UpstreamIdleTimeout,
 		ResponseHeaderTimeout: gc.ResponseHeaderTimeout,
+		UpstreamProxyMode:     string(gc.NormalizedUpstreamProxyMode()),
+		UpstreamProxyURL:      gc.NormalizedUpstreamProxyURL(),
 		MaxRequestBodyBytes:   gc.MaxRequestBody,
 		LogDir:                gc.LogDir,
 		LogRetentionDays:      gc.LogRetentionDays,
@@ -418,13 +432,15 @@ func toProviderResponses(providers []config.Provider, usageByProvider map[string
 	out := make([]ProviderResponse, 0, len(providers))
 	for _, p := range providers {
 		out = append(out, ProviderResponse{
-			Name:      p.Name,
-			BaseURL:   p.BaseURL,
-			Priority:  p.Priority,
-			Enabled:   p.IsEnabled(),
-			KeyCount:  p.KeyCount(),
-			Usage:     mapProviderUsageResponse(usageByProvider[p.Name]),
-			Overrides: mapProviderOverridesResponse(p),
+			Name:         p.Name,
+			BaseURL:      p.BaseURL,
+			ProxyMode:    string(p.NormalizedProxyMode()),
+			ProxyURLHint: proxyURLHint(p.NormalizedProxyURL()),
+			Priority:     p.Priority,
+			Enabled:      p.IsEnabled(),
+			KeyCount:     p.KeyCount(),
+			Usage:        mapProviderUsageResponse(usageByProvider[p.Name]),
+			Overrides:    mapProviderOverridesResponse(p),
 		})
 	}
 	return out
@@ -461,6 +477,8 @@ func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {
 			BaseURL:   p.BaseURL,
 			APIKey:    p.APIKey,
 			APIKeys:   append([]string(nil), p.APIKeys...),
+			ProxyMode: string(p.NormalizedProxyMode()),
+			ProxyURL:  p.NormalizedProxyURL(),
 			Priority:  p.Priority,
 			Enabled:   p.Enabled,
 			Overrides: mapProviderOverridesResponse(p),
@@ -471,6 +489,18 @@ func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {
 		PinnedProvider: cc.PinnedProvider,
 		Providers:      out,
 	}
+}
+
+func proxyURLHint(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func toProviderOverrideSupport(s providerOverrideSupport) ProviderOverrideSupport {

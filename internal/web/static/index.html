@@ -214,6 +214,11 @@
                                 <span class="provider-card__detail-label" x-text="t('providers.baseUrl')"></span>
                                 <span class="provider-card__detail-value" x-text="provider.base_url"></span>
                             </div>
+                            <div class="provider-card__detail"
+                                x-show="normalizeProviderProxyMode(provider.proxy_mode) !== 'inherit'">
+                                <span class="provider-card__detail-label" x-text="t('providers.proxy')"></span>
+                                <span class="provider-card__detail-value" x-text="providerProxySummary(provider)"></span>
+                            </div>
                             <div class="provider-card__detail">
                                 <span class="provider-card__detail-label" x-text="t('providers.apiKeys')"></span>
                                 <span class="provider-card__detail-value"
@@ -314,6 +319,21 @@
                                 <input type="text" x-model="globalConfig.response_header_timeout" class="form-input"
                                     required>
                                 <div class="form-hint" x-text="t('settings.responseHeaderTimeoutHint')"></div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" x-text="t('settings.upstreamProxyMode')"></label>
+                                <select x-model="globalConfig.upstream_proxy_mode" class="form-select">
+                                    <option value="inherit" x-text="t('settings.proxyModeInherit')"></option>
+                                    <option value="direct" x-text="t('settings.proxyModeDirect')"></option>
+                                    <option value="custom" x-text="t('settings.proxyModeCustom')"></option>
+                                </select>
+                                <div class="form-hint" x-text="t('settings.upstreamProxyHint')"></div>
+                            </div>
+                            <div class="form-group" x-show="normalizeProviderProxyMode(globalConfig.upstream_proxy_mode) === 'custom'">
+                                <label class="form-label" x-text="t('settings.upstreamProxyUrl')"></label>
+                                <input type="text" x-model="globalConfig.upstream_proxy_url" class="form-input"
+                                    :placeholder="t('settings.upstreamProxyUrlHint')">
+                                <div class="form-hint" x-text="t('settings.upstreamProxyUrlHelp')"></div>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" x-text="t('settings.failureThreshold')"></label>
@@ -834,6 +854,26 @@
                     <div class="form-control-wrap">
                         <input type="text" x-model="providerForm.base_url" class="form-input" required
                             placeholder="https://api.example.com">
+                    </div>
+
+                    <label class="form-label" x-text="t('modal.provider.proxyMode')"></label>
+                    <div class="form-control-wrap">
+                        <select x-model="providerForm.proxy_mode" class="form-select">
+                            <option value="inherit" x-text="t('modal.provider.proxyModeInherit')"></option>
+                            <option value="direct" x-text="t('modal.provider.proxyModeDirect')"></option>
+                            <option value="custom" x-text="t('modal.provider.proxyModeCustom')"></option>
+                        </select>
+                    </div>
+
+                    <label class="form-label" x-show="providerFormUsesCustomProxy()"
+                        x-text="t('modal.provider.proxyUrl')"></label>
+                    <div class="form-control-wrap" x-show="providerFormUsesCustomProxy()">
+                        <input type="text" x-model="providerForm.proxy_url" class="form-input"
+                            :placeholder="t('modal.provider.proxyUrlHint')">
+                        <div class="form-hint" x-text="t('modal.provider.proxyUrlHelp')"></div>
+                        <div class="form-hint"
+                            x-show="showEditProviderModal && providerFormUsesCustomProxy() && providerForm.proxy_url_hint"
+                            x-text="providerEditProxyHint()"></div>
                     </div>
 
                     <label class="form-label"
