@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
+	"github.com/lansespirit/Clipal/internal/logger"
 	"github.com/lansespirit/Clipal/internal/proxy"
+	"github.com/lansespirit/Clipal/internal/telemetry"
 	"github.com/lansespirit/Clipal/internal/testutil"
 )
 
@@ -141,6 +143,122 @@ providers:
 	}
 	if openaiOver["reasoning_effort"] != "high" {
 		t.Fatalf("expected reasoning_effort override in listing, got %v", openaiOver["reasoning_effort"])
+	}
+	if _, ok := first["usage"]; ok {
+		t.Fatalf("did not expect usage in provider listing without telemetry data")
+	}
+}
+
+func TestHandleGetProviders_IncludesUsage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: secret
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	if err := api.telemetry.RecordUsage("openai", "p1", telemetry.UsageSnapshot{UsageDelta: telemetry.UsageDelta{InputTokens: 11, OutputTokens: 13}, Usage: map[string]any{"prompt_tokens": 11.0, "completion_tokens": 13.0, "total_tokens": 24.0}}, time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/openai", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetProviders(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	usage, ok := got[0]["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected usage object, got %#v", got[0]["usage"])
+	}
+	if usage["has_usage"] != true {
+		t.Fatalf("expected usage.has_usage=true, got %#v", usage["has_usage"])
+	}
+	if usage["total_tokens"] != float64(24) {
+		t.Fatalf("usage.total_tokens = %v", usage["total_tokens"])
+	}
+	if usage["input_tokens"] != float64(11) || usage["output_tokens"] != float64(13) {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
+func TestHandleGetProviders_IncludesRequestOnlyUsageWithoutTokenUsage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+providers:
+  - name: p1
+    base_url: https://example.com
+    api_key: secret
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	if err := api.telemetry.RecordUsage("openai", "p1", telemetry.UsageSnapshot{}, time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/openai", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetProviders(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	usage, ok := got[0]["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected usage object, got %#v", got[0]["usage"])
+	}
+	if usage["request_count"] != float64(1) || usage["success_count"] != float64(1) {
+		t.Fatalf("usage = %#v", usage)
+	}
+	if _, ok := usage["has_usage"]; ok {
+		t.Fatalf("did not expect usage.has_usage for request-only telemetry, got %#v", usage["has_usage"])
+	}
+	if _, ok := usage["total_tokens"]; ok {
+		t.Fatalf("did not expect token totals for request-only telemetry, got %#v", usage["total_tokens"])
+	}
+}
+
+func TestNewAPI_LogsTelemetryLoadFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "usage.json"), []byte("{invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var warned []string
+	loggerHook := func(levelStr string, message string) {
+		if levelStr == "WARN" {
+			warned = append(warned, message)
+		}
+	}
+	logger.SetHook(loggerHook)
+	defer logger.SetHook(nil)
+
+	api := NewAPI(dir, "test", nil)
+	if api == nil {
+		t.Fatalf("expected api")
+	}
+	if len(warned) == 0 {
+		t.Fatalf("expected warning for telemetry load failure")
+	}
+	if !strings.Contains(warned[0], "failed to load usage telemetry") {
+		t.Fatalf("warning = %q", warned[0])
 	}
 }
 
@@ -615,6 +733,9 @@ providers:
 	})
 
 	t.Run("success", func(t *testing.T) {
+		if err := api.telemetry.RecordUsage("openai", "p1", telemetry.UsageSnapshot{UsageDelta: telemetry.UsageDelta{InputTokens: 5, OutputTokens: 7}, Usage: map[string]any{"prompt_tokens": 5.0, "completion_tokens": 7.0}}, time.Now()); err != nil {
+			t.Fatalf("RecordUsage: %v", err)
+		}
 		req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/p1", bytes.NewReader([]byte(`{
   "name":"p3",
   "base_url":"https://three.example",
@@ -665,6 +786,12 @@ providers:
 		}
 		if got := updated.OpenAIReasoningEffort(); got != "low" {
 			t.Fatalf("reasoning_effort=%q", got)
+		}
+		if _, ok := api.telemetry.ProviderSnapshot("openai", "p1"); ok {
+			t.Fatalf("expected renamed provider usage to remove old name")
+		}
+		if got, ok := api.telemetry.ProviderSnapshot("openai", "p3"); !ok || got.TotalTokens != 12 {
+			t.Fatalf("renamed usage snapshot = %#v ok=%v", got, ok)
 		}
 	})
 }
@@ -774,6 +901,9 @@ providers:
 	}
 
 	req = httptest.NewRequest(http.MethodDelete, "/api/providers/codex/p1", nil)
+	if err := api.telemetry.RecordUsage("openai", "p1", telemetry.UsageSnapshot{UsageDelta: telemetry.UsageDelta{InputTokens: 3, OutputTokens: 4}, Usage: map[string]any{"prompt_tokens": 3.0, "completion_tokens": 4.0}}, time.Now()); err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
 	w = httptest.NewRecorder()
 	api.HandleDeleteProvider(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -786,6 +916,9 @@ providers:
 	}
 	if len(cfg.OpenAI.Providers) != 1 || cfg.OpenAI.Providers[0].Name != "p2" {
 		t.Fatalf("providers=%#v", cfg.OpenAI.Providers)
+	}
+	if _, ok := api.telemetry.ProviderSnapshot("openai", "p1"); ok {
+		t.Fatalf("expected usage snapshot for deleted provider to be removed")
 	}
 }
 

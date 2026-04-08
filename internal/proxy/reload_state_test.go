@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/config"
+	"github.com/lansespirit/Clipal/internal/telemetry"
 	"gopkg.in/yaml.v3"
 )
+
+func boolPtr(v bool) *bool { return &v }
 
 func writeProxyReloadFixture(t *testing.T, dir string, global config.GlobalConfig, codex config.ClientConfig) {
 	t.Helper()
@@ -384,6 +387,91 @@ func TestReloadProviderConfigsLocked_DoesNotPreserveSuppressionStateWhenBaseURLC
 	}
 	if newProxy.breakers[0].state != circuitClosed {
 		t.Fatalf("breaker state = %s, want closed", newProxy.breakers[0].state)
+	}
+}
+
+func TestReloadProviderConfigsLocked_ReconcilesTelemetryFromYAMLChanges(t *testing.T) {
+	dir := t.TempDir()
+	global := config.DefaultGlobalConfig()
+	global.ListenAddr = "127.0.0.1"
+	global.Port = 3333
+	initial := config.ClientConfig{
+		Mode: config.ClientModeAuto,
+		Providers: []config.Provider{
+			{
+				Name:     "rename-me",
+				BaseURL:  "https://rename.example",
+				APIKeys:  []string{"key-b", "key-a"},
+				Priority: 1,
+				Enabled:  boolPtr(false),
+			},
+			{
+				Name:     "delete-me",
+				BaseURL:  "https://delete.example",
+				APIKey:   "delete-key",
+				Priority: 2,
+				Enabled:  boolPtr(false),
+			},
+		},
+	}
+	writeProxyReloadFixture(t, dir, global, initial)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	router := NewRouter(cfg)
+	if router.telemetry == nil {
+		t.Fatalf("expected telemetry store")
+	}
+
+	recordedAt := time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)
+	if err := router.telemetry.RecordUsage("openai", "rename-me", telemetry.UsageSnapshot{
+		UsageDelta: telemetry.UsageDelta{InputTokens: 5, OutputTokens: 7},
+		Usage:      map[string]any{"prompt_tokens": 5.0, "completion_tokens": 7.0, "total_tokens": 12.0},
+	}, recordedAt); err != nil {
+		t.Fatalf("RecordUsage rename-me: %v", err)
+	}
+	if err := router.telemetry.RecordUsage("openai", "delete-me", telemetry.UsageSnapshot{
+		UsageDelta: telemetry.UsageDelta{InputTokens: 3, OutputTokens: 4},
+		Usage:      map[string]any{"prompt_tokens": 3.0, "completion_tokens": 4.0, "total_tokens": 7.0},
+	}, recordedAt.Add(time.Minute)); err != nil {
+		t.Fatalf("RecordUsage delete-me: %v", err)
+	}
+
+	reloaded := config.ClientConfig{
+		Mode: config.ClientModeAuto,
+		Providers: []config.Provider{
+			{
+				Name:     "renamed-provider",
+				BaseURL:  "https://rename.example",
+				APIKeys:  []string{"key-a", "key-b"},
+				Priority: 1,
+				Enabled:  boolPtr(false),
+			},
+		},
+	}
+	writeProxyReloadFixture(t, dir, global, reloaded)
+
+	if err := router.reloadProviderConfigsLocked(); err != nil {
+		t.Fatalf("reloadProviderConfigsLocked: %v", err)
+	}
+
+	if _, ok := router.telemetry.ProviderSnapshot("openai", "rename-me"); ok {
+		t.Fatalf("expected old renamed provider telemetry to be removed")
+	}
+	renamed, ok := router.telemetry.ProviderSnapshot("openai", "renamed-provider")
+	if !ok {
+		t.Fatalf("expected renamed provider telemetry to be preserved")
+	}
+	if renamed.TotalTokens != 12 || renamed.RequestCount != 1 || renamed.SuccessCount != 1 {
+		t.Fatalf("renamed telemetry = %#v", renamed)
+	}
+	if _, ok := router.telemetry.ProviderSnapshot("openai", "delete-me"); ok {
+		t.Fatalf("expected deleted provider telemetry to be removed")
 	}
 }
 

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/lansespirit/Clipal/internal/config"
 	"github.com/lansespirit/Clipal/internal/logger"
 	"github.com/lansespirit/Clipal/internal/notify"
+	"github.com/lansespirit/Clipal/internal/telemetry"
 )
 
 var (
@@ -96,6 +98,7 @@ type routingRuntimeSettings struct {
 type Router struct {
 	cfg        *config.Config
 	configDir  string
+	telemetry  *telemetry.Store
 	proxies    map[ClientType]*ClientProxy
 	server     *http.Server
 	mu         sync.RWMutex
@@ -113,6 +116,15 @@ func (r *Router) ConfigSnapshot() *config.Config {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg
+}
+
+func (r *Router) TelemetryStore() *telemetry.Store {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.telemetry
 }
 
 // ClientProxy handles requests for a specific client type
@@ -146,6 +158,7 @@ type ClientProxy struct {
 	breakers               []*circuitBreaker
 	lastSwitch             ProviderSwitchEvent
 	lastRequest            RequestOutcomeEvent
+	telemetry              *telemetry.Store
 }
 
 // Close releases resources held by the ClientProxy.
@@ -164,9 +177,14 @@ func NewRouter(cfg *config.Config) *Router {
 	}
 	cbCfg := normalizeCircuitBreakerConfig(cfg.Global.CircuitBreaker)
 	routingCfg := routingRuntimeSettingsFromConfig(cfg.Global.Routing)
+	telemetryStore, err := telemetry.NewStore(cfg.ConfigDir())
+	if err != nil {
+		logger.Warn("failed to load usage telemetry from %s: %v", cfg.ConfigDir(), err)
+	}
 	r := &Router{
 		cfg:        cfg,
 		configDir:  cfg.ConfigDir(),
+		telemetry:  telemetryStore,
 		proxies:    make(map[ClientType]*ClientProxy),
 		lastMod:    make(map[string]time.Time),
 		watchEvery: 5 * time.Second,
@@ -175,26 +193,30 @@ func NewRouter(cfg *config.Config) *Router {
 	// Initialize client proxies
 	claudeProviders := config.GetEnabledProviders(cfg.Claude)
 	if len(claudeProviders) > 0 {
-		r.proxies[ClientClaude] = newClientProxy(ClientClaude, cfg.Claude.Mode, cfg.Claude.PinnedProvider, claudeProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientClaude] = newClientProxy(ClientClaude, cfg.Claude.Mode, cfg.Claude.PinnedProvider, claudeProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, telemetryStore)
 		r.proxies[ClientClaude].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	codexProviders := config.GetEnabledProviders(cfg.OpenAI)
 	if len(codexProviders) > 0 {
-		r.proxies[ClientOpenAI] = newClientProxy(ClientOpenAI, cfg.OpenAI.Mode, cfg.OpenAI.PinnedProvider, codexProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientOpenAI] = newClientProxy(ClientOpenAI, cfg.OpenAI.Mode, cfg.OpenAI.PinnedProvider, codexProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, telemetryStore)
 		r.proxies[ClientOpenAI].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	geminiProviders := config.GetEnabledProviders(cfg.Gemini)
 	if len(geminiProviders) > 0 {
-		r.proxies[ClientGemini] = newClientProxy(ClientGemini, cfg.Gemini.Mode, cfg.Gemini.PinnedProvider, geminiProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg)
+		r.proxies[ClientGemini] = newClientProxy(ClientGemini, cfg.Gemini.Mode, cfg.Gemini.PinnedProvider, geminiProviders, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, telemetryStore)
 		r.proxies[ClientGemini].applyRoutingRuntimeSettings(routingCfg)
 	}
 
 	return r
 }
 
-func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig) *ClientProxy {
+func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig, telemetryStore ...*telemetry.Store) *ClientProxy {
+	var store *telemetry.Store
+	if len(telemetryStore) > 0 {
+		store = telemetryStore[0]
+	}
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -260,6 +282,7 @@ func newClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvide
 		countTokensKeyIndex:    countTokensKeyIndex,
 		responsesKeyIndex:      responsesKeyIndex,
 		geminiStreamKeyIndex:   geminiStreamKeyIndex,
+		telemetry:              store,
 		deactivated:            make([]providerDeactivation, len(providers)),
 		keyDeactivated:         keyDeactivated,
 		providerBusy:           make([]providerBusyState, len(providers)),
@@ -409,12 +432,20 @@ func (r *Router) Stop() error {
 	r.mu.RLock()
 	srv := r.server
 	r.mu.RUnlock()
+	var shutdownErr error
 	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(ctx)
+		shutdownErr = srv.Shutdown(ctx)
 	}
-	return nil
+	var flushErr error
+	if r.telemetry != nil {
+		flushErr = r.telemetry.Flush()
+		if flushErr != nil {
+			logger.Warn("failed to flush usage telemetry: %v", flushErr)
+		}
+	}
+	return errors.Join(shutdownErr, flushErr)
 }
 
 func (r *Router) startProviderConfigWatcher() {
@@ -559,6 +590,7 @@ func (r *Router) reloadProviderConfigsLocked() error {
 
 	// Keep listen settings stable at runtime, but allow log level and failover policy changes.
 	r.mu.RLock()
+	oldCfg := r.cfg
 	currentGlobal := r.cfg.Global
 	oldProxies := make(map[ClientType]*ClientProxy, len(r.proxies))
 	for ct, p := range r.proxies {
@@ -584,14 +616,15 @@ func (r *Router) reloadProviderConfigsLocked() error {
 
 	newProxies := make(map[ClientType]*ClientProxy)
 	if ps := config.GetEnabledProviders(newCfg.Claude); len(ps) > 0 {
-		newProxies[ClientClaude] = newReloadedClientProxy(ClientClaude, newCfg.Claude.Mode, newCfg.Claude.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientClaude])
+		newProxies[ClientClaude] = newReloadedClientProxy(ClientClaude, newCfg.Claude.Mode, newCfg.Claude.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientClaude], r.telemetry)
 	}
 	if ps := config.GetEnabledProviders(newCfg.OpenAI); len(ps) > 0 {
-		newProxies[ClientOpenAI] = newReloadedClientProxy(ClientOpenAI, newCfg.OpenAI.Mode, newCfg.OpenAI.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientOpenAI])
+		newProxies[ClientOpenAI] = newReloadedClientProxy(ClientOpenAI, newCfg.OpenAI.Mode, newCfg.OpenAI.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientOpenAI], r.telemetry)
 	}
 	if ps := config.GetEnabledProviders(newCfg.Gemini); len(ps) > 0 {
-		newProxies[ClientGemini] = newReloadedClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientGemini])
+		newProxies[ClientGemini] = newReloadedClientProxy(ClientGemini, newCfg.Gemini.Mode, newCfg.Gemini.PinnedProvider, ps, durations.ReactivateAfter, durations.UpstreamIdleTimeout, durations.ResponseHeaderTimeout, cbCfg, routingRuntimeSettingsFromConfig(newCfg.Global.Routing), oldProxies[ClientGemini], r.telemetry)
 	}
+	r.reconcileTelemetryUsage(oldCfg, newCfg)
 
 	r.mu.Lock()
 	r.cfg = newCfg
@@ -611,8 +644,8 @@ func (r *Router) reloadProviderConfigsLocked() error {
 	return nil
 }
 
-func newReloadedClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig, routing routingRuntimeSettings, old *ClientProxy) *ClientProxy {
-	cp := newClientProxy(clientType, mode, pinnedProvider, providers, reactivateAfter, upstreamIdle, responseHeaderTimeout, cbCfg)
+func newReloadedClientProxy(clientType ClientType, mode config.ClientMode, pinnedProvider string, providers []config.Provider, reactivateAfter time.Duration, upstreamIdle time.Duration, responseHeaderTimeout time.Duration, cbCfg circuitBreakerConfig, routing routingRuntimeSettings, old *ClientProxy, telemetryStore *telemetry.Store) *ClientProxy {
+	cp := newClientProxy(clientType, mode, pinnedProvider, providers, reactivateAfter, upstreamIdle, responseHeaderTimeout, cbCfg, telemetryStore)
 	cp.applyRoutingRuntimeSettings(routing)
 	if old != nil {
 		cp.inheritRuntimeState(old)

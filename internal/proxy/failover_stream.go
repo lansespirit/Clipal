@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lansespirit/Clipal/internal/logger"
+	"github.com/lansespirit/Clipal/internal/telemetry"
 )
 
 type streamResultKind int
@@ -33,7 +34,7 @@ type streamResult struct {
 // committing headers, and streaming the body. It handles idle timeouts, circuit breaker recording,
 // and cleanup. It returns a terminal stream result so callers can distinguish a clean completion
 // from client disconnects and upstream aborts after the response has already been committed.
-func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.Response, originalReq *http.Request, attemptCtx context.Context, cancelAttempt context.CancelCauseFunc, index int, allow circuitAllowResult, onCommit func(), onSuccess func([]byte)) streamResult {
+func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.Response, originalReq *http.Request, attemptCtx context.Context, cancelAttempt context.CancelCauseFunc, index int, allow circuitAllowResult, onCommit func(), onSuccess func(streamSuccess)) streamResult {
 	// Stream response to the client, with idle-timeout protection.
 	var idleTimer *time.Timer
 	if cp.upstreamIdle > 0 {
@@ -42,6 +43,10 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 	tracker := newProtocolTracker(cp.clientType, originalReq, resp)
 	var capture bytes.Buffer
 	shouldCapture := !strings.Contains(strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type"))), "text/event-stream")
+	usageExtractor := usageExtractorFromRequest(originalReq, resp)
+	if usageExtractor != nil {
+		defer usageExtractor.Cleanup()
+	}
 
 	buf := make([]byte, 32*1024)
 	total := 0
@@ -51,6 +56,9 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 	}
 	total += firstN
 	tracker.append(buf[:firstN])
+	if usageExtractor != nil {
+		usageExtractor.Append(buf[:firstN])
+	}
 	if shouldCapture && firstN > 0 && capture.Len() < protocolScanWindow {
 		_, _ = capture.Write(buf[:min(firstN, protocolScanWindow-capture.Len())])
 	}
@@ -70,7 +78,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 				cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "protocol_incomplete")
 			} else {
 				if onSuccess != nil {
-					onSuccess(capture.Bytes())
+					onSuccess(buildStreamSuccess(capture.Bytes(), usageExtractor))
 				}
 				cp.recordCircuitSuccess(time.Now(), index, allow.usedProbe)
 			}
@@ -143,6 +151,9 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 			}
 			total += nr
 			tracker.append(buf[:nr])
+			if usageExtractor != nil {
+				usageExtractor.Append(buf[:nr])
+			}
 			if shouldCapture && capture.Len() < protocolScanWindow {
 				limit := min(nr, protocolScanWindow-capture.Len())
 				if limit > 0 {
@@ -202,7 +213,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 			cp.recordCircuitFailure(time.Now(), index, allow.usedProbe, "protocol_incomplete")
 		} else {
 			if onSuccess != nil {
-				onSuccess(capture.Bytes())
+				onSuccess(buildStreamSuccess(capture.Bytes(), usageExtractor))
 			}
 			cp.recordCircuitSuccess(time.Now(), index, allow.usedProbe)
 		}
@@ -231,6 +242,28 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 		bytes:    total,
 		err:      copyErr,
 	}
+}
+
+func usageExtractorFromRequest(req *http.Request, resp *http.Response) *telemetry.UsageExtractor {
+	if req == nil || resp == nil {
+		return nil
+	}
+	requestCtx, ok := requestContextFromRequest(req)
+	if !ok {
+		return nil
+	}
+	return telemetry.NewUsageExtractor(string(requestCtx.Family), string(requestCtx.Capability), resp.Header.Get("Content-Type"))
+}
+
+func buildStreamSuccess(responseBody []byte, extractor *telemetry.UsageExtractor) streamSuccess {
+	out := streamSuccess{responseBody: responseBody}
+	if extractor == nil {
+		return out
+	}
+	if usage, ok := extractor.Finalize(); ok {
+		out.usage = usage
+	}
+	return out
 }
 
 func min(a int, b int) int {

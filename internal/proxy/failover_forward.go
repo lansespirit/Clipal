@@ -393,13 +393,15 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 				cp.setCurrentIndexForScope(index, scope)
 				cp.setCurrentKeyIndexForScope(index, keyIndex, scope)
 			}
-			onSuccess := func(responseBody []byte) {
+			onSuccess := func(success streamSuccess) {
 				if busyProbeHeld {
 					cp.releaseProviderBusyProbe(index)
 					busyProbeHeld = false
 				}
 				cp.clearProviderBusy(index)
-				cp.learnStickySuccess(scope, requestCtx, requestKey, bodyBytes, responseBody, index, keyIndex, time.Now())
+				now := time.Now()
+				cp.learnStickySuccess(scope, requestCtx, requestKey, bodyBytes, success.responseBody, index, keyIndex, now)
+				cp.recordCompletedUsage(req, provider.Name, resp.StatusCode, success.usage, now)
 			}
 
 			result := cp.streamResponseToClient(w, resp, req, attemptCtx, cancelAttempt, index, allow, onCommit, onSuccess)

@@ -16,6 +16,7 @@ import (
 	"github.com/lansespirit/Clipal/internal/integration"
 	"github.com/lansespirit/Clipal/internal/logger"
 	"github.com/lansespirit/Clipal/internal/proxy"
+	"github.com/lansespirit/Clipal/internal/telemetry"
 )
 
 var startTime = time.Now()
@@ -29,16 +30,28 @@ type API struct {
 	configDir    string
 	version      string
 	runtime      *proxy.Router
+	telemetry    *telemetry.Store
 	integrations *integration.Manager
 	configMu     sync.Mutex
 }
 
 // NewAPI creates a new API handler
 func NewAPI(configDir, version string, runtime *proxy.Router) *API {
+	var telemetryStore *telemetry.Store
+	if runtime != nil {
+		telemetryStore = runtime.TelemetryStore()
+	} else {
+		var err error
+		telemetryStore, err = telemetry.NewStore(configDir)
+		if err != nil {
+			logger.Warn("failed to load usage telemetry from %s: %v", configDir, err)
+		}
+	}
 	return &API{
 		configDir:    configDir,
 		version:      version,
 		runtime:      runtime,
+		telemetry:    telemetryStore,
 		integrations: integration.NewManager(configDir),
 	}
 }
@@ -157,7 +170,7 @@ func (a *API) HandleGetProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, toProviderResponses(cc.Providers))
+	writeJSON(w, toProviderResponses(cc.Providers, a.providerUsageSnapshots(clientType)))
 }
 
 func (a *API) HandleGetClientConfig(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +421,11 @@ func (a *API) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 			return
 		}
+		if newName := strings.TrimSpace(req.Name); newName != "" && newName != providerName {
+			if err := a.renameProviderUsage(clientType, providerName, newName); err != nil {
+				logger.Warn("failed to rename provider usage %s/%s -> %s: %v", clientType, providerName, newName, err)
+			}
+		}
 	}
 
 	if !updated {
@@ -451,6 +469,9 @@ func (a *API) HandleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	if deleted {
 		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 			return
+		}
+		if err := a.deleteProviderUsage(clientType, providerName); err != nil {
+			logger.Warn("failed to delete provider usage %s/%s: %v", clientType, providerName, err)
 		}
 	}
 
@@ -656,6 +677,45 @@ func (a *API) runtimeConfigOrLoad(w http.ResponseWriter) *config.Config {
 		}
 	}
 	return a.loadConfigOrWriteError(w)
+}
+
+func (a *API) providerUsageSnapshots(clientType string) map[string]telemetry.ProviderUsage {
+	if a == nil {
+		return nil
+	}
+	if a.runtime != nil {
+		return a.runtime.ProviderUsageSnapshots(clientType)
+	}
+	if a.telemetry != nil {
+		return a.telemetry.ProviderSnapshots(clientType)
+	}
+	return nil
+}
+
+func (a *API) renameProviderUsage(clientType string, from string, to string) error {
+	if a == nil {
+		return nil
+	}
+	if a.runtime != nil {
+		return a.runtime.RenameProviderUsage(clientType, from, to)
+	}
+	if a.telemetry != nil {
+		return a.telemetry.RenameProvider(clientType, from, to)
+	}
+	return nil
+}
+
+func (a *API) deleteProviderUsage(clientType string, provider string) error {
+	if a == nil {
+		return nil
+	}
+	if a.runtime != nil {
+		return a.runtime.DeleteProviderUsage(clientType, provider)
+	}
+	if a.telemetry != nil {
+		return a.telemetry.DeleteProvider(clientType, provider)
+	}
+	return nil
 }
 
 func buildClientStatus(cc config.ClientConfig, providers []config.Provider, rt proxy.ClientRuntimeSnapshot) ClientStatus {
@@ -1032,13 +1092,17 @@ func extractClientAndProvider(path string) (string, string) {
 	// Extract from path like /api/providers/claude/provider-name
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) >= 4 && parts[0] == "api" && parts[1] == "providers" {
+		clientType := parts[2]
+		if canonical, ok := config.CanonicalClientType(clientType); ok {
+			clientType = canonical
+		}
 		// net/http populates r.URL.Path in decoded form, but be defensive if callers
 		// use EscapedPath/RawPath or if we receive encoded segments.
 		name, err := url.PathUnescape(parts[3])
 		if err != nil {
 			name = parts[3]
 		}
-		return parts[2], name
+		return clientType, name
 	}
 	return "", ""
 }

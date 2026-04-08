@@ -5,8 +5,11 @@ package web
 // and lets us redact sensitive fields like API keys.
 
 import (
+	"time"
+
 	"github.com/lansespirit/Clipal/internal/config"
 	integrationpkg "github.com/lansespirit/Clipal/internal/integration"
+	"github.com/lansespirit/Clipal/internal/telemetry"
 )
 
 // GlobalConfigRequest represents a request to update global configuration
@@ -174,7 +177,18 @@ type ProviderResponse struct {
 	Priority  int                        `json:"priority"`
 	Enabled   bool                       `json:"enabled"`
 	KeyCount  int                        `json:"key_count"`
+	Usage     *ProviderUsageResponse     `json:"usage,omitempty"`
 	Overrides *ProviderOverridesResponse `json:"overrides,omitempty"`
+}
+
+type ProviderUsageResponse struct {
+	RequestCount int64  `json:"request_count,omitempty"`
+	SuccessCount int64  `json:"success_count,omitempty"`
+	InputTokens  int64  `json:"input_tokens,omitempty"`
+	OutputTokens int64  `json:"output_tokens,omitempty"`
+	TotalTokens  int64  `json:"total_tokens,omitempty"`
+	LastUsedAt   string `json:"last_used_at,omitempty"`
+	HasUsage     bool   `json:"has_usage,omitempty"`
 }
 
 // ReorderRequest represents a request to reorder providers
@@ -400,7 +414,7 @@ func mapProviderOverridesResponse(p config.Provider) *ProviderOverridesResponse 
 	return resp
 }
 
-func toProviderResponses(providers []config.Provider) []ProviderResponse {
+func toProviderResponses(providers []config.Provider, usageByProvider map[string]telemetry.ProviderUsage) []ProviderResponse {
 	out := make([]ProviderResponse, 0, len(providers))
 	for _, p := range providers {
 		out = append(out, ProviderResponse{
@@ -409,10 +423,34 @@ func toProviderResponses(providers []config.Provider) []ProviderResponse {
 			Priority:  p.Priority,
 			Enabled:   p.IsEnabled(),
 			KeyCount:  p.KeyCount(),
+			Usage:     mapProviderUsageResponse(usageByProvider[p.Name]),
 			Overrides: mapProviderOverridesResponse(p),
 		})
 	}
 	return out
+}
+
+func mapProviderUsageResponse(usage telemetry.ProviderUsage) *ProviderUsageResponse {
+	if usage.RequestCount == 0 &&
+		usage.SuccessCount == 0 &&
+		usage.InputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.TotalTokens == 0 &&
+		usage.LastUsedAt.IsZero() {
+		return nil
+	}
+	resp := &ProviderUsageResponse{
+		RequestCount: usage.RequestCount,
+		SuccessCount: usage.SuccessCount,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+		HasUsage:     usage.Usage != nil,
+	}
+	if !usage.LastUsedAt.IsZero() {
+		resp.LastUsedAt = usage.LastUsedAt.Format(time.RFC3339)
+	}
+	return resp
 }
 
 func toClientConfigExport(cc config.ClientConfig) ClientConfigExport {

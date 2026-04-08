@@ -219,23 +219,15 @@
                                 <span class="provider-card__detail-value"
                                     x-text="configuredKeyCountLabel(provider.key_count || 0)"></span>
                             </div>
-                            <div class="provider-card__detail" x-show="provider.overrides && provider.overrides.model">
-                                <span class="provider-card__detail-label" x-text="t('providers.model')"></span>
-                                <span class="provider-card__detail-value" x-text="provider.overrides.model"></span>
-                            </div>
-                            <div class="provider-card__detail"
-                                x-show="provider.overrides && provider.overrides.openai && provider.overrides.openai.reasoning_effort">
-                                <span class="provider-card__detail-label"
-                                    x-text="t('providers.reasoningEffort')"></span>
-                                <span class="provider-card__detail-value"
-                                    x-text="provider.overrides.openai.reasoning_effort"></span>
-                            </div>
-                            <div class="provider-card__detail"
-                                x-show="provider.overrides && provider.overrides.claude && provider.overrides.claude.thinking_budget_tokens > 0">
-                                <span class="provider-card__detail-label"
-                                    x-text="t('providers.thinkingBudgetTokens')"></span>
-                                <span class="provider-card__detail-value"
-                                    x-text="provider.overrides.claude.thinking_budget_tokens"></span>
+                            <div class="provider-card__detail" x-show="provider.usage && provider.usage.has_usage">
+                                <div class="flex items-center gap-3">
+                                    <span class="provider-card__detail-label" x-text="t('providers.usageTotal')"></span>
+                                    <span class="provider-card__detail-value" x-text="providerUsageTotal(provider)"></span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span class="provider-card__detail-label" x-text="t('providers.usageInOut')"></span>
+                                    <span class="provider-card__detail-value" x-text="providerUsageInOut(provider)"></span>
+                                </div>
                             </div>
                         </div>
                     </div>

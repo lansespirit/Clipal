@@ -67,6 +67,8 @@ function app() {
                     pinBadge: 'Pinned',
                     baseUrl: 'Base URL',
                     apiKeys: 'API Keys',
+                    usageTotal: 'Usage',
+                    usageInOut: 'Input / Output',
                     model: 'Model Override',
                     reasoningEffort: 'Reasoning Effort',
                     thinkingBudgetTokens: 'Thinking Budget Tokens',
@@ -355,6 +357,8 @@ function app() {
                     pinBadge: '已固定',
                     baseUrl: 'Base URL',
                     apiKeys: 'API Keys',
+                    usageTotal: '用量',
+                    usageInOut: '输入 / 输出',
                     model: '模型覆盖',
                     reasoningEffort: '思考强度',
                     thinkingBudgetTokens: '思考预算 Tokens',
@@ -1407,6 +1411,27 @@ function app() {
 
         configuredKeyCountLabel(count) {
             return this.tf('providers.configuredCount', { count: Number(count || 0) });
+        },
+
+        formatTokenCount(value) {
+            const count = Number(value || 0);
+            return Number.isFinite(count) ? count.toLocaleString(this.locale === 'zh-CN' ? 'zh-CN' : 'en-US') : '0';
+        },
+
+        providerUsageTotal(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
+                return this.t('common.none');
+            }
+            return this.formatTokenCount(usage.total_tokens || 0);
+        },
+
+        providerUsageInOut(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
+                return this.t('common.none');
+            }
+            return `${this.formatTokenCount(usage.input_tokens || 0)} / ${this.formatTokenCount(usage.output_tokens || 0)}`;
         },
 
         providerPinBadgeTitle() {
