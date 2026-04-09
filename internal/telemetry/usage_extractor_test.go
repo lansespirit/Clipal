@@ -19,13 +19,16 @@ func TestUsageExtractorJSON_OpenAI(t *testing.T) {
 
 func TestUsageExtractorJSON_Claude(t *testing.T) {
 	extractor := NewUsageExtractor("claude", "claude_messages", "application/json")
-	extractor.Append([]byte(`{"type":"message","usage":{"input_tokens":8,"output_tokens":13,"cache_read_input_tokens":21}}`))
+	extractor.Append([]byte(`{"type":"message","usage":{"input_tokens":8,"output_tokens":13,"cache_creation_input_tokens":5,"cache_read_input_tokens":21}}`))
 	usage, ok := extractor.Finalize()
 	if !ok {
 		t.Fatalf("expected usage")
 	}
-	if usage.InputTokens != 8 || usage.OutputTokens != 13 || usage.TotalTokens != 21 {
+	if usage.InputTokens != 34 || usage.OutputTokens != 13 || usage.TotalTokens != 47 {
 		t.Fatalf("usage = %#v", usage)
+	}
+	if usage.Usage["cache_creation_input_tokens"] == nil {
+		t.Fatalf("expected raw usage payload to be preserved")
 	}
 	if usage.Usage["cache_read_input_tokens"] == nil {
 		t.Fatalf("expected raw usage payload to be preserved")
@@ -83,7 +86,7 @@ func TestUsageExtractorSSEOpenAIChatCompletionsUsageChunk(t *testing.T) {
 func TestUsageExtractorSSEClaudeRequiresMessageStop(t *testing.T) {
 	extractor := NewUsageExtractor("claude", "claude_messages", "text/event-stream")
 	extractor.Append([]byte("event: message_start\n"))
-	extractor.Append([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":4}}}\n\n"))
+	extractor.Append([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":3,\"cache_read_input_tokens\":4}}}\n\n"))
 	extractor.Append([]byte("event: message_delta\n"))
 	extractor.Append([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":6}}\n\n"))
 	extractor.Append([]byte("event: message_stop\n"))
@@ -93,8 +96,11 @@ func TestUsageExtractorSSEClaudeRequiresMessageStop(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected usage")
 	}
-	if usage.InputTokens != 10 || usage.OutputTokens != 6 || usage.TotalTokens != 16 {
+	if usage.InputTokens != 17 || usage.OutputTokens != 6 || usage.TotalTokens != 23 {
 		t.Fatalf("usage = %#v", usage)
+	}
+	if usage.Usage["cache_creation_input_tokens"] == nil {
+		t.Fatalf("expected merged raw usage payload to be preserved")
 	}
 	if usage.Usage["cache_read_input_tokens"] == nil {
 		t.Fatalf("expected merged raw usage payload to be preserved")

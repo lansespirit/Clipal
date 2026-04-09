@@ -389,8 +389,11 @@ func normalizeOpenAIUsage(raw map[string]any) UsageDelta {
 }
 
 func normalizeClaudeUsage(raw map[string]any) UsageDelta {
+	inputTokens := int64Value(raw["input_tokens"])
+	cacheCreationTokens := int64Value(raw["cache_creation_input_tokens"])
+	cacheReadTokens := int64Value(raw["cache_read_input_tokens"])
 	return UsageDelta{
-		InputTokens:  int64Value(raw["input_tokens"]),
+		InputTokens:  inputTokens + cacheCreationTokens + cacheReadTokens,
 		OutputTokens: int64Value(raw["output_tokens"]),
 		TotalTokens:  int64Value(raw["total_tokens"]),
 	}.normalized()
