@@ -139,7 +139,7 @@ func (s *Store) Record(clientType string, provider string, snapshot UsageSnapsho
 		return nil
 	}
 
-	delta := snapshot.UsageDelta.normalized()
+	delta := snapshot.normalized()
 	if when.IsZero() {
 		when = time.Now()
 	}

@@ -1,6 +1,6 @@
 module github.com/lansespirit/Clipal
 
-go 1.25.8
+go 1.25.9
 
 require (
 	github.com/gen2brain/beeep v0.11.2
