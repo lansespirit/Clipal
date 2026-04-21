@@ -1427,6 +1427,22 @@ func extractClientAndProvider(path string) (string, string) {
 	return "", ""
 }
 
+func extractClientProviderSubresource(path string) (string, string, string) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 5 && parts[0] == "api" && parts[1] == "providers" {
+		clientType := parts[2]
+		if canonical, ok := config.CanonicalClientType(clientType); ok {
+			clientType = canonical
+		}
+		name, err := url.PathUnescape(parts[3])
+		if err != nil {
+			name = parts[3]
+		}
+		return clientType, name, strings.TrimSpace(parts[4])
+	}
+	return "", "", ""
+}
+
 func updateProviderInList(clientType string, providers []config.Provider, name string, req ProviderRequest, keys []string) (bool, error) {
 	for i := range providers {
 		if providers[i].Name == name {

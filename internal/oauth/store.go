@@ -252,9 +252,9 @@ func sanitizeCredentialFileComponent(v string) string {
 	for _, r := range v {
 		switch {
 		case r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
-			_, _ = b.WriteByte('_')
+			_ = b.WriteByte('_')
 		case r < 0x20 || r == 0x7f:
-			_, _ = b.WriteByte('_')
+			_ = b.WriteByte('_')
 		default:
 			_, _ = b.WriteRune(r)
 		}

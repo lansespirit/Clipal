@@ -21,6 +21,7 @@ import (
 const (
 	defaultCodexAuthURL      = "https://auth.openai.com/oauth/authorize"
 	defaultCodexTokenURL     = "https://auth.openai.com/oauth/token"
+	defaultCodexUsageURL     = "https://chatgpt.com/backend-api/wham/usage"
 	defaultCodexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	defaultCodexCallbackHost = "localhost"
 	defaultCodexCallbackPort = 1455
@@ -35,6 +36,7 @@ type PKCECodes struct {
 type CodexClient struct {
 	AuthURL      string
 	TokenURL     string
+	UsageURL     string
 	ClientID     string
 	CallbackHost string
 	CallbackPort int
@@ -47,6 +49,7 @@ func NewCodexClient() *CodexClient {
 	client := &CodexClient{
 		AuthURL:      defaultCodexAuthURL,
 		TokenURL:     defaultCodexTokenURL,
+		UsageURL:     defaultCodexUsageURL,
 		ClientID:     defaultCodexClientID,
 		CallbackHost: defaultCodexCallbackHost,
 		CallbackPort: defaultCodexCallbackPort,
@@ -208,22 +211,8 @@ func (c *CodexClient) credentialFromToken(token *codexTokenResponse, previous *C
 }
 
 func parseCodexIdentityToken(idToken string) (string, string) {
-	parts := strings.Split(strings.TrimSpace(idToken), ".")
-	if len(parts) < 2 {
-		return "", ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", ""
-	}
-	var claims struct {
-		Email string `json:"email"`
-		Sub   string `json:"sub"`
-		Auth  struct {
-			ChatGPTAccountID string `json:"chatgpt_account_id"`
-		} `json:"https://api.openai.com/auth"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	claims, ok := parseCodexIdentityClaims(idToken)
+	if !ok {
 		return "", ""
 	}
 	accountID := strings.TrimSpace(claims.Auth.ChatGPTAccountID)
@@ -231,6 +220,44 @@ func parseCodexIdentityToken(idToken string) (string, string) {
 		accountID = strings.TrimSpace(claims.Sub)
 	}
 	return strings.TrimSpace(claims.Email), accountID
+}
+
+func parseCodexPlanType(idToken string) string {
+	claims, ok := parseCodexIdentityClaims(idToken)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(claims.Auth.ChatGPTPlanType)
+}
+
+func parseCodexIdentityClaims(idToken string) (*struct {
+	Email string `json:"email"`
+	Sub   string `json:"sub"`
+	Auth  struct {
+		ChatGPTAccountID string `json:"chatgpt_account_id"`
+		ChatGPTPlanType  string `json:"chatgpt_plan_type"`
+	} `json:"https://api.openai.com/auth"`
+}, bool) {
+	parts := strings.Split(strings.TrimSpace(idToken), ".")
+	if len(parts) < 2 {
+		return nil, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, false
+	}
+	var claims struct {
+		Email string `json:"email"`
+		Sub   string `json:"sub"`
+		Auth  struct {
+			ChatGPTAccountID string `json:"chatgpt_account_id"`
+			ChatGPTPlanType  string `json:"chatgpt_plan_type"`
+		} `json:"https://api.openai.com/auth"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, false
+	}
+	return &claims, true
 }
 
 func stableCredentialRef(provider config.OAuthProvider, email string, accountID string) string {
@@ -266,7 +293,7 @@ func slugify(v string) string {
 			continue
 		}
 		if !lastDash {
-			_, _ = b.WriteByte('-')
+			_ = b.WriteByte('-')
 			lastDash = true
 		}
 	}
@@ -286,6 +313,13 @@ func (c *CodexClient) tokenURL() string {
 		return strings.TrimSpace(c.TokenURL)
 	}
 	return defaultCodexTokenURL
+}
+
+func (c *CodexClient) usageURL() string {
+	if c != nil && strings.TrimSpace(c.UsageURL) != "" {
+		return strings.TrimSpace(c.UsageURL)
+	}
+	return defaultCodexUsageURL
 }
 
 func (c *CodexClient) clientID() string {
@@ -343,6 +377,9 @@ func applyCodexClientEnvOverrides(c *CodexClient) {
 	}
 	if v, ok := lookupNonEmptyEnv("CLIPAL_OAUTH_CODEX_TOKEN_URL"); ok {
 		c.TokenURL = v
+	}
+	if v, ok := lookupNonEmptyEnv("CLIPAL_OAUTH_CODEX_USAGE_URL"); ok {
+		c.UsageURL = v
 	}
 	if v, ok := lookupNonEmptyEnv("CLIPAL_OAUTH_CODEX_CLIENT_ID"); ok {
 		c.ClientID = v

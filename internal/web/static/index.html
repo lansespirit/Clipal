@@ -215,6 +215,41 @@
                             </div>
                         </div>
                         <div class="provider-card__details" x-show="providerHasVisibleDetails(provider)">
+                            <div class="provider-card__oauth"
+                                x-show="providerUsesOAuth(provider) && (providerSupportsOAuthMetadata(provider) || providerOAuthHasSummary(provider))">
+                                <div class="provider-card__oauth-controls" x-show="providerSupportsOAuthMetadata(provider)">
+                                    <div class="provider-card__detail">
+                                        <span class="provider-card__detail-label" x-text="t('providers.planAndLimits')"></span>
+                                        <button type="button" class="btn btn-secondary btn-sm"
+                                            @click="loadProviderOAuthMetadata(provider)"
+                                            :disabled="providerOAuthMetadataBusy(provider)"
+                                            x-text="providerOAuthMetadataButtonLabel(provider)"></button>
+                                    </div>
+                                    <div class="provider-card__oauth-error" x-show="providerOAuthMetadataError(provider)"
+                                        x-text="providerOAuthMetadataError(provider)"></div>
+                                </div>
+                                <div class="provider-card__detail" x-show="providerOAuthPlanLabel(provider)">
+                                    <span class="provider-card__detail-label" x-text="t('providers.plan')"></span>
+                                    <span class="provider-card__detail-value" x-text="providerOAuthPlanLabel(provider)"></span>
+                                </div>
+                                <template x-for="limit in providerOAuthRateLimitSections(provider)" :key="limit.key">
+                                    <div class="provider-card__limit">
+                                        <div class="provider-card__limit-header">
+                                            <span class="provider-card__limit-label" x-text="limit.label"></span>
+                                            <div class="provider-card__limit-meta">
+                                                <span class="provider-card__limit-percent"
+                                                    x-text="providerOAuthRateLimitPercentLabel(limit.window)"></span>
+                                                <span class="provider-card__limit-reset"
+                                                    x-text="providerOAuthRateLimitResetLabel(limit.window)"></span>
+                                            </div>
+                                        </div>
+                                        <div class="provider-card__limit-track">
+                                            <div class="provider-card__limit-bar"
+                                                :style="providerOAuthRateLimitBarStyle(limit.window)"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
                             <div class="provider-card__detail" x-show="provider.base_url">
                                 <span class="provider-card__detail-label" x-text="t('providers.baseUrl')"></span>
                                 <span class="provider-card__detail-value" x-text="provider.base_url"></span>

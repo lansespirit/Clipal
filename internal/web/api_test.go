@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -700,6 +702,224 @@ providers:
 	}
 	if got[0]["oauth_last_refresh"] != lastRefresh.Format(time.RFC3339) {
 		t.Fatalf("oauth_last_refresh = %v, want %s", got[0]["oauth_last_refresh"], lastRefresh.Format(time.RFC3339))
+	}
+}
+
+func TestHandleGetProviders_OAuthMetadata_DoesNotEagerlyLoadCodexPlanAndLimits(t *testing.T) {
+	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("did not expect usage endpoint to be called during provider list load")
+	}))
+	defer usageServer.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+providers:
+  - name: codex-sean-example-com
+    auth_type: oauth
+    oauth_provider: codex
+    oauth_ref: codex-sean-example-com
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	api.oauth = oauthpkg.NewService(dir, oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+		AuthURL:      "https://auth.openai.com/oauth/authorize",
+		TokenURL:     "https://auth.openai.com/oauth/token",
+		UsageURL:     usageServer.URL + "/wham/usage",
+		ClientID:     "test-client",
+		CallbackHost: "127.0.0.1",
+		CallbackPort: 0,
+		CallbackPath: "/auth/callback",
+		HTTPClient:   usageServer.Client(),
+		Now:          func() time.Time { return now },
+	}))
+
+	if err := api.oauth.Store().Save(&oauthpkg.Credential{
+		Ref:          "codex-sean-example-com",
+		Provider:     config.OAuthProviderCodex,
+		Email:        "sean@example.com",
+		AccountID:    "account-123",
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    now.Add(2 * time.Hour),
+		LastRefresh:  now.Add(-30 * time.Minute),
+		Metadata: map[string]string{
+			"id_token": testOAuthJWTWithPlan("sean@example.com", "account-123", "free"),
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/openai", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetProviders(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode json: %v\nbody=%s", err, w.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(got))
+	}
+	if _, ok := got[0]["oauth_plan_type"]; ok {
+		t.Fatalf("did not expect oauth_plan_type in eager provider response")
+	}
+	if _, ok := got[0]["oauth_rate_limits"]; ok {
+		t.Fatalf("did not expect oauth_rate_limits in eager provider response")
+	}
+}
+
+func TestHandleGetProviderOAuthMetadata_IncludesCodexPlanAndLimits(t *testing.T) {
+	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	weeklyReset := now.Add(7 * 24 * time.Hour)
+	reviewReset := now.Add(6 * 24 * time.Hour)
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/wham/usage" {
+			t.Fatalf("path = %s, want /wham/usage", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer access-1" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if got := r.Header.Get("Chatgpt-Account-Id"); got != "account-123" {
+			t.Fatalf("chatgpt-account-id = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{
+  "plan_type": "free",
+  "rate_limit": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 100,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 3600,
+      "reset_at": %d
+    }
+  },
+  "additional_rate_limits": [
+    {
+      "limit_name": "Code review",
+      "metered_feature": "code_review",
+      "rate_limit": {
+        "allowed": true,
+        "limit_reached": false,
+        "primary_window": {
+          "used_percent": 75,
+          "limit_window_seconds": 604800,
+          "reset_after_seconds": 7200,
+          "reset_at": %d
+        }
+      }
+    }
+  ]
+}`, weeklyReset.Unix(), reviewReset.Unix()))
+	}))
+	defer usageServer.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+providers:
+  - name: codex-sean-example-com
+    auth_type: oauth
+    oauth_provider: codex
+    oauth_ref: codex-sean-example-com
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(dir, "test", nil)
+	api.oauth = oauthpkg.NewService(dir, oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+		AuthURL:      "https://auth.openai.com/oauth/authorize",
+		TokenURL:     "https://auth.openai.com/oauth/token",
+		UsageURL:     usageServer.URL + "/wham/usage",
+		ClientID:     "test-client",
+		CallbackHost: "127.0.0.1",
+		CallbackPort: 0,
+		CallbackPath: "/auth/callback",
+		HTTPClient:   usageServer.Client(),
+		Now:          func() time.Time { return now },
+	}))
+
+	if err := api.oauth.Store().Save(&oauthpkg.Credential{
+		Ref:          "codex-sean-example-com",
+		Provider:     config.OAuthProviderCodex,
+		Email:        "sean@example.com",
+		AccountID:    "account-123",
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    now.Add(24 * time.Hour), // Set far future expiration to avoid refresh, // Set far future expiration to avoid refresh
+		LastRefresh:  now.Add(-30 * time.Minute),
+		Metadata: map[string]string{
+			"id_token": testOAuthJWTWithPlan("sean@example.com", "account-123", "free"),
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/openai/codex-sean-example-com/oauth-metadata", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetProviderOAuthMetadata(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode json: %v\nbody=%s", err, w.Body.String())
+	}
+	if got["oauth_plan_type"] != "free" {
+		t.Fatalf("oauth_plan_type = %v, want free", got["oauth_plan_type"])
+	}
+	limits, ok := got["oauth_rate_limits"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected oauth_rate_limits object, got %#v", got["oauth_rate_limits"])
+	}
+	primary, ok := limits["primary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected primary rate limit, got %#v", limits["primary"])
+	}
+	if primary["used_percent"] != float64(100) {
+		t.Fatalf("primary.used_percent = %v, want 100", primary["used_percent"])
+	}
+	if primary["window_minutes"] != float64(10080) {
+		t.Fatalf("primary.window_minutes = %v, want 10080", primary["window_minutes"])
+	}
+	if primary["resets_at"] != weeklyReset.Format(time.RFC3339) {
+		t.Fatalf("primary.resets_at = %v, want %s", primary["resets_at"], weeklyReset.Format(time.RFC3339))
+	}
+	additional, ok := limits["additional"].([]any)
+	if !ok || len(additional) != 1 {
+		t.Fatalf("expected one additional rate limit, got %#v", limits["additional"])
+	}
+	review, ok := additional[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected additional limit object, got %#v", additional[0])
+	}
+	if review["limit_id"] != "code_review" {
+		t.Fatalf("limit_id = %v, want code_review", review["limit_id"])
+	}
+	if review["limit_name"] != "Code review" {
+		t.Fatalf("limit_name = %v, want Code review", review["limit_name"])
+	}
+	reviewPrimary, ok := review["primary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected review primary window, got %#v", review["primary"])
+	}
+	if reviewPrimary["used_percent"] != float64(75) {
+		t.Fatalf("review.primary.used_percent = %v, want 75", reviewPrimary["used_percent"])
+	}
+	if reviewPrimary["resets_at"] != reviewReset.Format(time.RFC3339) {
+		t.Fatalf("review.primary.resets_at = %v, want %s", reviewPrimary["resets_at"], reviewReset.Format(time.RFC3339))
 	}
 }
 

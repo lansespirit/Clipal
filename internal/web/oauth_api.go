@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -196,6 +197,55 @@ func (a *API) HandleDeleteOAuthAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, SuccessResponse{Message: "oauth account deleted successfully"})
 }
 
+func (a *API) HandleGetProviderOAuthMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientType, providerName, subresource := extractClientProviderSubresource(r.URL.EscapedPath())
+	if clientType == "" || providerName == "" || subresource != "oauth-metadata" {
+		writeError(w, "invalid client type or provider name", http.StatusBadRequest)
+		return
+	}
+
+	cfg := a.loadConfigOrWriteError(w)
+	if cfg == nil {
+		return
+	}
+	cc, err := getClientConfigRef(cfg, clientType)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	provider := providerByName(cc.Providers, providerName)
+	if provider == nil {
+		writeError(w, "provider not found", http.StatusNotFound)
+		return
+	}
+	if !provider.UsesOAuth() {
+		writeError(w, "provider does not use oauth", http.StatusBadRequest)
+		return
+	}
+	if provider.NormalizedOAuthProvider() != config.OAuthProviderCodex {
+		writeError(w, "oauth metadata is unavailable for this provider", http.StatusBadRequest)
+		return
+	}
+
+	usageCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	details, err := a.oauth.GetCodexUsage(usageCtx, provider.NormalizedOAuthRef())
+	cancel()
+	if err != nil {
+		writeAPIError(w, newAPIError(http.StatusBadGateway, fmt.Sprintf("failed to load oauth metadata: %v", err), err))
+		return
+	}
+
+	writeJSON(w, ProviderOAuthMetadataResponse{
+		OAuthPlanType:   details.PlanType,
+		OAuthRateLimits: mapProviderOAuthLimitsResponse(details),
+	})
+}
+
 func (a *API) toProviderResponses(providers []config.Provider, usageByProvider map[string]telemetry.ProviderUsage) []ProviderResponse {
 	out := toProviderResponses(providers, usageByProvider)
 	now := time.Now()
@@ -214,6 +264,39 @@ func (a *API) toProviderResponses(providers []config.Provider, usageByProvider m
 		out[i].OAuthLastRefresh = formatTimeRFC3339(cred.LastRefresh)
 	}
 	return out
+}
+
+func mapProviderOAuthLimitsResponse(details *oauthpkg.CodexUsageDetails) *ProviderOAuthLimits {
+	if details == nil {
+		return nil
+	}
+	resp := &ProviderOAuthLimits{
+		Primary:   mapProviderOAuthLimitWindow(details.Primary),
+		Secondary: mapProviderOAuthLimitWindow(details.Secondary),
+	}
+	for _, item := range details.Additional {
+		resp.Additional = append(resp.Additional, ProviderOAuthAdditionalLimit{
+			LimitID:   strings.TrimSpace(item.LimitID),
+			LimitName: strings.TrimSpace(item.LimitName),
+			Primary:   mapProviderOAuthLimitWindow(item.Primary),
+			Secondary: mapProviderOAuthLimitWindow(item.Secondary),
+		})
+	}
+	if resp.Primary == nil && resp.Secondary == nil && len(resp.Additional) == 0 {
+		return nil
+	}
+	return resp
+}
+
+func mapProviderOAuthLimitWindow(window *oauthpkg.CodexUsageWindow) *ProviderOAuthLimitWindow {
+	if window == nil {
+		return nil
+	}
+	return &ProviderOAuthLimitWindow{
+		UsedPercent:   window.UsedPercent,
+		WindowMinutes: window.WindowMinutes,
+		ResetsAt:      formatTimeRFC3339(window.ResetsAt),
+	}
 }
 
 func oauthDisplayName(cred *oauthpkg.Credential, provider config.Provider) string {
@@ -340,7 +423,7 @@ func slugOAuthProviderNamePart(v string) string {
 			continue
 		}
 		if !lastDash {
-			_, _ = b.WriteByte('-')
+			_ = b.WriteByte('-')
 			lastDash = true
 		}
 	}

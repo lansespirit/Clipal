@@ -244,9 +244,20 @@ func (h *Handler) routeProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	clientType, providerName, subresource := extractClientProviderSubresource(path)
+	if clientType != "" && providerName != "" && subresource == "oauth-metadata" {
+		switch r.Method {
+		case http.MethodGet:
+			h.api.HandleGetProviderOAuthMetadata(w, r)
+		default:
+			writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
 	// Extract client type and provider name
-	clientType := extractClientType(path)
-	_, providerName := extractClientAndProvider(path)
+	clientType = extractClientType(path)
+	_, providerName = extractClientAndProvider(path)
 
 	if providerName != "" {
 		// Operations on specific provider

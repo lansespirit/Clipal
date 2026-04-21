@@ -192,6 +192,8 @@ type ProviderResponse struct {
 	OAuthAuthStatus  string                     `json:"oauth_auth_status,omitempty"`
 	OAuthExpiresAt   string                     `json:"oauth_expires_at,omitempty"`
 	OAuthLastRefresh string                     `json:"oauth_last_refresh,omitempty"`
+	OAuthPlanType    string                     `json:"oauth_plan_type,omitempty"`
+	OAuthRateLimits  *ProviderOAuthLimits       `json:"oauth_rate_limits,omitempty"`
 	ProxyMode        string                     `json:"proxy_mode"`
 	ProxyURLHint     string                     `json:"proxy_url_hint,omitempty"`
 	Priority         int                        `json:"priority"`
@@ -209,6 +211,30 @@ type ProviderUsageResponse struct {
 	TotalTokens  int64  `json:"total_tokens,omitempty"`
 	LastUsedAt   string `json:"last_used_at,omitempty"`
 	HasUsage     bool   `json:"has_usage,omitempty"`
+}
+
+type ProviderOAuthLimits struct {
+	Primary    *ProviderOAuthLimitWindow      `json:"primary,omitempty"`
+	Secondary  *ProviderOAuthLimitWindow      `json:"secondary,omitempty"`
+	Additional []ProviderOAuthAdditionalLimit `json:"additional,omitempty"`
+}
+
+type ProviderOAuthAdditionalLimit struct {
+	LimitID   string                    `json:"limit_id,omitempty"`
+	LimitName string                    `json:"limit_name,omitempty"`
+	Primary   *ProviderOAuthLimitWindow `json:"primary,omitempty"`
+	Secondary *ProviderOAuthLimitWindow `json:"secondary,omitempty"`
+}
+
+type ProviderOAuthLimitWindow struct {
+	UsedPercent   float64 `json:"used_percent,omitempty"`
+	WindowMinutes int     `json:"window_minutes,omitempty"`
+	ResetsAt      string  `json:"resets_at,omitempty"`
+}
+
+type ProviderOAuthMetadataResponse struct {
+	OAuthPlanType   string               `json:"oauth_plan_type,omitempty"`
+	OAuthRateLimits *ProviderOAuthLimits `json:"oauth_rate_limits,omitempty"`
 }
 
 // ReorderRequest represents a request to reorder providers

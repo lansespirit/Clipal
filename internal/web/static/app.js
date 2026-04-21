@@ -36,6 +36,7 @@ function app() {
                 },
                 common: {
                     none: 'None',
+                    load: 'Load',
                     save: 'Save',
                     reset: 'Reset',
                     export: 'Export',
@@ -79,6 +80,16 @@ function app() {
                     apiKeys: 'API Keys',
                     usageTotal: 'Usage',
                     usageInOut: 'Input / Output',
+                    planAndLimits: 'Plan & Limits',
+                    plan: 'Plan',
+                    rateLimit: 'Limit',
+                    rateLimitCodeReviewWeekly: 'Code review weekly limit',
+                    rateLimitWeekly: 'Weekly limit',
+                    rateLimitDaily: 'Daily limit',
+                    rateLimitHourly: 'Hourly limit',
+                    rateLimitMinutes: '{minutes}m limit',
+                    rateLimitHours: '{hours}h limit',
+                    rateLimitDays: '{days}d limit',
                     oauthStatusReady: 'Ready',
                     oauthStatusRefreshDue: 'Refresh due',
                     oauthStatusReauthNeeded: 'Reauth needed',
@@ -378,6 +389,7 @@ function app() {
                 },
                 common: {
                     none: '无',
+                    load: '加载',
                     save: '保存',
                     reset: '重置',
                     export: '导出',
@@ -421,6 +433,16 @@ function app() {
                     apiKeys: 'API Keys',
                     usageTotal: '用量',
                     usageInOut: '输入 / 输出',
+                    planAndLimits: '套餐与限额',
+                    plan: '套餐',
+                    rateLimit: '限额',
+                    rateLimitCodeReviewWeekly: '代码审查周限额',
+                    rateLimitWeekly: '周限额',
+                    rateLimitDaily: '日限额',
+                    rateLimitHourly: '小时限额',
+                    rateLimitMinutes: '{minutes} 分钟限额',
+                    rateLimitHours: '{hours} 小时限额',
+                    rateLimitDays: '{days} 天限额',
                     oauthStatusReady: '可用',
                     oauthStatusRefreshDue: '待刷新',
                     oauthStatusReauthNeeded: '需重新授权',
@@ -1805,6 +1827,191 @@ function app() {
             return `${this.formatTokenCount(usage.input_tokens || 0)} / ${this.formatTokenCount(usage.output_tokens || 0)}`;
         },
 
+        providerOAuthPlanRaw(provider) {
+            return String((provider && provider.oauth_plan_type) || '').trim().toLowerCase();
+        },
+
+        providerOAuthPlanLabel(provider) {
+            const raw = this.providerOAuthPlanRaw(provider);
+            if (!raw) {
+                return '';
+            }
+            switch (raw) {
+                case 'free':
+                    return 'Free';
+                case 'plus':
+                    return 'Plus';
+                case 'pro':
+                    return 'Pro';
+                case 'prolite':
+                    return 'Pro Lite';
+                case 'team':
+                    return 'Team';
+                case 'business':
+                    return 'Business';
+                case 'enterprise':
+                    return 'Enterprise';
+                case 'education':
+                case 'edu':
+                    return 'Education';
+                case 'go':
+                    return 'Go';
+                default:
+                    return String(raw)
+                        .split(/[_\s-]+/)
+                        .filter(Boolean)
+                        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+                        .join(' ');
+            }
+        },
+
+        providerOAuthRateLimitData(provider) {
+            return provider && provider.oauth_rate_limits && typeof provider.oauth_rate_limits === 'object'
+                ? provider.oauth_rate_limits
+                : null;
+        },
+
+        providerOAuthHasSummary(provider) {
+            return !!this.providerOAuthPlanLabel(provider) || this.providerOAuthRateLimitSections(provider).length > 0;
+        },
+
+        providerOAuthRateLimitSections(provider) {
+            const limits = this.providerOAuthRateLimitData(provider);
+            if (!limits) {
+                return [];
+            }
+
+            const sections = [];
+            if (limits.primary) {
+                sections.push({
+                    key: 'primary',
+                    label: this.providerOAuthRateLimitWindowLabel(limits.primary),
+                    window: limits.primary
+                });
+            }
+            if (limits.secondary) {
+                sections.push({
+                    key: 'secondary',
+                    label: this.providerOAuthRateLimitWindowLabel(limits.secondary),
+                    window: limits.secondary
+                });
+            }
+
+            const additional = Array.isArray(limits.additional) ? limits.additional : [];
+            additional.forEach((limit, index) => {
+                if (limit && limit.primary) {
+                    sections.push({
+                        key: `additional-${index}-primary`,
+                        label: this.providerOAuthAdditionalLimitLabel(limit, limit.primary),
+                        window: limit.primary
+                    });
+                }
+                if (limit && limit.secondary) {
+                    sections.push({
+                        key: `additional-${index}-secondary`,
+                        label: this.providerOAuthAdditionalLimitLabel(limit, limit.secondary),
+                        window: limit.secondary
+                    });
+                }
+            });
+
+            return sections.filter(section => section && section.window && section.label);
+        },
+
+        providerOAuthAdditionalLimitLabel(limit, window) {
+            const base = this.humanizeRateLimitName((limit && (limit.limit_name || limit.limit_id)) || '');
+            const normalized = String((limit && (limit.limit_id || limit.limit_name)) || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+            const windowLabel = this.providerOAuthRateLimitWindowLabel(window);
+            const windowMinutes = Math.round(Number(window && window.window_minutes) || 0);
+            if (normalized === 'code_review' && windowMinutes === 10080) {
+                return this.t('providers.rateLimitCodeReviewWeekly');
+            }
+            if (!base) {
+                return windowLabel;
+            }
+            if (!windowLabel) {
+                return base;
+            }
+            if (base.toLowerCase().includes(windowLabel.toLowerCase())) {
+                return base;
+            }
+            if (this.locale === 'zh-CN') {
+                return `${base}${windowLabel}`;
+            }
+            return `${base} ${windowLabel.charAt(0).toLowerCase()}${windowLabel.slice(1)}`;
+        },
+
+        humanizeRateLimitName(value) {
+            const raw = String(value || '').trim();
+            if (!raw) {
+                return '';
+            }
+            const normalized = raw.toLowerCase().replace(/[\s-]+/g, '_');
+            if (normalized === 'code_review') {
+                return this.locale === 'zh-CN' ? '代码审查' : 'Code review';
+            }
+            return raw
+                .replace(/[_-]+/g, ' ')
+                .trim()
+                .replace(/\s+/g, ' ')
+                .replace(/\b\w/g, letter => letter.toUpperCase());
+        },
+
+        providerOAuthRateLimitWindowLabel(window) {
+            const minutes = Math.round(Number(window && window.window_minutes) || 0);
+            if (minutes <= 0) {
+                return this.t('providers.rateLimit');
+            }
+            if (minutes === 10080) {
+                return this.t('providers.rateLimitWeekly');
+            }
+            if (minutes === 1440) {
+                return this.t('providers.rateLimitDaily');
+            }
+            if (minutes === 60) {
+                return this.t('providers.rateLimitHourly');
+            }
+            if (minutes % 1440 === 0) {
+                return this.tf('providers.rateLimitDays', { days: minutes / 1440 });
+            }
+            if (minutes % 60 === 0) {
+                return this.tf('providers.rateLimitHours', { hours: minutes / 60 });
+            }
+            return this.tf('providers.rateLimitMinutes', { minutes });
+        },
+
+        providerOAuthRateLimitPercent(window) {
+            const value = Number(window && window.used_percent);
+            if (!Number.isFinite(value)) {
+                return 0;
+            }
+            return Math.max(0, Math.min(100, value));
+        },
+
+        providerOAuthRateLimitPercentLabel(window) {
+            return `${Math.round(this.providerOAuthRateLimitPercent(window))}%`;
+        },
+
+        providerOAuthRateLimitResetLabel(window) {
+            return this.formatCompactDateTime(window && window.resets_at);
+        },
+
+        providerOAuthRateLimitBarStyle(window) {
+            return `width: ${this.providerOAuthRateLimitPercent(window)}%;`;
+        },
+
+        formatCompactDateTime(value) {
+            const parsed = this.parseTimestamp(value);
+            if (!parsed) {
+                return '';
+            }
+            const month = String(parsed.getMonth() + 1).padStart(2, '0');
+            const day = String(parsed.getDate()).padStart(2, '0');
+            const hours = String(parsed.getHours()).padStart(2, '0');
+            const minutes = String(parsed.getMinutes()).padStart(2, '0');
+            return `${month}/${day}, ${hours}:${minutes}`;
+        },
+
         providerPinBadgeTitle() {
             return this.t('providers.pinnedProvider');
         },
@@ -1862,6 +2069,54 @@ function app() {
 
         providerUsesOAuth(provider) {
             return String((provider && provider.auth_type) || '').trim().toLowerCase() === 'oauth';
+        },
+
+        providerSupportsOAuthMetadata(provider) {
+            return this.providerUsesOAuth(provider)
+                && String((provider && provider.oauth_provider) || '').trim().toLowerCase() === 'codex'
+                && String((provider && provider.oauth_ref) || '').trim() !== '';
+        },
+
+        ensureProviderOAuthMetadataState(provider) {
+            if (!provider || typeof provider !== 'object') {
+                return {
+                    oauth_metadata_loading: false,
+                    oauth_metadata_loaded: false,
+                    oauth_metadata_error: ''
+                };
+            }
+            if (typeof provider.oauth_metadata_loading === 'undefined') {
+                provider.oauth_metadata_loading = false;
+            }
+            if (typeof provider.oauth_metadata_loaded === 'undefined') {
+                provider.oauth_metadata_loaded = false;
+            }
+            if (typeof provider.oauth_metadata_error === 'undefined') {
+                provider.oauth_metadata_error = '';
+            }
+            return provider;
+        },
+
+        providerOAuthMetadataBusy(provider) {
+            return !!this.ensureProviderOAuthMetadataState(provider).oauth_metadata_loading;
+        },
+
+        providerHasLoadedOAuthMetadata(provider) {
+            return !!this.ensureProviderOAuthMetadataState(provider).oauth_metadata_loaded;
+        },
+
+        providerOAuthMetadataError(provider) {
+            return String(this.ensureProviderOAuthMetadataState(provider).oauth_metadata_error || '').trim();
+        },
+
+        providerOAuthMetadataButtonLabel(provider) {
+            if (this.providerOAuthMetadataBusy(provider)) {
+                return this.t('common.working');
+            }
+            if (this.providerHasLoadedOAuthMetadata(provider)) {
+                return this.t('common.refresh');
+            }
+            return this.t('common.load');
         },
 
         providerFormUsesOAuth() {
@@ -2016,7 +2271,10 @@ function app() {
 
         providerHasVisibleDetails(provider) {
             if (this.providerUsesOAuth(provider)) {
-                return true;
+                return this.providerSupportsOAuthMetadata(provider)
+                    || this.providerOAuthHasSummary(provider)
+                    || !!(provider && provider.base_url)
+                    || this.normalizeProviderProxyMode(provider && provider.proxy_mode) !== 'default';
             }
             if (provider && provider.base_url) {
                 return true;
@@ -2025,6 +2283,37 @@ function app() {
                 return true;
             }
             return !!(provider && provider.usage && provider.usage.has_usage);
+        },
+
+        async loadProviderOAuthMetadata(provider) {
+            if (!this.providerSupportsOAuthMetadata(provider) || this.providerOAuthMetadataBusy(provider)) {
+                return null;
+            }
+
+            const state = this.ensureProviderOAuthMetadataState(provider);
+            state.oauth_metadata_loading = true;
+            state.oauth_metadata_error = '';
+
+            try {
+                const payload = await this.apiCall(
+                    `/api/providers/${this.selectedClient}/${encodeURIComponent(provider.name)}/oauth-metadata`,
+                    {},
+                    true,
+                    true
+                );
+                provider.oauth_plan_type = String((payload && payload.oauth_plan_type) || '').trim();
+                provider.oauth_rate_limits = payload && payload.oauth_rate_limits && typeof payload.oauth_rate_limits === 'object'
+                    ? payload.oauth_rate_limits
+                    : null;
+                state.oauth_metadata_loaded = true;
+                return payload;
+            } catch (error) {
+                state.oauth_metadata_error = error && error.message ? error.message : 'Failed to load metadata';
+                console.error('Failed to load provider oauth metadata:', error);
+                return null;
+            } finally {
+                state.oauth_metadata_loading = false;
+            }
         },
 
         providerFormUsesCustomProxy() {

@@ -538,8 +538,16 @@ func completeOAuthCallback(t *testing.T, started startedOAuthSession) {
 }
 
 func testOAuthJWT(email string, accountID string) string {
+	return testOAuthJWTWithPlan(email, accountID, "")
+}
+
+func testOAuthJWTWithPlan(email string, accountID string, planType string) string {
 	header := `{"alg":"none","typ":"JWT"}`
-	payload := fmt.Sprintf(`{"email":"%s","sub":"sub_123","https://api.openai.com/auth":{"chatgpt_account_id":"%s"}}`, email, accountID)
+	auth := fmt.Sprintf(`"chatgpt_account_id":"%s"`, accountID)
+	if strings.TrimSpace(planType) != "" {
+		auth += fmt.Sprintf(`,"chatgpt_plan_type":"%s"`, strings.TrimSpace(planType))
+	}
+	payload := fmt.Sprintf(`{"email":"%s","sub":"sub_123","https://api.openai.com/auth":{%s}}`, email, auth)
 	return base64.RawURLEncoding.EncodeToString([]byte(header)) + "." +
 		base64.RawURLEncoding.EncodeToString([]byte(payload)) + "."
 }

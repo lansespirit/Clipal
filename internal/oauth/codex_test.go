@@ -112,6 +112,7 @@ func TestCodexStartLoginAndPollCompletesCredential(t *testing.T) {
 func TestNewCodexClient_AppliesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("CLIPAL_OAUTH_CODEX_AUTH_URL", "http://127.0.0.1:18080/oauth/authorize")
 	t.Setenv("CLIPAL_OAUTH_CODEX_TOKEN_URL", "http://127.0.0.1:18080/oauth/token")
+	t.Setenv("CLIPAL_OAUTH_CODEX_USAGE_URL", "http://127.0.0.1:18080/wham/usage")
 	t.Setenv("CLIPAL_OAUTH_CODEX_CLIENT_ID", "clipal-dev-client")
 	t.Setenv("CLIPAL_OAUTH_CODEX_CALLBACK_HOST", "127.0.0.1")
 	t.Setenv("CLIPAL_OAUTH_CODEX_CALLBACK_PORT", "0")
@@ -123,6 +124,9 @@ func TestNewCodexClient_AppliesEnvironmentOverrides(t *testing.T) {
 	}
 	if got := client.tokenURL(); got != "http://127.0.0.1:18080/oauth/token" {
 		t.Fatalf("tokenURL = %q", got)
+	}
+	if got := client.usageURL(); got != "http://127.0.0.1:18080/wham/usage" {
+		t.Fatalf("usageURL = %q", got)
 	}
 	if got := client.clientID(); got != "clipal-dev-client" {
 		t.Fatalf("clientID = %q", got)

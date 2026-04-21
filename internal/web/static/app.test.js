@@ -450,7 +450,7 @@ test('setProviderAuthType falls back to api_key when oauth is unavailable', () =
     assert.equal(state.providerForm.auth_type, 'api_key');
 });
 
-test('providerCardTitle truncates oauth display name to 12 characters', () => {
+test('providerCardTitle truncates oauth display name on card', () => {
     const state = loadApp();
 
     const title = state.providerCardTitle({
@@ -459,20 +459,124 @@ test('providerCardTitle truncates oauth display name to 12 characters', () => {
         name: 'codex-gamebabies-gmail-com'
     });
 
-    assert.equal(title, 'gamebabie...');
+    assert.equal(title, 'gamebabies@g...');
 });
 
-test('providerHasVisibleDetails keeps oauth summary visible even without usage', () => {
+test('providerHasVisibleDetails keeps oauth plan summary visible without token usage', () => {
     const state = loadApp();
 
     const visible = state.providerHasVisibleDetails({
         auth_type: 'oauth',
         base_url: '',
         proxy_mode: 'default',
+        usage: null,
+        oauth_plan_type: 'free'
+    });
+
+    assert.equal(visible, true);
+});
+
+test('providerHasVisibleDetails shows oauth metadata loader before metadata fetch', () => {
+    const state = loadApp();
+
+    const visible = state.providerHasVisibleDetails({
+        name: 'codex-sean-example-com',
+        auth_type: 'oauth',
+        oauth_provider: 'codex',
+        oauth_ref: 'codex-sean-example-com',
+        base_url: '',
+        proxy_mode: 'default',
         usage: null
     });
 
     assert.equal(visible, true);
+});
+
+test('providerOAuthRateLimitSections builds weekly and code review rows', () => {
+    const state = loadApp();
+    const provider = {
+        auth_type: 'oauth',
+        oauth_plan_type: 'free',
+        oauth_rate_limits: {
+            primary: {
+                used_percent: 100,
+                window_minutes: 10080,
+                resets_at: '2026-04-28T12:00:00Z'
+            },
+            additional: [
+                {
+                    limit_id: 'code_review',
+                    limit_name: 'Code review',
+                    primary: {
+                        used_percent: 75,
+                        window_minutes: 10080,
+                        resets_at: '2026-04-27T12:00:00Z'
+                    }
+                }
+            ]
+        }
+    };
+
+    assert.equal(state.providerOAuthPlanLabel(provider), 'Free');
+    assert.equal(state.providerOAuthRateLimitPercentLabel(provider.oauth_rate_limits.primary), '100%');
+
+    const sections = state.providerOAuthRateLimitSections(provider);
+
+    const summaries = sections.map(section => `${section.key}:${section.label}:${state.providerOAuthRateLimitPercentLabel(section.window)}`);
+
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(summaries)),
+        [
+            'primary:Weekly limit:100%',
+            'additional-0-primary:Code review weekly limit:75%'
+        ]
+    );
+});
+
+test('loadProviderOAuthMetadata fetches provider-scoped metadata on demand', async () => {
+    const state = loadApp();
+    const calls = [];
+    const provider = {
+        name: 'codex-sean-example-com',
+        auth_type: 'oauth',
+        oauth_provider: 'codex',
+        oauth_ref: 'codex-sean-example-com'
+    };
+    state.selectedClient = 'openai';
+    state.apiCall = async (url, options, background, suppressAlert) => {
+        calls.push({ url, options, background, suppressAlert });
+        return {
+            oauth_plan_type: 'free',
+            oauth_rate_limits: {
+                primary: {
+                    used_percent: 80,
+                    window_minutes: 10080,
+                    resets_at: '2026-04-28T12:00:00Z'
+                }
+            }
+        };
+    };
+
+    assert.equal(state.providerOAuthMetadataButtonLabel(provider), 'Load');
+
+    await state.loadProviderOAuthMetadata(provider);
+
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(calls)),
+        [
+            {
+                url: '/api/providers/openai/codex-sean-example-com/oauth-metadata',
+                options: {},
+                background: true,
+                suppressAlert: true
+            }
+        ]
+    );
+    assert.equal(provider.oauth_plan_type, 'free');
+    assert.equal(provider.oauth_rate_limits.primary.used_percent, 80);
+    assert.equal(state.providerHasLoadedOAuthMetadata(provider), true);
+    assert.equal(state.providerOAuthMetadataError(provider), '');
+    assert.equal(state.providerOAuthMetadataButtonLabel(provider), 'Refresh');
 });
 
 test('providerOAuthAuthStatusLabel prefers backend status for oauth cards', () => {
