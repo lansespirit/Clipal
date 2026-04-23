@@ -289,16 +289,26 @@ type OAuthStartResponse struct {
 }
 
 type OAuthSessionResponse struct {
-	SessionID     string               `json:"session_id"`
-	Provider      config.OAuthProvider `json:"provider"`
-	Status        string               `json:"status"`
-	AuthURL       string               `json:"auth_url,omitempty"`
-	ExpiresAt     string               `json:"expires_at,omitempty"`
-	CredentialRef string               `json:"credential_ref,omitempty"`
-	Email         string               `json:"email,omitempty"`
-	ProviderName  string               `json:"provider_name,omitempty"`
-	DisplayName   string               `json:"display_name,omitempty"`
-	Error         string               `json:"error,omitempty"`
+	SessionID      string               `json:"session_id"`
+	Provider       config.OAuthProvider `json:"provider"`
+	Status         string               `json:"status"`
+	AuthURL        string               `json:"auth_url,omitempty"`
+	ExpiresAt      string               `json:"expires_at,omitempty"`
+	CredentialRef  string               `json:"credential_ref,omitempty"`
+	Email          string               `json:"email,omitempty"`
+	ProviderName   string               `json:"provider_name,omitempty"`
+	ProviderAction string               `json:"provider_action,omitempty"`
+	DisplayName    string               `json:"display_name,omitempty"`
+	Error          string               `json:"error,omitempty"`
+}
+
+type OAuthSessionCodeRequest struct {
+	Code       string `json:"code"`
+	ClientType string `json:"client_type,omitempty"`
+}
+
+type OAuthSessionLinkRequest struct {
+	ClientType string `json:"client_type,omitempty"`
 }
 
 type OAuthAccountResponse struct {
@@ -322,13 +332,14 @@ type OAuthImportResponse struct {
 }
 
 type OAuthImportFileResultResponse struct {
-	File         string               `json:"file"`
-	Status       string               `json:"status"`
-	Provider     config.OAuthProvider `json:"provider,omitempty"`
-	Ref          string               `json:"ref,omitempty"`
-	Email        string               `json:"email,omitempty"`
-	ProviderName string               `json:"provider_name,omitempty"`
-	Message      string               `json:"message,omitempty"`
+	File           string               `json:"file"`
+	Status         string               `json:"status"`
+	Provider       config.OAuthProvider `json:"provider,omitempty"`
+	Ref            string               `json:"ref,omitempty"`
+	Email          string               `json:"email,omitempty"`
+	ProviderName   string               `json:"provider_name,omitempty"`
+	ProviderAction string               `json:"provider_action,omitempty"`
+	Message        string               `json:"message,omitempty"`
 }
 
 // StatusResponse represents the system status

@@ -1019,6 +1019,24 @@
                             <div class="provider-oauth-flow__message" x-text="oauthAuthorizationMessage()"></div>
                             <div class="provider-oauth-flow__meta" x-show="oauthAuthorizationExpiresHint()"
                                 x-text="oauthAuthorizationExpiresHint()"></div>
+                            <div class="provider-oauth-flow__manual" x-show="oauthAuthorizationCanEnterCode()">
+                                <div class="form-group" style="margin: 0;">
+                                    <label class="form-label" x-text="t('providers.oauthManualUrlLabel')"></label>
+                                    <input type="text" class="form-input provider-oauth-flow__input"
+                                        :value="oauthAuthorization.auth_url" readonly @focus="$event.target.select()">
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label class="form-label" x-text="oauthAuthorizationManualEntryLabel()"></label>
+                                    <div class="form-hint" x-text="oauthAuthorizationManualCodeHint()"></div>
+                                    <textarea x-model="oauthAuthorization.manual_code"
+                                        @input="updateOAuthAuthorization({ manual_submit_error: '' })"
+                                        class="form-input form-textarea provider-oauth-flow__textarea" rows="4"
+                                        :placeholder="oauthAuthorizationManualCodePlaceholder()"></textarea>
+                                    <div class="provider-oauth-flow__manual-error"
+                                        x-show="oauthAuthorization.manual_submit_error"
+                                        x-text="oauthAuthorization.manual_submit_error"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1032,6 +1050,9 @@
                         x-text="t('common.cancel')"></button>
                     <button type="button" @click="openPendingOAuthAuthorizationWindow()" class="btn btn-secondary"
                         x-show="oauthAuthorizationCanOpenWindow()" x-text="t('providers.oauthOpenWindow')"></button>
+                    <button type="button" @click="submitPendingOAuthAuthorizationCode()" class="btn btn-primary"
+                        x-show="oauthAuthorizationCanEnterCode()" :disabled="!oauthAuthorizationCanSubmitCode()"
+                        x-text="oauthAuthorizationSubmitLabel()"></button>
                     <button type="button" @click="retryOAuthAuthorization()" class="btn btn-primary"
                         x-show="oauthAuthorizationCanRetry()" x-text="t('providers.oauthRetry')"></button>
                 </div>

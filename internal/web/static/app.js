@@ -10,6 +10,9 @@ function defaultOAuthAuthorizationState() {
         started_at: 0,
         expires_at: '',
         auth_url: '',
+        manual_code: '',
+        manual_submit_busy: false,
+        manual_submit_error: '',
         popup_blocked: false,
         error: ''
     };
@@ -32,6 +35,8 @@ function app() {
         oauthPollingSessionId: '',
         oauthPollingPromise: null,
         oauthPollingToken: 0,
+        oauthLinkingSessionId: '',
+        oauthLinkingPromise: null,
         oauthAuthorization: defaultOAuthAuthorizationState(),
         integrations: [],
         integrationBusyProduct: '',
@@ -149,30 +154,39 @@ function app() {
                     deleteConfirm: 'Are you sure you want to delete provider "{name}"?',
                     deletedTitle: 'Deleted provider {name}',
                     deletedMessage: 'It has been removed from {client}\'s provider list.',
-                    oauthDeleteConfirm: 'Delete OAuth account "{name}"? This removes all linked providers and the local credential.',
-                    oauthDeletedTitle: 'Deleted OAuth account {name}',
-                    oauthDeletedMessage: 'All linked providers were removed from {client}.',
                     clientTypeLabel: 'Client Type',
                     authType: 'Auth',
                     oauthAccount: 'OAuth Account',
                     oauthAuthorizingTitle: 'Authorize {provider}',
-                    oauthAuthorizingMessage: 'Finish the OAuth flow in the opened window. Clipal will add the provider automatically after authorization.',
+                    oauthAuthorizingMessage: 'Finish the OAuth flow in the opened window. Clipal will link the authorized account automatically.',
                     oauthOpeningMessage: 'Preparing the authorization window...',
-                    oauthWaitingMessage: 'Finish the OAuth flow in the opened window. Clipal will keep listening here and add the provider automatically.',
+                    oauthWaitingMessage: 'Finish the OAuth flow in the opened window. Clipal will keep listening here and link the account when authorization completes.',
                     oauthPopupBlockedMessage: 'Clipal could not open the authorization window automatically. Use the button below to continue in a new window.',
                     oauthTimedOutMessage: 'Authorization timed out before completion. Start a new authorization session and try again.',
                     oauthFailedMessage: 'Authorization did not complete. Start a new authorization session and try again.',
                     oauthOpenWindow: 'Open Authorization Window',
+                    oauthManualUrlLabel: 'Authorization URL',
+                    oauthManualCodeHint: 'If Clipal cannot receive the callback, open the URL above in any browser, then paste the callback URL or the authorization code here.',
+                    oauthManualCodeHintClaude: 'Claude requires the full callback URL so Clipal can keep the original state. Paste the full callback URL, or a value that still includes both code and state.',
+                    oauthManualCodePlaceholder: 'Paste the callback URL or authorization code',
+                    oauthManualCodePlaceholderClaude: 'Paste the full callback URL with code and state',
+                    oauthManualSubmit: 'Submit Authorization Code',
+                    oauthManualEntryLabelClaude: 'Callback URL',
+                    oauthManualSubmitClaude: 'Submit Callback URL',
                     oauthRetry: 'Retry Authorization',
                     oauthExpiresHint: 'Session expires {time}',
-                    oauthAddedTitle: '{provider} authorized',
-                    oauthAddedMessage: '{email} is now available for {client}.',
+                    oauthAddedTitle: '{provider} authorization complete',
+                    oauthAddedMessage: '{email} is available for {client}.',
+                    oauthAddedMessageCreated: '{email} is available for {client} as provider {providerName}.',
+                    oauthAddedMessageReused: '{email} refreshed existing provider {providerName} for {client}.',
+                    oauthAddedMessageRelinked: '{email} relinked provider {providerName} for {client}.',
                     oauthEditLocked: 'OAuth accounts are managed by authorization. Reauthorize or delete the account instead.',
                     oauthToggleLocked: 'Use the provider toggle to enable or disable OAuth accounts.',
                     oauthUnavailable: 'OAuth is not available for this client yet.',
                     oauthImportCompletedTitle: 'Imported OAuth accounts',
                     oauthImportFailedTitle: 'OAuth import failed',
-                    oauthImportSummary: 'Imported {imported} account(s), created {linked} provider(s), skipped {skipped} file(s), failed {failed} file(s).',
+                    oauthImportSummary: 'Imported {imported} account(s), linked {linked} provider(s), skipped {skipped} file(s), failed {failed} file(s).',
+                    oauthImportDetailsMore: '+{count} more file(s)',
                     oauthImportBrowserUnsupported: 'Directory import is not supported in this browser.',
                     proxyDirect: 'Direct',
                     proxyCustom: 'Custom'
@@ -187,9 +201,9 @@ function app() {
                         credentialSourceOAuth: 'OAuth',
                         oauthProvider: 'Service',
                         oauthProviderCodex: 'Codex',
-                        oauthDirectHint: 'After authorization, Clipal will create the provider automatically using the authorized email.',
+                        oauthDirectHint: 'After authorization, Clipal will automatically link the account to an existing provider or create one if needed.',
                         importDirectory: 'Import OAuth Directory',
-                        importDirectoryHint: 'Select a directory of existing OAuth JSON files. Clipal will import supported accounts and create providers automatically.',
+                        importDirectoryHint: 'Select a directory of existing OAuth JSON files. Clipal will import supported accounts and link or create providers automatically.',
                         name: 'Name *',
                         nameHint: 'Letters, numbers, dot (.), underscore (_), and hyphen (-).',
                         baseUrl: 'Base URL *',
@@ -509,30 +523,39 @@ function app() {
                     deleteConfirm: '确认删除 Provider “{name}” 吗？',
                     deletedTitle: '已删除 Provider {name}',
                     deletedMessage: '它已从 {client} 的 Provider 列表中移除。',
-                    oauthDeleteConfirm: '确认删除 OAuth 账号“{name}”吗？这会删除所有关联的 Provider 和本地凭据。',
-                    oauthDeletedTitle: '已删除 OAuth 账号 {name}',
-                    oauthDeletedMessage: '所有关联的 Provider 都已从 {client} 中移除。',
                     clientTypeLabel: '客户端类型',
                     authType: '认证方式',
                     oauthAccount: 'OAuth 账号',
                     oauthAuthorizingTitle: '授权 {provider}',
-                    oauthAuthorizingMessage: '请在新打开的窗口完成 OAuth 授权。授权完成后，Clipal 会自动创建这个 Provider。',
+                    oauthAuthorizingMessage: '请在新打开的窗口完成 OAuth 授权。授权完成后，Clipal 会自动关联这个账号。',
                     oauthOpeningMessage: '正在准备授权窗口...',
-                    oauthWaitingMessage: '请在新打开的窗口完成 OAuth 授权。Clipal 会在这里持续等待，并在授权完成后自动创建 Provider。',
+                    oauthWaitingMessage: '请在新打开的窗口完成 OAuth 授权。Clipal 会在这里持续等待，并在授权完成后自动关联账号。',
                     oauthPopupBlockedMessage: 'Clipal 无法自动打开授权窗口。请使用下面的按钮在新窗口中继续。',
                     oauthTimedOutMessage: '授权超时了。请重新发起一次授权。',
                     oauthFailedMessage: '授权没有完成。请重新发起一次授权。',
                     oauthOpenWindow: '打开授权窗口',
+                    oauthManualUrlLabel: '授权链接',
+                    oauthManualCodeHint: '如果 Clipal 无法收到回调，请在任意浏览器打开上面的链接，然后把回调 URL 或授权码粘贴到这里。',
+                    oauthManualCodeHintClaude: 'Claude 必须保留原始 state，因此需要完整的回调 URL。请粘贴完整回调 URL，或仍然同时包含 code 和 state 的值。',
+                    oauthManualCodePlaceholder: '粘贴回调 URL 或授权码',
+                    oauthManualCodePlaceholderClaude: '粘贴包含 code 和 state 的完整回调 URL',
+                    oauthManualSubmit: '提交授权码',
+                    oauthManualEntryLabelClaude: '回调 URL',
+                    oauthManualSubmitClaude: '提交回调 URL',
                     oauthRetry: '重新授权',
                     oauthExpiresHint: '会话将在 {time} 过期',
-                    oauthAddedTitle: '{provider} 已授权',
-                    oauthAddedMessage: '{email} 现在已经可供 {client} 使用。',
+                    oauthAddedTitle: '{provider} 授权已完成',
+                    oauthAddedMessage: '{email} 现在可供 {client} 使用。',
+                    oauthAddedMessageCreated: '{email} 已作为 Provider {providerName} 接入 {client}。',
+                    oauthAddedMessageReused: '{email} 已刷新并继续复用现有 Provider {providerName} 供 {client} 使用。',
+                    oauthAddedMessageRelinked: '{email} 已重新关联到 Provider {providerName}，现在可供 {client} 使用。',
                     oauthEditLocked: 'OAuth 账号由授权流程管理。请重新授权或删除账号。',
                     oauthToggleLocked: '可通过 Provider 开关启用或禁用 OAuth 账号。',
                     oauthUnavailable: '这个客户端暂时还不能使用 OAuth。',
                     oauthImportCompletedTitle: '已导入 OAuth 账号',
                     oauthImportFailedTitle: 'OAuth 导入失败',
-                    oauthImportSummary: '已导入 {imported} 个账号，创建 {linked} 个 Provider，跳过 {skipped} 个文件，失败 {failed} 个文件。',
+                    oauthImportSummary: '已导入 {imported} 个账号，关联 {linked} 个 Provider，跳过 {skipped} 个文件，失败 {failed} 个文件。',
+                    oauthImportDetailsMore: '另有 {count} 个文件',
                     oauthImportBrowserUnsupported: '当前浏览器不支持目录导入。',
                     dragToReorder: '拖拽调整优先级',
                     proxyDirect: '直连',
@@ -548,9 +571,9 @@ function app() {
                         credentialSourceOAuth: 'OAuth',
                         oauthProvider: '服务',
                         oauthProviderCodex: 'Codex',
-                        oauthDirectHint: '授权完成后，Clipal 会使用授权邮箱自动创建 Provider。',
+                        oauthDirectHint: '授权完成后，Clipal 会自动关联到已有 Provider；如果没有，再创建一个。',
                         importDirectory: '导入 OAuth 目录',
-                        importDirectoryHint: '选择已有 OAuth JSON 文件所在目录。Clipal 会导入支持的账号并自动创建 Provider。',
+                        importDirectoryHint: '选择已有 OAuth JSON 文件所在目录。Clipal 会导入支持的账号，并自动关联或创建 Provider。',
                         name: '名称 *',
                         nameHint: '允许字母、数字、点号 (.)、下划线 (_) 和连字符 (-)。',
                         baseUrl: 'Base URL *',
@@ -1072,6 +1095,10 @@ function app() {
             return this.oauthProviderLabel((this.oauthAuthorization && this.oauthAuthorization.provider) || this.providerForm.oauth_provider || '');
         },
 
+        oauthAuthorizationProviderValue() {
+            return String((this.oauthAuthorization && this.oauthAuthorization.provider) || this.providerForm.oauth_provider || '').trim().toLowerCase();
+        },
+
         oauthAuthorizationTitle() {
             return this.tf('providers.oauthAuthorizingTitle', {
                 provider: this.oauthAuthorizationProviderLabel()
@@ -1124,6 +1151,53 @@ function app() {
         oauthAuthorizationCanRetry() {
             const phase = String((this.oauthAuthorization && this.oauthAuthorization.phase) || '').trim();
             return phase === 'timed_out' || phase === 'error';
+        },
+
+        oauthAuthorizationCanEnterCode() {
+            const phase = String((this.oauthAuthorization && this.oauthAuthorization.phase) || '').trim();
+            const sessionID = String((this.oauthAuthorization && this.oauthAuthorization.session_id) || '').trim();
+            return !!sessionID && (phase === 'waiting' || phase === 'blocked');
+        },
+
+        oauthAuthorizationCanSubmitCode() {
+            if (!this.oauthAuthorizationCanEnterCode()) {
+                return false;
+            }
+            if (this.oauthAuthorization && this.oauthAuthorization.manual_submit_busy) {
+                return false;
+            }
+            return String((this.oauthAuthorization && this.oauthAuthorization.manual_code) || '').trim() !== '';
+        },
+
+        oauthAuthorizationManualEntryLabel() {
+            if (this.oauthAuthorizationProviderValue() === 'claude') {
+                return this.t('providers.oauthManualEntryLabelClaude');
+            }
+            return this.t('providers.oauthManualSubmit');
+        },
+
+        oauthAuthorizationManualCodeHint() {
+            if (this.oauthAuthorizationProviderValue() === 'claude') {
+                return this.t('providers.oauthManualCodeHintClaude');
+            }
+            return this.t('providers.oauthManualCodeHint');
+        },
+
+        oauthAuthorizationManualCodePlaceholder() {
+            if (this.oauthAuthorizationProviderValue() === 'claude') {
+                return this.t('providers.oauthManualCodePlaceholderClaude');
+            }
+            return this.t('providers.oauthManualCodePlaceholder');
+        },
+
+        oauthAuthorizationSubmitLabel() {
+            if (this.oauthAuthorization && this.oauthAuthorization.manual_submit_busy) {
+                return this.t('common.working');
+            }
+            if (this.oauthAuthorizationProviderValue() === 'claude') {
+                return this.t('providers.oauthManualSubmitClaude');
+            }
+            return this.t('providers.oauthManualSubmit');
         },
 
         openOAuthAuthorizationPopup(url = '') {
@@ -1182,6 +1256,100 @@ function app() {
                 this.providerForm.oauth_provider = provider;
             }
             return this.startOAuthProviderAuthorization();
+        },
+
+        async submitPendingOAuthAuthorizationCode() {
+            const pending = this.normalizePendingOAuthSession(this.oauthAuthorization) || this.loadPendingOAuthSession();
+            const sessionID = String((pending && pending.session_id) || (this.oauthAuthorization && this.oauthAuthorization.session_id) || '').trim();
+            const input = String((this.oauthAuthorization && this.oauthAuthorization.manual_code) || '').trim();
+            if (!sessionID || !input) {
+                this.updateOAuthAuthorization({
+                    manual_submit_error: this.oauthAuthorizationManualCodeHint()
+                });
+                return null;
+            }
+
+            this.stopOAuthPolling();
+            this.updateOAuthAuthorization({
+                manual_submit_busy: true,
+                manual_submit_error: '',
+                error: ''
+            });
+
+            try {
+                const session = await this.apiCall(`/api/oauth/sessions/${encodeURIComponent(sessionID)}/code`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        code: input,
+                        client_type: String((pending && pending.client_type) || this.selectedClient || '').trim().toLowerCase()
+                    })
+                }, false, true);
+                const status = String((session && session.status) || '').trim().toLowerCase();
+                if (status === 'completed') {
+                    const linkedSession = await this.linkCompletedOAuthSession(pending, session);
+                    this.clearPendingOAuthSession();
+                    await this.handleCompletedOAuthSession(pending || {
+                        session_id: sessionID,
+                        provider: String((this.oauthAuthorization && this.oauthAuthorization.provider) || '').trim().toLowerCase(),
+                        client_type: String((this.oauthAuthorization && this.oauthAuthorization.client_type) || this.selectedClient || '').trim().toLowerCase(),
+                        expires_at: String((this.oauthAuthorization && this.oauthAuthorization.expires_at) || '').trim(),
+                        auth_url: String((this.oauthAuthorization && this.oauthAuthorization.auth_url) || '').trim()
+                    }, linkedSession);
+                    return linkedSession;
+                }
+
+                if (status === 'expired' || status === 'error') {
+                    const message = String((session && session.error) || '').trim()
+                        || (status === 'expired'
+                            ? this.t('providers.oauthTimedOutMessage')
+                            : this.t('providers.oauthFailedMessage'));
+                    this.clearPendingOAuthSession();
+                    this.applyOAuthAuthorizationState(pending, {
+                        phase: status === 'expired' ? 'timed_out' : 'error',
+                        popup_blocked: false,
+                        manual_submit_busy: false,
+                        manual_submit_error: message,
+                        error: message
+                    });
+                    return session;
+                }
+
+                this.applyOAuthAuthorizationState(pending, {
+                    phase: 'waiting',
+                    popup_blocked: false,
+                    manual_submit_busy: false,
+                    manual_submit_error: ''
+                });
+                this.resumePendingOAuthSession(pending, {
+                    showError: false,
+                    phase: 'waiting'
+                }).catch(error => {
+                    if (error && error.message !== oauthAuthorizationCancelledError) {
+                        console.error('Failed to resume pending OAuth session after manual submission:', error);
+                    }
+                });
+                return session;
+            } catch (error) {
+                const message = String((error && error.message) || '').trim() || this.t('providers.oauthFailedMessage');
+                this.updateOAuthAuthorization({
+                    manual_submit_busy: false,
+                    manual_submit_error: message
+                });
+                if (pending) {
+                    const phase = String((this.oauthAuthorization && this.oauthAuthorization.phase) || '').trim() === 'blocked'
+                        ? 'blocked'
+                        : 'waiting';
+                    this.resumePendingOAuthSession(pending, {
+                        showError: false,
+                        phase
+                    }).catch(resumeError => {
+                        if (resumeError && resumeError.message !== oauthAuthorizationCancelledError) {
+                            console.error('Failed to resume pending OAuth session after manual submission error:', resumeError);
+                        }
+                    });
+                }
+                return null;
+            }
         },
 
         loadPendingOAuthSession() {
@@ -1253,13 +1421,9 @@ function app() {
             }
 
             this.applyOAuthAuthorizationState(pending, { phase: 'completed', popup_blocked: false, error: '' });
-            const displayName = String(session.display_name || session.email || session.provider_name || '').trim();
             this.showAlert(
                 'success',
-                this.tf('providers.oauthAddedMessage', {
-                    client: this.providerToastClientLabel(),
-                    email: displayName
-                }),
+                this.oauthSessionSuccessMessage(session),
                 this.tf('providers.oauthAddedTitle', {
                     provider: this.oauthProviderLabel(session.provider || (pending && pending.provider))
                 })
@@ -1285,6 +1449,97 @@ function app() {
             } catch (error) {
                 console.error('Failed to refresh status after successful OAuth authorization:', error);
             }
+        },
+
+        async linkCompletedOAuthSession(pending, session) {
+            const completed = session && typeof session === 'object' ? session : {};
+            if (String(completed.status || '').trim().toLowerCase() !== 'completed') {
+                return completed;
+            }
+            if (String(completed.provider_name || '').trim()) {
+                return completed;
+            }
+
+            const sessionID = String(completed.session_id || (pending && pending.session_id) || '').trim();
+            const clientType = String((pending && pending.client_type) || this.selectedClient || '').trim().toLowerCase();
+            if (!sessionID || !clientType) {
+                return completed;
+            }
+            if (this.oauthLinkingPromise && this.oauthLinkingSessionId === sessionID) {
+                return await this.oauthLinkingPromise;
+            }
+
+            const promise = this.apiCall(`/api/oauth/sessions/${encodeURIComponent(sessionID)}/link`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    client_type: clientType
+                })
+            }, false, true);
+            this.oauthLinkingSessionId = sessionID;
+            this.oauthLinkingPromise = promise;
+            try {
+                return await promise;
+            } finally {
+                if (this.oauthLinkingPromise === promise) {
+                    this.oauthLinkingSessionId = '';
+                    this.oauthLinkingPromise = null;
+                }
+            }
+        },
+
+        oauthSessionSuccessMessage(session) {
+            const action = String((session && session.provider_action) || '').trim().toLowerCase();
+            const providerName = String((session && session.provider_name) || '').trim()
+                || this.oauthProviderLabel(session && session.provider);
+            const params = {
+                client: this.providerToastClientLabel(),
+                email: String((session && (session.display_name || session.email)) || providerName || '').trim(),
+                providerName
+            };
+            const key = ({
+                reused: 'providers.oauthAddedMessageReused',
+                relinked: 'providers.oauthAddedMessageRelinked',
+                created: 'providers.oauthAddedMessageCreated'
+            })[action] || 'providers.oauthAddedMessageCreated';
+            return this.tf(key, params) || this.tf('providers.oauthAddedMessage', params);
+        },
+
+        oauthImportAlertMessage(result) {
+            const imported = Number((result && result.imported_count) || 0);
+            const linked = Number((result && result.linked_count) || 0);
+            const skipped = Number((result && result.skipped_count) || 0);
+            const failed = Number((result && result.failed_count) || 0);
+            const summary = this.tf('providers.oauthImportSummary', { imported, linked, skipped, failed })
+                || String((result && result.message) || '').trim();
+            const details = this.oauthImportResultDetails(result && result.results);
+            if (!details) {
+                return summary;
+            }
+            return `${summary}\n${details}`;
+        },
+
+        oauthImportResultDetails(results) {
+            if (!Array.isArray(results) || results.length === 0) {
+                return '';
+            }
+            const details = [];
+            for (const item of results.slice(0, 5)) {
+                const file = String((item && item.file) || 'credential.json').trim() || 'credential.json';
+                const message = String((item && item.message) || '').trim();
+                const status = String((item && item.status) || '').trim();
+                if (message) {
+                    details.push(`${file}: ${message}`);
+                    continue;
+                }
+                if (status) {
+                    details.push(`${file}: ${status}`);
+                }
+            }
+            const remaining = results.length - details.length;
+            if (remaining > 0) {
+                details.push(this.tf('providers.oauthImportDetailsMore', { count: remaining }));
+            }
+            return details.join('\n');
         },
 
         defaultOAuthProviderValue() {
@@ -1352,6 +1607,9 @@ function app() {
             const promise = (async () => {
                 try {
                     const session = await this.pollOAuthSession(pending.session_id, { pending, token });
+                    if (token && token !== this.oauthPollingToken) {
+                        throw new Error(oauthAuthorizationCancelledError);
+                    }
                     const status = String((session && session.status) || '').trim().toLowerCase();
                     if (status !== 'completed') {
                         const message = String((session && session.error) || '').trim()
@@ -1370,9 +1628,13 @@ function app() {
                         return session;
                     }
 
+                    const linkedSession = await this.linkCompletedOAuthSession(pending, session);
+                    if (token && token !== this.oauthPollingToken) {
+                        throw new Error(oauthAuthorizationCancelledError);
+                    }
                     this.clearPendingOAuthSession();
-                    await this.handleCompletedOAuthSession(pending, session);
-                    return session;
+                    await this.handleCompletedOAuthSession(pending, linkedSession);
+                    return linkedSession;
                 } catch (error) {
                     if (error && error.message === oauthAuthorizationCancelledError) {
                         return null;
@@ -3271,8 +3533,7 @@ function app() {
             } else if (failed > 0 || skipped > 0) {
                 alertType = 'info';
             }
-            const message = this.tf('providers.oauthImportSummary', { imported, linked, skipped, failed })
-                || String(result.message || '').trim();
+            const message = this.oauthImportAlertMessage(result);
             this.showAlert(alertType, message, this.t(titleKey));
 
             if (imported > 0) {
@@ -3299,6 +3560,9 @@ function app() {
                     throw new Error(oauthAuthorizationCancelledError);
                 }
                 const session = await this.apiCall(`/api/oauth/sessions/${encodeURIComponent(id)}`, {}, true, true);
+                if (token && token !== this.oauthPollingToken) {
+                    throw new Error(oauthAuthorizationCancelledError);
+                }
                 const status = String((session && session.status) || '').trim().toLowerCase();
                 if (status === 'completed' || status === 'error' || status === 'expired') {
                     return session;
@@ -3344,28 +3608,19 @@ function app() {
                 return;
             }
             const displayName = this.providerDisplayName(item) || name;
-            const usesOAuth = this.providerUsesOAuth(item);
-            const confirmKey = usesOAuth ? 'providers.oauthDeleteConfirm' : 'providers.deleteConfirm';
-            if (!confirm(this.tf(confirmKey, { name: displayName }))) {
+            if (!confirm(this.tf('providers.deleteConfirm', { name: displayName }))) {
                 return;
             }
 
             try {
-                if (usesOAuth) {
-                    await this.apiCall(
-                        `/api/oauth/accounts/${encodeURIComponent(String(item.oauth_provider || ''))}/${encodeURIComponent(String(item.oauth_ref || ''))}`,
-                        { method: 'DELETE' }
-                    );
-                } else {
-                    await this.apiCall(
-                        `/api/providers/${this.selectedClient}/${encodeURIComponent(name)}`,
-                        { method: 'DELETE' }
-                    );
-                }
+                await this.apiCall(
+                    `/api/providers/${this.selectedClient}/${encodeURIComponent(name)}`,
+                    { method: 'DELETE' }
+                );
                 this.showAlert(
                     'success',
-                    this.tf(usesOAuth ? 'providers.oauthDeletedMessage' : 'providers.deletedMessage', { client: this.providerToastClientLabel() }),
-                    this.tf(usesOAuth ? 'providers.oauthDeletedTitle' : 'providers.deletedTitle', { name: displayName })
+                    this.tf('providers.deletedMessage', { client: this.providerToastClientLabel() }),
+                    this.tf('providers.deletedTitle', { name: displayName })
                 );
                 await this.loadProviders();
                 await this.refreshStatus();

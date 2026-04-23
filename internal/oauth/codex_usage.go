@@ -14,6 +14,10 @@ import (
 
 const codexUsageUserAgent = "codex-cli"
 
+type codexUsageFetcher interface {
+	FetchUsage(ctx context.Context, cred *Credential) (*CodexUsageDetails, error)
+}
+
 type CodexUsageDetails struct {
 	PlanType   string
 	Primary    *CodexUsageWindow
@@ -102,7 +106,16 @@ func (s *Service) GetCodexUsage(ctx context.Context, ref string) (*CodexUsageDet
 		}
 	}
 
-	fetched, err := s.codex.FetchUsage(ctx, cred)
+	client, ok := s.providerClient(config.OAuthProviderCodex)
+	if !ok {
+		return details, fmt.Errorf("unsupported oauth provider %q", config.OAuthProviderCodex)
+	}
+	fetcher, ok := client.(codexUsageFetcher)
+	if !ok {
+		return details, fmt.Errorf("oauth provider %q does not support usage retrieval", config.OAuthProviderCodex)
+	}
+
+	fetched, err := fetcher.FetchUsage(ctx, cred)
 	if fetched != nil {
 		if fetched.PlanType == "" {
 			fetched.PlanType = details.PlanType

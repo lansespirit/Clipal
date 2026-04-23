@@ -21,12 +21,12 @@ var providerCatalog = []ProviderDescriptor{
 	{
 		Provider:    config.OAuthProviderGemini,
 		ClientTypes: []string{"gemini"},
-		Available:   false,
+		Available:   true,
 	},
 	{
 		Provider:    config.OAuthProviderClaude,
 		ClientTypes: []string{"claude"},
-		Available:   false,
+		Available:   true,
 	},
 }
 

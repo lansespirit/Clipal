@@ -468,6 +468,23 @@
     gap: 8px;
 }
 
+.provider-oauth-flow__manual {
+    display: grid;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.provider-oauth-flow__input,
+.provider-oauth-flow__textarea {
+    font-family: var(--font-mono);
+}
+
+.provider-oauth-flow__manual-error {
+    font-size: var(--text-xs);
+    color: var(--danger);
+    margin-top: 8px;
+}
+
 .provider-oauth-flow__title {
     font-size: var(--text-base);
     font-weight: var(--font-bold);

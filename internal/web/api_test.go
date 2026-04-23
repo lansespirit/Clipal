@@ -725,17 +725,21 @@ providers:
 	}
 
 	api := NewAPI(dir, "test", nil)
-	api.oauth = oauthpkg.NewService(dir, oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
-		AuthURL:      "https://auth.openai.com/oauth/authorize",
-		TokenURL:     "https://auth.openai.com/oauth/token",
-		UsageURL:     usageServer.URL + "/wham/usage",
-		ClientID:     "test-client",
-		CallbackHost: "127.0.0.1",
-		CallbackPort: 0,
-		CallbackPath: "/auth/callback",
-		HTTPClient:   usageServer.Client(),
-		Now:          func() time.Time { return now },
-	}))
+	api.oauth = oauthpkg.NewService(
+		dir,
+		oauthpkg.WithNowFunc(func() time.Time { return now }),
+		oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+			AuthURL:      "https://auth.openai.com/oauth/authorize",
+			TokenURL:     "https://auth.openai.com/oauth/token",
+			UsageURL:     usageServer.URL + "/wham/usage",
+			ClientID:     "test-client",
+			CallbackHost: "127.0.0.1",
+			CallbackPort: 0,
+			CallbackPath: "/auth/callback",
+			HTTPClient:   usageServer.Client(),
+			Now:          func() time.Time { return now },
+		}),
+	)
 
 	if err := api.oauth.Store().Save(&oauthpkg.Credential{
 		Ref:          "codex-sean-example-com",
@@ -838,17 +842,21 @@ providers:
 	}
 
 	api := NewAPI(dir, "test", nil)
-	api.oauth = oauthpkg.NewService(dir, oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
-		AuthURL:      "https://auth.openai.com/oauth/authorize",
-		TokenURL:     "https://auth.openai.com/oauth/token",
-		UsageURL:     usageServer.URL + "/wham/usage",
-		ClientID:     "test-client",
-		CallbackHost: "127.0.0.1",
-		CallbackPort: 0,
-		CallbackPath: "/auth/callback",
-		HTTPClient:   usageServer.Client(),
-		Now:          func() time.Time { return now },
-	}))
+	api.oauth = oauthpkg.NewService(
+		dir,
+		oauthpkg.WithNowFunc(func() time.Time { return now }),
+		oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+			AuthURL:      "https://auth.openai.com/oauth/authorize",
+			TokenURL:     "https://auth.openai.com/oauth/token",
+			UsageURL:     usageServer.URL + "/wham/usage",
+			ClientID:     "test-client",
+			CallbackHost: "127.0.0.1",
+			CallbackPort: 0,
+			CallbackPath: "/auth/callback",
+			HTTPClient:   usageServer.Client(),
+			Now:          func() time.Time { return now },
+		}),
+	)
 
 	if err := api.oauth.Store().Save(&oauthpkg.Credential{
 		Ref:          "codex-sean-example-com",
@@ -1583,6 +1591,31 @@ providers:
 	}
 }
 
+func TestHandleUpdateProvider_RejectsRenamingExistingOAuthProvider(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+mode: auto
+providers:
+  - name: codex-sean-example-com
+    auth_type: oauth
+    oauth_provider: codex
+    oauth_ref: codex-sean-example-com
+    priority: 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := NewAPI(dir, "test", nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/providers/codex/codex-sean-example-com", bytes.NewReader([]byte(`{
+  "name":"primary"
+}`)))
+	w := httptest.NewRecorder()
+	api.HandleUpdateProvider(w, req)
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+}
+
 func TestHandleUpdateProvider_ClearsOverrideFields(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "claude.yaml"), []byte(`
@@ -1709,7 +1742,7 @@ providers:
 	}
 }
 
-func TestHandleDeleteProvider_OAuthDeletesAccountAndLinkedProviders(t *testing.T) {
+func TestHandleDeleteProvider_OAuthDeletesUnsharedCredential(t *testing.T) {
 	dir := t.TempDir()
 	api := NewAPI(dir, "test", nil)
 	if err := api.oauth.Store().Save(&oauthpkg.Credential{
@@ -1763,10 +1796,63 @@ providers:
 		t.Fatalf("pinned_provider = %q, want empty", cfg.OpenAI.PinnedProvider)
 	}
 	if _, err := api.oauth.Load(config.OAuthProviderCodex, "codex-sean-example-com"); !os.IsNotExist(err) {
-		t.Fatalf("Load err = %v, want not-exist", err)
+		t.Fatalf("Load err = %v, want oauth credential removed", err)
 	}
 	if _, ok := api.telemetry.ProviderSnapshot("openai", "codex-sean-example-com"); ok {
 		t.Fatalf("expected usage snapshot for deleted oauth provider to be removed")
+	}
+}
+
+func TestHandleDeleteProvider_OAuthKeepsSharedCredential(t *testing.T) {
+	dir := t.TempDir()
+	api := NewAPI(dir, "test", nil)
+	if err := api.oauth.Store().Save(&oauthpkg.Credential{
+		Ref:          "codex-sean-example-com",
+		Provider:     config.OAuthProviderCodex,
+		Email:        "sean@example.com",
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "openai.yaml"), []byte(`
+mode: auto
+providers:
+  - name: primary
+    auth_type: oauth
+    oauth_provider: codex
+    oauth_ref: codex-sean-example-com
+    priority: 1
+  - name: backup
+    auth_type: oauth
+    oauth_provider: codex
+    oauth_ref: codex-sean-example-com
+    priority: 2
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/providers/codex/primary", nil)
+	w := httptest.NewRecorder()
+	api.HandleDeleteProvider(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(cfg.OpenAI.Providers) != 1 || cfg.OpenAI.Providers[0].Name != "backup" {
+		t.Fatalf("providers=%#v", cfg.OpenAI.Providers)
+	}
+	cred, err := api.oauth.Load(config.OAuthProviderCodex, "codex-sean-example-com")
+	if err != nil {
+		t.Fatalf("Load err = %v", err)
+	}
+	if got := cred.Email; got != "sean@example.com" {
+		t.Fatalf("email = %q, want sean@example.com", got)
 	}
 }
 

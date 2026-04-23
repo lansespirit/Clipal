@@ -184,6 +184,7 @@ type providerYAML struct {
 	AuthType             ProviderAuthType   `yaml:"auth_type,omitempty"`
 	OAuthProvider        OAuthProvider      `yaml:"oauth_provider,omitempty"`
 	OAuthRef             string             `yaml:"oauth_ref,omitempty"`
+	OAuthIdentity        string             `yaml:"oauth_identity,omitempty"`
 	ProxyMode            ProviderProxyMode  `yaml:"proxy_mode,omitempty"`
 	ProxyURL             string             `yaml:"proxy_url,omitempty"`
 	Priority             int                `yaml:"priority"`
@@ -203,6 +204,7 @@ type Provider struct {
 	AuthType      ProviderAuthType   `yaml:"auth_type,omitempty"`
 	OAuthProvider OAuthProvider      `yaml:"oauth_provider,omitempty"`
 	OAuthRef      string             `yaml:"oauth_ref,omitempty"`
+	OAuthIdentity string             `yaml:"oauth_identity,omitempty"`
 	ProxyMode     ProviderProxyMode  `yaml:"proxy_mode,omitempty"`
 	ProxyURL      string             `yaml:"proxy_url,omitempty"`
 	Priority      int                `yaml:"priority"`
@@ -246,6 +248,7 @@ func (p *Provider) UnmarshalYAML(value *yaml.Node) error {
 		AuthType:      raw.AuthType,
 		OAuthProvider: raw.OAuthProvider,
 		OAuthRef:      raw.OAuthRef,
+		OAuthIdentity: raw.OAuthIdentity,
 		ProxyMode:     raw.ProxyMode,
 		ProxyURL:      raw.ProxyURL,
 		Priority:      raw.Priority,
@@ -263,10 +266,12 @@ func (p Provider) MarshalYAML() (any, error) {
 	proxyURL := p.NormalizedProxyURL()
 	oauthProvider := p.NormalizedOAuthProvider()
 	oauthRef := p.NormalizedOAuthRef()
+	oauthIdentity := p.NormalizedOAuthIdentity()
 	if authType == ProviderAuthTypeAPIKey {
 		authType = ""
 		oauthProvider = ""
 		oauthRef = ""
+		oauthIdentity = ""
 	}
 	if proxyMode == ProviderProxyModeDefault {
 		proxyMode = ""
@@ -282,6 +287,7 @@ func (p Provider) MarshalYAML() (any, error) {
 		AuthType:      authType,
 		OAuthProvider: oauthProvider,
 		OAuthRef:      oauthRef,
+		OAuthIdentity: oauthIdentity,
 		ProxyMode:     proxyMode,
 		ProxyURL:      proxyURL,
 		Priority:      p.Priority,
@@ -349,8 +355,15 @@ func NormalizeProviderAuthSettings(provider *Provider) {
 		return
 	}
 	provider.AuthType = provider.NormalizedAuthType()
+	if provider.AuthType != ProviderAuthTypeOAuth {
+		provider.OAuthProvider = ""
+		provider.OAuthRef = ""
+		provider.OAuthIdentity = ""
+		return
+	}
 	provider.OAuthProvider = provider.NormalizedOAuthProvider()
 	provider.OAuthRef = provider.NormalizedOAuthRef()
+	provider.OAuthIdentity = provider.NormalizedOAuthIdentity()
 }
 
 func NormalizeProviderProxySettings(provider *Provider) {
@@ -431,6 +444,10 @@ func (p Provider) NormalizedOAuthProvider() OAuthProvider {
 
 func (p Provider) NormalizedOAuthRef() string {
 	return strings.TrimSpace(p.OAuthRef)
+}
+
+func (p Provider) NormalizedOAuthIdentity() string {
+	return strings.TrimSpace(p.OAuthIdentity)
 }
 
 func (p Provider) UsesOAuth() bool {
@@ -1163,6 +1180,14 @@ func validateProviders(clientName string, providers []Provider) error {
 			case OAuthProviderCodex:
 				if clientName != "openai" {
 					return fmt.Errorf("%s provider %s: oauth_provider %q is only supported for openai client", clientName, p.Name, OAuthProviderCodex)
+				}
+			case OAuthProviderGemini:
+				if clientName != "gemini" {
+					return fmt.Errorf("%s provider %s: oauth_provider %q is only supported for gemini client", clientName, p.Name, OAuthProviderGemini)
+				}
+			case OAuthProviderClaude:
+				if clientName != "claude" {
+					return fmt.Errorf("%s provider %s: oauth_provider %q is only supported for claude client", clientName, p.Name, OAuthProviderClaude)
 				}
 			default:
 				return fmt.Errorf("%s provider %s: unsupported oauth_provider %q", clientName, p.Name, p.NormalizedOAuthProvider())

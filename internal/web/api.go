@@ -35,8 +35,13 @@ type API struct {
 	integrations *integration.Manager
 	oauth        *oauthpkg.Service
 	oauthMu      sync.Mutex
-	oauthTargets map[string]string
+	oauthTargets map[string]oauthTargetClient
 	configMu     sync.Mutex
+}
+
+type oauthTargetClient struct {
+	ClientType string
+	ExpiresAt  time.Time
 }
 
 // NewAPI creates a new API handler
@@ -58,7 +63,7 @@ func NewAPI(configDir, version string, runtime *proxy.Router) *API {
 		telemetry:    telemetryStore,
 		integrations: integration.NewManager(configDir),
 		oauth:        oauthpkg.NewService(configDir),
-		oauthTargets: make(map[string]string),
+		oauthTargets: make(map[string]oauthTargetClient),
 	}
 }
 
@@ -487,21 +492,29 @@ func (a *API) HandleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "provider not found", http.StatusNotFound)
 		return
 	}
-	if current.UsesOAuth() {
-		_, err := a.deleteOAuthAccountLocked(cfg, current.NormalizedOAuthProvider(), current.NormalizedOAuthRef())
-		if err != nil {
-			writeAPIError(w, newAPIError(http.StatusInternalServerError, fmt.Sprintf("failed to delete oauth account: %v", err), err))
-			return
-		}
-		logger.Info("oauth account %s/%s deleted via provider removal", current.NormalizedOAuthProvider(), current.NormalizedOAuthRef())
-		writeJSON(w, SuccessResponse{Message: "oauth account deleted successfully"})
-		return
-	}
+	oauthProvider := current.NormalizedOAuthProvider()
+	oauthRef := current.NormalizedOAuthRef()
+	deletesOAuthCredential := current.UsesOAuth() && oauthProvider != "" && oauthRef != ""
 
 	var deleted bool
 	cc.Providers, deleted = deleteProviderFromList(cc.Providers, providerName)
 	if deleted {
+		normalizeClientConfigAfterProviderDeletion(cc, map[string]struct{}{
+			providerName: {},
+		})
+		restoreOAuth := func() error { return nil }
+		if deletesOAuthCredential && len(collectLinkedOAuthProviders(cfg, oauthProvider, oauthRef)) == 0 {
+			var err error
+			restoreOAuth, err = a.oauth.Store().DeleteWithRollback(oauthProvider, oauthRef)
+			if err != nil {
+				writeAPIError(w, newAPIError(http.StatusInternalServerError, fmt.Sprintf("failed to remove oauth credential: %v", err), err))
+				return
+			}
+		}
 		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
+			if err := restoreOAuth(); err != nil {
+				logger.Warn("failed to restore oauth credential %s/%s after provider delete rollback: %v", oauthProvider, oauthRef, err)
+			}
 			return
 		}
 		if err := a.deleteProviderUsage(clientType, providerName); err != nil {

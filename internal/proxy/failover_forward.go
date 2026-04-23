@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -553,20 +552,7 @@ func (cp *ClientProxy) forwardCountTokensSingleShot(w http.ResponseWriter, req *
 	defer cancelAttempt(nil)
 
 	reqWithAttemptCtx := req.WithContext(attemptCtx)
-	proxyReq, err := cp.createProxyRequest(reqWithAttemptCtx, provider, cp.providerKeys[index][keyIndex], path, bodyBytes)
-	if err != nil {
-		logger.Error("[%s] %s during count_tokens", cp.clientType, describeRequestBuildFailure(provider.Name, err))
-		cp.recordTerminalRequest(time.Now(), req, provider.Name, http.StatusBadGateway, "request_rejected", "Failed to create upstream request.")
-		writeProxyError(w, "Failed to create upstream request", http.StatusBadGateway)
-		return
-	}
-
-	proxyReq.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-	}
-
-	//nolint:gosec // Clipal is a user-configured reverse proxy and intentionally forwards to configured upstream base URLs.
-	resp, err := cp.upstreamHTTPClient(index).Do(proxyReq)
+	resp, _, err := cp.doProviderRequest(reqWithAttemptCtx, provider, index, cp.providerKeys[index][keyIndex], path, bodyBytes)
 	if err != nil {
 		if req.Context().Err() != nil {
 			return

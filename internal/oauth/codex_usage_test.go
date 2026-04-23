@@ -1,12 +1,44 @@
 package oauth
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/lansespirit/Clipal/internal/config"
 )
+
+type stubCodexUsageProvider struct {
+	usage    *CodexUsageDetails
+	usageErr error
+}
+
+func (c *stubCodexUsageProvider) Provider() config.OAuthProvider {
+	return config.OAuthProviderCodex
+}
+
+func (c *stubCodexUsageProvider) StartLogin(time.Time, time.Duration) (*LoginSession, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (c *stubCodexUsageProvider) ExchangeSessionCode(context.Context, *LoginSession, string) (*Credential, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (c *stubCodexUsageProvider) Refresh(_ context.Context, cred *Credential) (*Credential, error) {
+	return cred.Clone(), nil
+}
+
+func (c *stubCodexUsageProvider) FetchUsage(context.Context, *Credential) (*CodexUsageDetails, error) {
+	if c.usage == nil {
+		return nil, c.usageErr
+	}
+	return c.usage, c.usageErr
+}
 
 func TestCodexFetchUsage_ComputesResetTimeFromRelativeSeconds(t *testing.T) {
 	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
@@ -53,5 +85,44 @@ func TestCodexFetchUsage_ComputesResetTimeFromRelativeSeconds(t *testing.T) {
 	}
 	if got := details.Primary.ResetsAt; !got.Equal(now.Add(120 * time.Second)) {
 		t.Fatalf("resets_at = %s, want %s", got.Format(time.RFC3339), now.Add(120*time.Second).Format(time.RFC3339))
+	}
+}
+
+func TestServiceGetCodexUsage_UsesRegisteredProviderClient(t *testing.T) {
+	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	svc := NewService(dir,
+		WithNowFunc(func() time.Time { return now }),
+		WithProviderClient(&stubCodexUsageProvider{
+			usage: &CodexUsageDetails{
+				PlanType: "pro",
+				Primary: &CodexUsageWindow{
+					UsedPercent:   12,
+					WindowMinutes: 60,
+					ResetsAt:      now.Add(30 * time.Minute),
+				},
+			},
+		}),
+	)
+	if err := svc.Store().Save(&Credential{
+		Ref:         "codex-sean-example-com",
+		Provider:    config.OAuthProviderCodex,
+		Email:       "sean@example.com",
+		AccountID:   "account-123",
+		AccessToken: "access-1",
+		ExpiresAt:   now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	details, err := svc.GetCodexUsage(t.Context(), "codex-sean-example-com")
+	if err != nil {
+		t.Fatalf("GetCodexUsage: %v", err)
+	}
+	if details == nil || details.Primary == nil {
+		t.Fatalf("details = %#v, want primary usage window", details)
+	}
+	if got := details.Primary.UsedPercent; got != 12 {
+		t.Fatalf("used_percent = %v, want 12", got)
 	}
 }

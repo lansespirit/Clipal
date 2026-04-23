@@ -6,10 +6,12 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/lansespirit/Clipal/internal/config"
+	"github.com/lansespirit/Clipal/internal/logger"
 	oauthpkg "github.com/lansespirit/Clipal/internal/oauth"
 )
 
@@ -83,8 +85,32 @@ func (a *API) HandleImportCLIProxyAPICredentials(w http.ResponseWriter, r *http.
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	restoreOAuthDir, finalizeOAuthDir, err := snapshotOAuthImportProviderDir(filepath.Join(a.configDir, "oauth", string(requestedProvider)))
+	if err != nil {
+		writeAPIError(w, newAPIError(http.StatusInternalServerError, fmt.Sprintf("failed to prepare oauth import rollback: %v", err), err))
+		return
+	}
+	rolledBackOAuthDir := false
+	defer func() {
+		if rolledBackOAuthDir || finalizeOAuthDir == nil {
+			return
+		}
+		if err := finalizeOAuthDir(); err != nil {
+			logger.Warn("failed to finalize oauth import snapshot for %s: %v", requestedProvider, err)
+		}
+	}()
+	rollbackOAuthDir := func(baseErr error) error {
+		if restoreOAuthDir == nil {
+			return baseErr
+		}
+		rolledBackOAuthDir = true
+		if restoreErr := restoreOAuthDir(); restoreErr != nil {
+			return fmt.Errorf("%w (oauth rollback failed: %v)", baseErr, restoreErr)
+		}
+		return baseErr
+	}
 
-	seen := make(map[string]struct{}, len(candidates))
+	seen := make([]*oauthpkg.Credential, 0, len(candidates))
 	changed := false
 	for i := range candidates {
 		candidate := &candidates[i]
@@ -92,15 +118,13 @@ func (a *API) HandleImportCLIProxyAPICredentials(w http.ResponseWriter, r *http.
 			continue
 		}
 
-		key := string(candidate.cred.Provider) + ":" + candidate.cred.Ref
-		if _, exists := seen[key]; exists {
+		if oauthImportCandidateSeen(seen, candidate.cred) {
 			candidate.result.Status = "skipped"
 			candidate.result.Message = "duplicate account in selected files"
 			candidate.cred = nil
 			resp.recountResult(i, candidate.result)
 			continue
 		}
-		seen[key] = struct{}{}
 
 		if err := a.oauth.Store().Save(candidate.cred); err != nil {
 			candidate.result.Status = "failed"
@@ -109,22 +133,48 @@ func (a *API) HandleImportCLIProxyAPICredentials(w http.ResponseWriter, r *http.
 			resp.recountResult(i, candidate.result)
 			continue
 		}
+		seen = append(seen, candidate.cred.Clone())
+		candidate.result.Ref = candidate.cred.Ref
+		candidate.result.Email = candidate.cred.Email
 
-		provider, linked := ensureOAuthProviderLinked(cc, candidate.cred)
+		link := ensureOAuthProviderLinked(cc, candidate.cred, a.oauth.Load)
 		candidate.result.Status = "imported"
-		candidate.result.ProviderName = provider.Name
-		if linked {
-			candidate.result.Message = fmt.Sprintf("imported account and created provider %s", provider.Name)
+		candidate.result.ProviderName = link.Provider.Name
+		candidate.result.ProviderAction = string(link.Action)
+		switch link.Action {
+		case oauthProviderActionCreated:
+			candidate.result.Message = fmt.Sprintf("imported account and created provider %s", link.Provider.Name)
 			resp.LinkedCount++
-			changed = true
-		} else {
-			candidate.result.Message = fmt.Sprintf("imported account and reused provider %s", provider.Name)
+		case oauthProviderActionRelinked:
+			candidate.result.Message = fmt.Sprintf("imported account and relinked provider %s", link.Provider.Name)
+			resp.LinkedCount++
+		default:
+			candidate.result.Message = fmt.Sprintf("imported account and reused provider %s", link.Provider.Name)
 		}
+		changed = changed || link.Changed
 		resp.recountResult(i, candidate.result)
 	}
 
 	if changed {
-		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
+		if err := cfg.Validate(); err != nil {
+			err = rollbackOAuthDir(fmt.Errorf("invalid configuration: %w", err))
+			writeAPIError(w, newAPIError(http.StatusBadRequest, err.Error(), err))
+			return
+		}
+		restoreConfig, err := a.saveClientConfigWithRollback(clientType, *cc)
+		if err != nil {
+			err = rollbackOAuthDir(fmt.Errorf("failed to save config: %w", err))
+			writeAPIError(w, newAPIError(http.StatusInternalServerError, err.Error(), err))
+			return
+		}
+		if err := a.reloadRuntimeProviderConfigs(); err != nil {
+			if restoreErr := restoreConfig(); restoreErr != nil {
+				err = fmt.Errorf("failed to apply saved config: %w (config rollback failed: %v)", err, restoreErr)
+			} else {
+				err = fmt.Errorf("failed to apply saved config: %w", err)
+			}
+			err = rollbackOAuthDir(err)
+			writeAPIError(w, newAPIError(http.StatusInternalServerError, err.Error(), err))
 			return
 		}
 	}
@@ -197,6 +247,173 @@ func readOAuthImportFile(header *multipart.FileHeader) ([]byte, error) {
 	return data, nil
 }
 
+func snapshotOAuthImportProviderDir(path string) (func() error, func() error, error) {
+	path = filepath.Clean(path)
+	// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return func() error {
+				// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+				return os.RemoveAll(path)
+			}, func() error { return nil }, nil
+		}
+		return nil, nil, err
+	}
+	if !info.IsDir() {
+		return nil, nil, fmt.Errorf("oauth provider path is not a directory: %s", path)
+	}
+	backupPath, err := prepareOAuthImportBackupPath(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+	if err := os.MkdirAll(backupPath, info.Mode().Perm()); err != nil {
+		return nil, nil, err
+	}
+	// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+	protectedPaths, err := copyOAuthImportSnapshot(path, backupPath)
+	if err != nil {
+		// #nosec G703 -- backupPath is generated under Clipal's validated oauth provider directory.
+		_ = os.RemoveAll(backupPath)
+		return nil, nil, err
+	}
+
+	return func() error {
+			stashDir := ""
+			if len(protectedPaths) > 0 {
+				// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+				stashDir, err = os.MkdirTemp(filepath.Dir(path), "."+filepath.Base(path)+"-restore-protected-*")
+				if err != nil {
+					return err
+				}
+				defer func() {
+					if stashDir != "" {
+						// #nosec G703 -- stashDir is created under a validated temp parent above.
+						_ = os.RemoveAll(stashDir)
+					}
+				}()
+				for rel := range protectedPaths {
+					currentPath := filepath.Join(path, rel)
+					// #nosec G703 -- currentPath stays under Clipal's validated oauth provider directory.
+					if _, err := os.Lstat(currentPath); err != nil {
+						continue
+					}
+					stashPath := filepath.Join(stashDir, rel)
+					// #nosec G703 -- stashPath stays under the temp restore directory created above.
+					if err := os.MkdirAll(filepath.Dir(stashPath), 0o700); err != nil {
+						return err
+					}
+					// #nosec G703 -- both currentPath and stashPath are derived from validated directories above.
+					if err := os.Rename(currentPath, stashPath); err != nil {
+						return err
+					}
+				}
+			}
+			// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+			if err := os.RemoveAll(path); err != nil {
+				return err
+			}
+			// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+			if err := os.Rename(backupPath, path); err != nil {
+				return err
+			}
+			if stashDir != "" {
+				for rel := range protectedPaths {
+					stashPath := filepath.Join(stashDir, rel)
+					// #nosec G703 -- stashPath stays under the temp restore directory created above.
+					if _, err := os.Lstat(stashPath); err != nil {
+						continue
+					}
+					targetPath := filepath.Join(path, rel)
+					// #nosec G703 -- targetPath stays under Clipal's validated oauth provider directory.
+					if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+						return err
+					}
+					// #nosec G703 -- stashPath and targetPath are derived from validated directories above.
+					if err := os.Rename(stashPath, targetPath); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}, func() error {
+			// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+			return os.RemoveAll(backupPath)
+		}, nil
+}
+
+func prepareOAuthImportBackupPath(path string) (string, error) {
+	backupPath, err := os.MkdirTemp(filepath.Dir(path), "."+filepath.Base(path)+"-import-backup-*")
+	if err != nil {
+		return "", err
+	}
+	// #nosec G703 -- backupPath is generated under Clipal's validated oauth provider directory.
+	return backupPath, os.Remove(backupPath)
+}
+
+func copyOAuthImportSnapshot(srcRoot string, dstRoot string) (map[string]struct{}, error) {
+	protectedPaths := make(map[string]struct{})
+	// #nosec G703 -- path is derived from Clipal's configDir/oauth/<validated-provider>.
+	err := filepath.WalkDir(srcRoot, func(current string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if current == srcRoot {
+				return walkErr
+			}
+			if rel, err := filepath.Rel(srcRoot, current); err == nil && rel != "." {
+				protectedPaths[rel] = struct{}{}
+			}
+			return nil
+		}
+		if current == srcRoot {
+			return nil
+		}
+
+		rel, err := filepath.Rel(srcRoot, current)
+		if err != nil {
+			return nil
+		}
+		dstPath := filepath.Join(dstRoot, rel)
+
+		if d.IsDir() {
+			info, err := d.Info()
+			if err != nil {
+				protectedPaths[rel] = struct{}{}
+				return nil
+			}
+			return os.MkdirAll(dstPath, info.Mode().Perm())
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(current)
+			if err != nil {
+				protectedPaths[rel] = struct{}{}
+				return nil
+			}
+			if err := os.MkdirAll(filepath.Dir(dstPath), 0o700); err != nil {
+				return err
+			}
+			return os.Symlink(target, dstPath)
+		}
+		if !d.Type().IsRegular() {
+			protectedPaths[rel] = struct{}{}
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			protectedPaths[rel] = struct{}{}
+			return nil
+		}
+		data, err := os.ReadFile(current)
+		if err != nil {
+			protectedPaths[rel] = struct{}{}
+			return nil
+		}
+		return atomicWriteFile(dstPath, data, info.Mode().Perm())
+	})
+	return protectedPaths, err
+}
+
 func (resp *OAuthImportResponse) addResult(result OAuthImportFileResultResponse) {
 	resp.Results = append(resp.Results, result)
 	switch result.Status {
@@ -233,7 +450,7 @@ func (resp *OAuthImportResponse) adjustResultCount(status string, delta int) {
 func summarizeOAuthImport(resp OAuthImportResponse) string {
 	parts := []string{
 		fmt.Sprintf("imported %d account(s)", resp.ImportedCount),
-		fmt.Sprintf("created %d provider(s)", resp.LinkedCount),
+		fmt.Sprintf("linked %d provider(s)", resp.LinkedCount),
 	}
 	if resp.SkippedCount > 0 {
 		parts = append(parts, fmt.Sprintf("skipped %d file(s)", resp.SkippedCount))
@@ -242,4 +459,26 @@ func summarizeOAuthImport(resp OAuthImportResponse) string {
 		parts = append(parts, fmt.Sprintf("failed %d file(s)", resp.FailedCount))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func oauthImportCandidateSeen(seen []*oauthpkg.Credential, cred *oauthpkg.Credential) bool {
+	for _, existing := range seen {
+		if sameOAuthImportCandidate(existing, cred) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameOAuthImportCandidate(a *oauthpkg.Credential, b *oauthpkg.Credential) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Provider != b.Provider {
+		return false
+	}
+	if ref := strings.TrimSpace(a.Ref); ref != "" && ref == strings.TrimSpace(b.Ref) {
+		return true
+	}
+	return oauthpkg.SameAccountIdentity(a, b)
 }

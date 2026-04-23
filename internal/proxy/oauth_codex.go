@@ -46,6 +46,12 @@ func providerSupportsCapability(provider config.Provider, capability RequestCapa
 	switch provider.NormalizedOAuthProvider() {
 	case config.OAuthProviderCodex:
 		return capability == CapabilityOpenAIResponses
+	case config.OAuthProviderClaude:
+		return capability == CapabilityClaudeMessages || capability == CapabilityClaudeCountTokens
+	case config.OAuthProviderGemini:
+		return capability == CapabilityGeminiGenerateContent ||
+			capability == CapabilityGeminiStreamGenerate ||
+			capability == CapabilityGeminiCountTokens
 	default:
 		return false
 	}
@@ -59,6 +65,10 @@ func supportedCapabilitySummary(provider config.Provider) string {
 	switch provider.NormalizedOAuthProvider() {
 	case config.OAuthProviderCodex:
 		return "OpenAI Responses requests"
+	case config.OAuthProviderClaude:
+		return "Claude messages and count_tokens requests"
+	case config.OAuthProviderGemini:
+		return "Gemini generateContent, streamGenerateContent, and countTokens requests"
 	default:
 		return "its configured request types"
 	}
@@ -72,6 +82,10 @@ func (cp *ClientProxy) createOAuthProxyRequest(original *http.Request, provider 
 	switch provider.NormalizedOAuthProvider() {
 	case config.OAuthProviderCodex:
 		return cp.createCodexOAuthRequest(original, provider, path, body)
+	case config.OAuthProviderClaude:
+		return cp.createClaudeOAuthRequest(original, provider, path, body)
+	case config.OAuthProviderGemini:
+		return cp.createGeminiOAuthRequest(original, provider, path, body)
 	default:
 		return nil, fmt.Errorf("unsupported oauth provider %q", provider.NormalizedOAuthProvider())
 	}
@@ -383,6 +397,10 @@ func (cp *ClientProxy) doProviderRequest(original *http.Request, provider config
 	}
 	resp, err := cp.doPreparedProviderRequest(proxyReq, providerIndex, body)
 	if err != nil || !provider.UsesOAuth() || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		if err != nil || resp == nil {
+			return resp, true, err
+		}
+		resp, err = prepareOAuthProviderResponse(original, provider, resp)
 		return resp, true, err
 	}
 	if cp == nil || cp.oauth == nil {
@@ -399,6 +417,10 @@ func (cp *ClientProxy) doProviderRequest(original *http.Request, provider config
 		return nil, false, err
 	}
 	resp, err = cp.doPreparedProviderRequest(proxyReq, providerIndex, body)
+	if err != nil || resp == nil {
+		return resp, true, err
+	}
+	resp, err = prepareOAuthProviderResponse(original, provider, resp)
 	return resp, true, err
 }
 

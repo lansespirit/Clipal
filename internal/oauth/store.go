@@ -16,6 +16,11 @@ type Store struct {
 	rootDir string
 }
 
+type storedCredential struct {
+	path string
+	cred Credential
+}
+
 const (
 	credentialFileSeparator  = "--"
 	maxCredentialFileNameLen = 255
@@ -43,17 +48,23 @@ func (s *Store) Save(cred *Credential) error {
 	toSave := cred.Clone()
 	toSave.Provider = provider
 	toSave.Ref = ref
+	existing, existingPath, entries, err := s.findMatchingAccount(toSave)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		toSave = mergeCredentialForUpdate(existing, toSave)
+	}
+	if existing == nil && s.hasConflictingRef(entries, toSave.Ref) {
+		toSave.Ref = s.disambiguateRef(entries, toSave)
+	}
 
 	data, err := json.MarshalIndent(toSave, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal credential: %w", err)
 	}
 	data = append(data, '\n')
-	targetPath := s.preferredPath(provider, toSave.Email, ref)
-	existingPath, err := s.resolvePath(provider, ref)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
+	targetPath := s.preferredPath(provider, toSave.Email, toSave.Ref)
 	if err := atomicWriteFile(targetPath, data, 0o600); err != nil {
 		return err
 	}
@@ -62,7 +73,53 @@ func (s *Store) Save(cred *Credential) error {
 			return err
 		}
 	}
+	*cred = *toSave.Clone()
 	return nil
+}
+
+func (s *Store) findMatchingAccount(cred *Credential) (*Credential, string, []storedCredential, error) {
+	if s == nil || cred == nil {
+		return nil, "", nil, nil
+	}
+	entries, err := s.scanCredentials(cred.Provider)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	bestIndex := -1
+	bestScore := credentialMatchNone
+	bestKey := ""
+	ambiguousWeakMatch := false
+	for i := range entries {
+		score := credentialUpdateMatchScore(&entries[i].cred, cred)
+		if score == credentialMatchNone {
+			continue
+		}
+		if bestIndex == -1 || score > bestScore || (score == bestScore && storedCredentialLess(entries[bestIndex], entries[i])) {
+			bestIndex = i
+			bestScore = score
+			bestKey = canonicalAccountIdentityKey(&entries[i].cred)
+			ambiguousWeakMatch = false
+			continue
+		}
+		if score == bestScore && isWeakIdentityOnlyMatch(score) {
+			candidateKey := canonicalAccountIdentityKey(&entries[i].cred)
+			if bestKey == "" || candidateKey == "" || candidateKey != bestKey {
+				ambiguousWeakMatch = true
+			}
+		}
+	}
+	if bestIndex >= 0 {
+		if ambiguousWeakMatch && isWeakIdentityOnlyMatch(bestScore) {
+			return nil, "", entries, nil
+		}
+		return entries[bestIndex].cred.Clone(), entries[bestIndex].path, entries, nil
+	}
+	return nil, "", entries, nil
+}
+
+func isWeakIdentityOnlyMatch(score int) bool {
+	return score == int(accountIdentityWeakMatch)*credentialMatchStep
 }
 
 func (s *Store) Load(provider config.OAuthProvider, ref string) (*Credential, error) {
@@ -80,27 +137,13 @@ func (s *Store) List(provider config.OAuthProvider) ([]Credential, error) {
 	if s == nil {
 		return nil, fmt.Errorf("store is nil")
 	}
-	dir := s.dir(provider)
-	entries, err := os.ReadDir(dir)
+	entries, err := s.scanCredentials(provider)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
 	out := make([]Credential, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		cred, err := s.loadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *cred)
+		out = append(out, entry.cred)
 	}
 	return out, nil
 }
@@ -217,6 +260,118 @@ func (s *Store) loadFile(path string) (*Credential, error) {
 	cred.Provider = normalizeProvider(cred.Provider)
 	cred.Ref = strings.TrimSpace(cred.Ref)
 	return cred.Clone(), nil
+}
+
+func (s *Store) scanCredentials(provider config.OAuthProvider) ([]storedCredential, error) {
+	provider = normalizeProvider(provider)
+	dir := s.dir(provider)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	out := make([]storedCredential, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		cred, err := s.loadFile(path)
+		if err != nil {
+			continue
+		}
+		if cred.Provider != provider {
+			continue
+		}
+		out = append(out, storedCredential{
+			path: path,
+			cred: *cred,
+		})
+	}
+	return out, nil
+}
+
+func storedCredentialLess(best storedCredential, candidate storedCredential) bool {
+	if candidate.cred.LastRefresh.After(best.cred.LastRefresh) {
+		return true
+	}
+	if best.cred.LastRefresh.After(candidate.cred.LastRefresh) {
+		return false
+	}
+	if candidate.cred.ExpiresAt.After(best.cred.ExpiresAt) {
+		return true
+	}
+	if best.cred.ExpiresAt.After(candidate.cred.ExpiresAt) {
+		return false
+	}
+	if strings.TrimSpace(candidate.cred.Ref) != strings.TrimSpace(best.cred.Ref) {
+		return strings.TrimSpace(candidate.cred.Ref) < strings.TrimSpace(best.cred.Ref)
+	}
+	return filepath.Base(candidate.path) < filepath.Base(best.path)
+}
+
+func (s *Store) hasConflictingRef(entries []storedCredential, ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.cred.Ref) == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) disambiguateRef(entries []storedCredential, cred *Credential) string {
+	base := slugify(strings.TrimSpace(cred.Ref))
+	if base == "" {
+		base = "account"
+	}
+	for _, suffix := range credentialRefDisambiguators(cred) {
+		candidate := slugify(base + "-" + suffix)
+		if candidate != "" && !s.hasConflictingRef(entries, candidate) {
+			return candidate
+		}
+	}
+	for n := 2; ; n++ {
+		candidate := slugify(fmt.Sprintf("%s-%d", base, n))
+		if candidate != "" && !s.hasConflictingRef(entries, candidate) {
+			return candidate
+		}
+	}
+}
+
+func credentialRefDisambiguators(cred *Credential) []string {
+	if cred == nil {
+		return nil
+	}
+	candidates := []string{
+		normalizeIdentityString(cred.AccountID),
+		normalizeIdentityString(geminiCredentialProjectID(cred)),
+		normalizeIdentityString(credentialMetadataValue(cred, "organization_id")),
+		normalizeEmailIdentity(cred.Email),
+	}
+	out := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidate = slugify(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func credentialFileName(email string, ref string) string {

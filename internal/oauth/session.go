@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,12 +20,21 @@ import (
 
 type Option func(*Service)
 
+var ErrSessionNotFound = errors.New("oauth session not found")
+var ErrInvalidAuthorizationResponse = errors.New("invalid authorization response")
+
+const defaultLoginExchangeTimeout = 90 * time.Second
+
 type Service struct {
-	store       *Store
-	codex       *CodexClient
-	now         func() time.Time
-	sessionTTL  time.Duration
-	refreshSkew time.Duration
+	store                *Store
+	codex                *CodexClient
+	claude               *ClaudeClient
+	gemini               *GeminiClient
+	clients              map[config.OAuthProvider]ProviderClient
+	now                  func() time.Time
+	sessionTTL           time.Duration
+	loginExchangeTimeout time.Duration
+	refreshSkew          time.Duration
 
 	mu        sync.Mutex
 	sessions  map[string]*LoginSession
@@ -37,14 +49,21 @@ type refreshCall struct {
 
 func NewService(configDir string, opts ...Option) *Service {
 	svc := &Service{
-		store:       NewStore(configDir),
-		codex:       NewCodexClient(),
-		now:         time.Now,
-		sessionTTL:  5 * time.Minute,
-		refreshSkew: 30 * time.Second,
-		sessions:    make(map[string]*LoginSession),
-		refreshes:   make(map[string]*refreshCall),
+		store:                NewStore(configDir),
+		codex:                NewCodexClient(),
+		claude:               NewClaudeClient(),
+		gemini:               NewGeminiClient(),
+		clients:              make(map[config.OAuthProvider]ProviderClient),
+		now:                  time.Now,
+		sessionTTL:           5 * time.Minute,
+		loginExchangeTimeout: defaultLoginExchangeTimeout,
+		refreshSkew:          30 * time.Second,
+		sessions:             make(map[string]*LoginSession),
+		refreshes:            make(map[string]*refreshCall),
 	}
+	svc.registerProviderClient(svc.codex)
+	svc.registerProviderClient(svc.claude)
+	svc.registerProviderClient(svc.gemini)
 	for _, opt := range opts {
 		if opt != nil {
 			opt(svc)
@@ -65,7 +84,32 @@ func WithCodexClient(client *CodexClient) Option {
 	return func(s *Service) {
 		if client != nil {
 			s.codex = client
+			s.registerProviderClient(client)
 		}
+	}
+}
+
+func WithClaudeClient(client *ClaudeClient) Option {
+	return func(s *Service) {
+		if client != nil {
+			s.claude = client
+			s.registerProviderClient(client)
+		}
+	}
+}
+
+func WithGeminiClient(client *GeminiClient) Option {
+	return func(s *Service) {
+		if client != nil {
+			s.gemini = client
+			s.registerProviderClient(client)
+		}
+	}
+}
+
+func WithProviderClient(client ProviderClient) Option {
+	return func(s *Service) {
+		s.registerProviderClient(client)
 	}
 }
 
@@ -73,6 +117,14 @@ func WithSessionTTL(ttl time.Duration) Option {
 	return func(s *Service) {
 		if ttl > 0 {
 			s.sessionTTL = ttl
+		}
+	}
+}
+
+func WithLoginExchangeTimeout(timeout time.Duration) Option {
+	return func(s *Service) {
+		if timeout > 0 {
+			s.loginExchangeTimeout = timeout
 		}
 	}
 }
@@ -87,7 +139,8 @@ func WithRefreshSkew(skew time.Duration) Option {
 
 func (s *Service) StartLogin(provider config.OAuthProvider) (*LoginSession, error) {
 	provider = normalizeProvider(provider)
-	if provider != config.OAuthProviderCodex {
+	client, ok := s.providerClient(provider)
+	if !ok {
 		return nil, fmt.Errorf("unsupported oauth provider %q", provider)
 	}
 
@@ -100,45 +153,20 @@ func (s *Service) StartLogin(provider config.OAuthProvider) (*LoginSession, erro
 			_ = callback.Close()
 		}
 	}
-
-	pkce, err := GeneratePKCECodes()
+	session, err := client.StartLogin(s.now(), s.sessionTTL)
 	if err != nil {
 		return nil, err
-	}
-	callback, redirectURI, err := startCallbackServer(s.codex.callbackHost(), s.codex.callbackPort(), s.codex.callbackPath())
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "address already in use") {
-			return nil, fmt.Errorf("codex callback port %d is already in use; close the existing authorization flow or the process using that port, then retry", s.codex.callbackPort())
-		}
-		return nil, err
-	}
-
-	sessionID, err := randomID()
-	if err != nil {
-		_ = callback.Close()
-		return nil, err
-	}
-	authURL, err := s.codex.GenerateAuthURL(sessionID, redirectURI, pkce)
-	if err != nil {
-		_ = callback.Close()
-		return nil, err
-	}
-
-	session := &LoginSession{
-		ID:          sessionID,
-		Provider:    provider,
-		AuthURL:     authURL,
-		Status:      LoginStatusPending,
-		ExpiresAt:   s.now().Add(s.sessionTTL),
-		pkce:        pkce,
-		redirectURI: redirectURI,
-		callback:    callback,
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweepExpiredSessionsLocked()
 	s.sessions[session.ID] = session
+	if session.callback != nil {
+		session.callback.SetHandler(func(result callbackResult) callbackPage {
+			return s.handleCallbackResult(session.ID, result)
+		})
+	}
 	return session.Clone(), nil
 }
 
@@ -161,9 +189,9 @@ func (s *Service) PollLogin(sessionID string) (*LoginSession, error) {
 	session, ok := s.sessions[strings.TrimSpace(sessionID)]
 	if !ok {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("oauth session not found")
+		return nil, ErrSessionNotFound
 	}
-	if session.Status == LoginStatusPending && !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(s.now()) {
+	if session.completionDone == nil && session.Status == LoginStatusPending && !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(s.now()) {
 		callback := session.callback
 		session.callback = nil
 		session.Status = LoginStatusExpired
@@ -180,9 +208,6 @@ func (s *Service) PollLogin(sessionID string) (*LoginSession, error) {
 		return out, nil
 	}
 	callback := session.callback
-	redirectURI := session.redirectURI
-	pkce := session.pkce
-	provider := session.Provider
 	expectedState := session.ID
 	s.mu.Unlock()
 
@@ -194,37 +219,118 @@ func (s *Service) PollLogin(sessionID string) (*LoginSession, error) {
 		return out, nil
 	}
 	if result.Error != "" {
-		return s.finishSessionWithError(sessionID, result.Error, callback), nil
+		sessionSnapshot, callback, done, terminal, err := s.beginSessionCompletion(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if terminal != nil {
+			return terminal, nil
+		}
+		if done != nil {
+			return s.waitForSessionCompletion(context.Background(), sessionID, done), nil
+		}
+		return s.finishSessionWithError(sessionSnapshot.ID, result.errorMessage(), callback), nil
 	}
 	if result.State != expectedState {
+		sessionSnapshot, callback, done, terminal, err := s.beginSessionCompletion(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if terminal != nil {
+			return terminal, nil
+		}
+		if done != nil {
+			return s.waitForSessionCompletion(context.Background(), sessionID, done), nil
+		}
+		return s.finishSessionWithError(sessionSnapshot.ID, "oauth state mismatch", callback), nil
+	}
+
+	sessionSnapshot, callback, done, terminal, err := s.beginSessionCompletion(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if terminal != nil {
+		return terminal, nil
+	}
+	if done != nil {
+		return s.waitForSessionCompletion(context.Background(), sessionID, done), nil
+	}
+
+	return s.completeSessionWithCode(
+		context.Background(),
+		sessionSnapshot,
+		result.Code,
+		callback,
+	), nil
+}
+
+func (s *Service) CompleteLoginWithCode(ctx context.Context, sessionID string, code string) (*LoginSession, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	code = strings.TrimSpace(code)
+	if sessionID == "" {
+		return nil, ErrSessionNotFound
+	}
+	if code == "" {
+		return nil, fmt.Errorf("%w: authorization code is required", ErrInvalidAuthorizationResponse)
+	}
+	parsed, err := parseManualAuthorizationInput(code)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, ErrSessionNotFound
+	}
+	if session.completionDone != nil {
+		done := session.completionDone
+		s.mu.Unlock()
+		return s.waitForSessionCompletion(ctx, sessionID, done), nil
+	}
+	if session.Status == LoginStatusPending && !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(s.now()) {
+		callback := session.callback
+		session.callback = nil
+		session.Status = LoginStatusExpired
+		session.Error = "oauth session expired"
+		out := session.Clone()
+		s.mu.Unlock()
+		if callback != nil {
+			_ = callback.Close()
+		}
+		return out, nil
+	}
+	if session.Status != LoginStatusPending {
+		out := session.Clone()
+		s.mu.Unlock()
+		return out, nil
+	}
+	if parsed.Error == "" && manualAuthorizationStateRequired(session.Provider) && parsed.State == "" {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("%w: %s authorization requires the full callback URL or an authorization code that still includes its state", ErrInvalidAuthorizationResponse, providerDisplayName(session.Provider))
+	}
+	s.mu.Unlock()
+
+	sessionSnapshot, callback, done, terminal, err := s.beginSessionCompletion(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if terminal != nil {
+		return terminal, nil
+	}
+	if done != nil {
+		return s.waitForSessionCompletion(ctx, sessionID, done), nil
+	}
+
+	if parsed.Error != "" {
+		return s.finishSessionWithError(sessionID, parsed.errorMessage(), callback), nil
+	}
+	if parsed.State != "" && parsed.State != sessionID {
 		return s.finishSessionWithError(sessionID, "oauth state mismatch", callback), nil
 	}
 
-	var cred *Credential
-	var err error
-	switch provider {
-	case config.OAuthProviderCodex:
-		cred, err = s.codex.ExchangeCode(context.Background(), result.Code, redirectURI, pkce)
-	default:
-		err = fmt.Errorf("unsupported oauth provider %q", provider)
-	}
-	if err != nil {
-		return s.finishSessionWithError(sessionID, err.Error(), callback), nil
-	}
-	if err := s.store.Save(cred); err != nil {
-		return s.finishSessionWithError(sessionID, err.Error(), callback), nil
-	}
-
-	_ = callback.Close()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	session = s.sessions[sessionID]
-	session.callback = nil
-	session.Status = LoginStatusCompleted
-	session.CredentialRef = cred.Ref
-	session.Email = cred.Email
-	session.Error = ""
-	return session.Clone(), nil
+	return s.completeSessionWithCode(ctx, sessionSnapshot, parsed.Code, callback), nil
 }
 
 func (s *Service) Load(provider config.OAuthProvider, ref string) (*Credential, error) {
@@ -268,6 +374,9 @@ func (s *Service) refresh(ctx context.Context, provider config.OAuthProvider, re
 	if call, ok := s.refreshes[key]; ok {
 		s.mu.Unlock()
 		<-call.done
+		if call.cred == nil {
+			return nil, call.err
+		}
 		return call.cred.Clone(), call.err
 	}
 	call := &refreshCall{done: make(chan struct{})}
@@ -283,20 +392,18 @@ func (s *Service) refresh(ctx context.Context, provider config.OAuthProvider, re
 	close(call.done)
 	s.mu.Unlock()
 
+	if refreshed == nil {
+		return nil, err
+	}
 	return refreshed.Clone(), err
 }
 
 func (s *Service) refreshCredential(ctx context.Context, cred *Credential) (*Credential, error) {
-	var (
-		refreshed *Credential
-		err       error
-	)
-	switch normalizeProvider(cred.Provider) {
-	case config.OAuthProviderCodex:
-		refreshed, err = s.codex.Refresh(ctx, cred)
-	default:
+	client, ok := s.providerClient(cred.Provider)
+	if !ok {
 		return nil, fmt.Errorf("unsupported oauth provider %q", cred.Provider)
 	}
+	refreshed, err := client.Refresh(ctx, cred)
 	if err != nil {
 		return nil, err
 	}
@@ -306,15 +413,346 @@ func (s *Service) refreshCredential(ctx context.Context, cred *Credential) (*Cre
 	return refreshed, nil
 }
 
-func (s *Service) finishSessionWithError(sessionID string, msg string, callback *callbackServer) *LoginSession {
-	_ = callback.Close()
+func (s *Service) registerProviderClient(client ProviderClient) {
+	if s == nil || client == nil {
+		return
+	}
+	if s.clients == nil {
+		s.clients = make(map[config.OAuthProvider]ProviderClient)
+	}
+	provider := normalizeProvider(client.Provider())
+	if provider == "" {
+		return
+	}
+	s.clients[provider] = client
+}
+
+func (s *Service) providerClient(provider config.OAuthProvider) (ProviderClient, bool) {
+	if s == nil {
+		return nil, false
+	}
+	client, ok := s.clients[normalizeProvider(provider)]
+	return client, ok
+}
+
+func newLoginSessionSnapshot(id string, provider config.OAuthProvider, authURL string, status LoginStatus, expiresAt time.Time, pkce PKCECodes, redirectURI string) *LoginSession {
+	return &LoginSession{
+		ID:          strings.TrimSpace(id),
+		Provider:    normalizeProvider(provider),
+		AuthURL:     strings.TrimSpace(authURL),
+		Status:      status,
+		ExpiresAt:   expiresAt,
+		pkce:        pkce,
+		redirectURI: strings.TrimSpace(redirectURI),
+	}
+}
+
+func (s *Service) beginSessionCompletion(sessionID string) (*LoginSession, *callbackServer, <-chan struct{}, *LoginSession, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	s.mu.Lock()
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, nil, nil, nil, ErrSessionNotFound
+	}
+	if session.completionDone != nil {
+		done := session.completionDone
+		s.mu.Unlock()
+		return nil, nil, done, nil, nil
+	}
+	if session.Status == LoginStatusPending && !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(s.now()) {
+		callback := session.callback
+		done := session.completionDone
+		session.callback = nil
+		session.completionDone = nil
+		session.Status = LoginStatusExpired
+		session.Error = "oauth session expired"
+		out := session.Clone()
+		s.mu.Unlock()
+		if callback != nil {
+			_ = callback.Close()
+		}
+		if done != nil {
+			close(done)
+		}
+		return nil, nil, nil, out, nil
+	}
+	if session.Status != LoginStatusPending {
+		out := session.Clone()
+		s.mu.Unlock()
+		return nil, nil, nil, out, nil
+	}
+	session.completionDone = make(chan struct{})
+	callback := session.callback
+	session.callback = nil
+	snapshot := newLoginSessionSnapshot(
+		session.ID,
+		session.Provider,
+		session.AuthURL,
+		session.Status,
+		session.ExpiresAt,
+		session.pkce,
+		session.redirectURI,
+	)
+	s.mu.Unlock()
+	return snapshot, callback, nil, nil, nil
+}
+
+func (s *Service) waitForSessionCompletion(ctx context.Context, sessionID string, done <-chan struct{}) *LoginSession {
+	if done == nil {
+		return s.loadSessionClone(sessionID)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	return s.loadSessionClone(sessionID)
+}
+
+func (s *Service) loadSessionClone(sessionID string) *LoginSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	session := s.sessions[sessionID]
-	session.callback = nil
-	session.Status = LoginStatusError
-	session.Error = strings.TrimSpace(msg)
+	session := s.sessions[strings.TrimSpace(sessionID)]
+	if session == nil {
+		return nil
+	}
 	return session.Clone()
+}
+
+func (s *Service) completionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s == nil || s.loginExchangeTimeout <= 0 {
+		return ctx, func() {}
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, s.loginExchangeTimeout)
+}
+
+func (s *Service) finalizeSession(sessionID string, callback *callbackServer, apply func(*LoginSession)) *LoginSession {
+	if callback != nil {
+		_ = callback.Close()
+	}
+
+	var (
+		done chan struct{}
+		out  *LoginSession
+	)
+	s.mu.Lock()
+	session := s.sessions[strings.TrimSpace(sessionID)]
+	if session != nil {
+		apply(session)
+		session.callback = nil
+		done = session.completionDone
+		session.completionDone = nil
+		out = session.Clone()
+	}
+	s.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+	return out
+}
+
+func (s *Service) completeSessionWithCode(ctx context.Context, sessionSnapshot *LoginSession, code string, callback *callbackServer) *LoginSession {
+	if sessionSnapshot == nil {
+		return nil
+	}
+
+	client, ok := s.providerClient(sessionSnapshot.Provider)
+	if !ok {
+		return s.finishSessionWithError(sessionSnapshot.ID, fmt.Sprintf("unsupported oauth provider %q", sessionSnapshot.Provider), callback)
+	}
+	exchangeCtx, cancel := s.completionContext(ctx)
+	defer cancel()
+
+	cred, err := client.ExchangeSessionCode(exchangeCtx, sessionSnapshot, code)
+	if err != nil {
+		return s.finishSessionWithError(sessionSnapshot.ID, err.Error(), callback)
+	}
+	if err := s.store.Save(cred); err != nil {
+		return s.finishSessionWithError(sessionSnapshot.ID, err.Error(), callback)
+	}
+
+	return s.finalizeSession(sessionSnapshot.ID, callback, func(session *LoginSession) {
+		session.Status = LoginStatusCompleted
+		session.CredentialRef = cred.Ref
+		session.Email = cred.Email
+		session.Error = ""
+	})
+}
+
+func (s *Service) finishSessionWithError(sessionID string, msg string, callback *callbackServer) *LoginSession {
+	return s.finalizeSession(sessionID, callback, func(session *LoginSession) {
+		session.Status = LoginStatusError
+		session.Error = strings.TrimSpace(msg)
+	})
+}
+
+func (s *Service) handleCallbackResult(sessionID string, result callbackResult) callbackPage {
+	sessionSnapshot, callback, done, terminal, err := s.beginSessionCompletion(sessionID)
+	if errors.Is(err, ErrSessionNotFound) {
+		return callbackPage{
+			Tone:    "error",
+			Title:   "Authorization session not found",
+			Message: "Clipal could not find this OAuth session. Return to Clipal and start the authorization again.",
+		}
+	}
+	if err != nil {
+		return callbackPageForSession(s.finishSessionWithError(sessionID, err.Error(), callback))
+	}
+	if terminal != nil {
+		return callbackPageForSession(terminal)
+	}
+	if done != nil {
+		return callbackPageForSession(s.waitForSessionCompletion(context.Background(), sessionID, done))
+	}
+
+	if result.Error != "" {
+		return callbackPageForSession(s.finishSessionWithError(sessionID, result.errorMessage(), callback))
+	}
+	if result.State != sessionID {
+		return callbackPageForSession(s.finishSessionWithError(sessionID, "oauth state mismatch", callback))
+	}
+	return callbackPageForSession(s.completeSessionWithCode(context.Background(), sessionSnapshot, result.Code, callback))
+}
+
+type manualAuthorizationInput struct {
+	Code             string
+	State            string
+	Error            string
+	ErrorDescription string
+}
+
+func (i *manualAuthorizationInput) errorMessage() string {
+	if i == nil {
+		return ""
+	}
+	if msg := strings.TrimSpace(i.ErrorDescription); msg != "" {
+		return msg
+	}
+	return strings.TrimSpace(i.Error)
+}
+
+func parseManualAuthorizationInput(input string) (*manualAuthorizationInput, error) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return nil, fmt.Errorf("%w: authorization code is required", ErrInvalidAuthorizationResponse)
+	}
+	if !looksLikeOAuthCallbackInput(trimmed) {
+		code, state := splitAuthorizationCodeAndState(trimmed)
+		return &manualAuthorizationInput{
+			Code:  code,
+			State: state,
+		}, nil
+	}
+
+	parsed, err := parseOAuthCallbackInput(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidAuthorizationResponse, err)
+	}
+	return parsed, nil
+}
+
+func looksLikeOAuthCallbackInput(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.Contains(trimmed, "://") ||
+		strings.HasPrefix(trimmed, "?") ||
+		strings.HasPrefix(trimmed, "/") ||
+		strings.Contains(lower, "code=") ||
+		strings.Contains(lower, "state=") ||
+		strings.Contains(lower, "error=")
+}
+
+func splitAuthorizationCodeAndState(code string) (string, string) {
+	trimmed := strings.TrimSpace(code)
+	if trimmed == "" || !strings.Contains(trimmed, "#") {
+		return trimmed, ""
+	}
+	parts := strings.SplitN(trimmed, "#", 2)
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
+func manualAuthorizationStateRequired(provider config.OAuthProvider) bool {
+	switch normalizeProvider(provider) {
+	case config.OAuthProviderClaude:
+		return true
+	default:
+		return false
+	}
+}
+
+func parseOAuthCallbackInput(input string) (*manualAuthorizationInput, error) {
+	candidate := strings.TrimSpace(input)
+	switch {
+	case candidate == "":
+		return nil, fmt.Errorf("authorization code is required")
+	case strings.Contains(candidate, "://"):
+	case strings.HasPrefix(candidate, "?"):
+		candidate = "http://127.0.0.1/" + candidate
+	case strings.HasPrefix(candidate, "/"):
+		candidate = "http://127.0.0.1" + candidate
+	default:
+		candidate = "http://127.0.0.1/?" + strings.TrimPrefix(candidate, "?")
+	}
+
+	parsedURL, err := url.Parse(candidate)
+	if err != nil {
+		return nil, err
+	}
+
+	query := parsedURL.Query()
+	code := strings.TrimSpace(query.Get("code"))
+	state := strings.TrimSpace(query.Get("state"))
+	errCode := strings.TrimSpace(query.Get("error"))
+	errDesc := strings.TrimSpace(query.Get("error_description"))
+
+	if parsedURL.Fragment != "" {
+		if fragQuery, err := url.ParseQuery(parsedURL.Fragment); err == nil {
+			if code == "" {
+				code = strings.TrimSpace(fragQuery.Get("code"))
+			}
+			if state == "" {
+				state = strings.TrimSpace(fragQuery.Get("state"))
+			}
+			if errCode == "" {
+				errCode = strings.TrimSpace(fragQuery.Get("error"))
+			}
+			if errDesc == "" {
+				errDesc = strings.TrimSpace(fragQuery.Get("error_description"))
+			}
+		}
+		if state == "" {
+			fragment := strings.TrimSpace(parsedURL.Fragment)
+			if fragment != "" && !strings.Contains(fragment, "=") {
+				state = fragment
+			}
+		}
+	}
+
+	if code != "" && state == "" {
+		code, state = splitAuthorizationCodeAndState(code)
+	}
+	if code == "" && errCode == "" {
+		return nil, fmt.Errorf("callback URL missing code")
+	}
+
+	return &manualAuthorizationInput{
+		Code:             code,
+		State:            state,
+		Error:            errCode,
+		ErrorDescription: errDesc,
+	}, nil
 }
 
 func (s *Service) sweepExpiredSessionsLocked() {
@@ -334,15 +772,33 @@ func (s *Service) sweepExpiredSessionsLocked() {
 }
 
 type callbackResult struct {
-	Code  string
-	State string
-	Error string
+	Code             string
+	State            string
+	Error            string
+	ErrorDescription string
+}
+
+func (r callbackResult) errorMessage() string {
+	if msg := strings.TrimSpace(r.ErrorDescription); msg != "" {
+		return msg
+	}
+	return strings.TrimSpace(r.Error)
+}
+
+type callbackPage struct {
+	Tone      string
+	Title     string
+	Message   string
+	AutoClose bool
 }
 
 type callbackServer struct {
 	listener net.Listener
 	server   *http.Server
 	results  chan callbackResult
+
+	mu      sync.RWMutex
+	handler func(callbackResult) callbackPage
 }
 
 func startCallbackServer(host string, port int, path string) (*callbackServer, string, error) {
@@ -364,21 +820,30 @@ func startCallbackServer(host string, port int, path string) (*callbackServer, s
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		result := callbackResult{
-			Code:  strings.TrimSpace(r.URL.Query().Get("code")),
-			State: strings.TrimSpace(r.URL.Query().Get("state")),
-			Error: strings.TrimSpace(r.URL.Query().Get("error")),
+			Code:             strings.TrimSpace(r.URL.Query().Get("code")),
+			State:            strings.TrimSpace(r.URL.Query().Get("state")),
+			Error:            strings.TrimSpace(r.URL.Query().Get("error")),
+			ErrorDescription: strings.TrimSpace(r.URL.Query().Get("error_description")),
 		}
 		if result.Error == "" && result.Code == "" {
 			result.Error = "authorization code not found"
 		}
-		select {
-		case server.results <- result:
-		default:
+		page, handled := server.handle(result)
+		if !handled {
+			select {
+			case server.results <- result:
+			default:
+			}
+			page = defaultCallbackPage(result)
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>(function(){window.close();setTimeout(function(){window.close();},100);})();</script><h1>Authentication received</h1><p>Return to Clipal to finish setup. You can close this window if it does not close automatically.</p></body></html>`))
-		})
+		writeCallbackPage(w, page)
+		if handled {
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				_ = server.Close()
+			}()
+		}
+	})
 	server.server = &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -412,6 +877,28 @@ func (s *callbackServer) Poll() (callbackResult, bool) {
 	}
 }
 
+func (s *callbackServer) SetHandler(handler func(callbackResult) callbackPage) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handler = handler
+}
+
+func (s *callbackServer) handle(result callbackResult) (callbackPage, bool) {
+	if s == nil {
+		return callbackPage{}, false
+	}
+	s.mu.RLock()
+	handler := s.handler
+	s.mu.RUnlock()
+	if handler == nil {
+		return callbackPage{}, false
+	}
+	return handler(result), true
+}
+
 func (s *callbackServer) Close() error {
 	if s == nil || s.server == nil {
 		return nil
@@ -431,4 +918,163 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(raw[:]), nil
+}
+
+func defaultCallbackPage(result callbackResult) callbackPage {
+	if result.Error != "" {
+		return callbackPage{
+			Tone:    "error",
+			Title:   "Authorization failed",
+			Message: result.errorMessage(),
+		}
+	}
+	return callbackPage{
+		Tone:      "success",
+		Title:     "Authentication received",
+		Message:   "Return to Clipal to finish setup. You can close this window if it does not close automatically.",
+		AutoClose: true,
+	}
+}
+
+func callbackPageForSession(session *LoginSession) callbackPage {
+	if session == nil {
+		return callbackPage{
+			Tone:    "error",
+			Title:   "Authorization failed",
+			Message: "Clipal could not complete this OAuth session. Return to Clipal and try again.",
+		}
+	}
+
+	switch session.Status {
+	case LoginStatusCompleted:
+		message := fmt.Sprintf("%s is now available in Clipal.", providerDisplayName(session.Provider))
+		if email := strings.TrimSpace(session.Email); email != "" {
+			message = fmt.Sprintf("%s is now available in Clipal as %s.", providerDisplayName(session.Provider), email)
+		}
+		return callbackPage{
+			Tone:      "success",
+			Title:     fmt.Sprintf("%s authorized", providerDisplayName(session.Provider)),
+			Message:   message,
+			AutoClose: true,
+		}
+	case LoginStatusExpired:
+		return callbackPage{
+			Tone:    "warning",
+			Title:   "Authorization expired",
+			Message: "This OAuth session expired before Clipal could finish it. Return to Clipal and start a new authorization session.",
+		}
+	case LoginStatusError:
+		msg := strings.TrimSpace(session.Error)
+		if msg == "" {
+			msg = "Clipal could not complete this OAuth session."
+		}
+		return callbackPage{
+			Tone:    "error",
+			Title:   "Authorization failed",
+			Message: msg,
+		}
+	default:
+		return callbackPage{
+			Tone:      "success",
+			Title:     "Authentication received",
+			Message:   "Return to Clipal to finish setup.",
+			AutoClose: true,
+		}
+	}
+}
+
+func providerDisplayName(provider config.OAuthProvider) string {
+	switch normalizeProvider(provider) {
+	case config.OAuthProviderCodex:
+		return "Codex"
+	case config.OAuthProviderClaude:
+		return "Claude Code"
+	case config.OAuthProviderGemini:
+		return "Gemini"
+	default:
+		value := strings.TrimSpace(string(provider))
+		if value == "" {
+			return "OAuth"
+		}
+		return value
+	}
+}
+
+func writeCallbackPage(w http.ResponseWriter, page callbackPage) {
+	if w == nil {
+		return
+	}
+	title := strings.TrimSpace(page.Title)
+	if title == "" {
+		title = "Authentication received"
+	}
+	message := strings.TrimSpace(page.Message)
+	if message == "" {
+		message = "Return to Clipal to finish setup."
+	}
+	tone := strings.TrimSpace(page.Tone)
+	if tone == "" {
+		tone = "success"
+	}
+
+	autoCloseScript := ""
+	if page.AutoClose {
+		autoCloseScript = "setTimeout(closeWindow, 1200);"
+	}
+
+	body := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s</title>
+<style>
+body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f7fb;color:#0f172a}
+.shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{width:min(520px,100%%);background:#fff;border:1px solid #dbe4f0;border-radius:18px;box-shadow:0 18px 40px rgba(15,23,42,.08);padding:28px}
+.badge{display:inline-flex;align-items:center;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:600;letter-spacing:.02em}
+.badge.success{background:#dcfce7;color:#166534}
+.badge.warning{background:#fef3c7;color:#92400e}
+.badge.error{background:#fee2e2;color:#b91c1c}
+h1{margin:16px 0 12px;font-size:24px;line-height:1.2}
+p{margin:0;font-size:14px;line-height:1.65;color:#475569}
+.actions{margin-top:20px;display:flex;gap:10px;flex-wrap:wrap}
+button{border:0;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:600;background:#0f172a;color:#fff;cursor:pointer}
+button.secondary{background:#e2e8f0;color:#0f172a}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="card">
+    <span class="badge %s">%s</span>
+    <h1>%s</h1>
+    <p>%s</p>
+    <div class="actions">
+      <button type="button" onclick="closeWindow()">Close Window</button>
+      <button type="button" class="secondary" onclick="window.location.reload()">Refresh</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  window.closeWindow = function(){
+    window.close();
+    setTimeout(function(){ window.close(); }, 120);
+  };
+  %s
+})();
+</script>
+</body>
+</html>`,
+		html.EscapeString(title),
+		html.EscapeString(tone),
+		html.EscapeString(strings.ToUpper(tone[:1])+tone[1:]),
+		html.EscapeString(title),
+		html.EscapeString(message),
+		autoCloseScript,
+	)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
 }

@@ -398,7 +398,7 @@ test('openAddProviderModal sets next priority for provider form', () => {
     assert.equal(state.providerForm.oauth_provider, 'codex');
 });
 
-test('loadOAuthProviders clears unavailable oauth source for current client', async () => {
+test('loadOAuthProviders switches to the available oauth source for current client', async () => {
     const state = loadApp();
     const calls = [];
     state.selectedClient = 'gemini';
@@ -406,15 +406,15 @@ test('loadOAuthProviders clears unavailable oauth source for current client', as
     state.providerForm.oauth_provider = 'codex';
     state.apiCall = async url => {
         calls.push(url);
-        return [];
+        return [{ provider: 'gemini' }];
     };
 
     await state.loadOAuthProviders(true);
 
     assert.deepEqual(calls, ['/api/oauth/providers?client_type=gemini']);
-    assert.deepEqual(JSON.parse(JSON.stringify(state.oauthProviders)), []);
-    assert.equal(state.providerForm.auth_type, 'api_key');
-    assert.equal(state.providerForm.oauth_provider, '');
+    assert.deepEqual(JSON.parse(JSON.stringify(state.oauthProviders)), [{ provider: 'gemini' }]);
+    assert.equal(state.providerForm.auth_type, 'oauth');
+    assert.equal(state.providerForm.oauth_provider, 'gemini');
 });
 
 test('editProvider hydrates override fields directly into the form', () => {
@@ -636,7 +636,7 @@ test('providerOAuthRefreshSummary returns never when last refresh is unavailable
     assert.equal(summary, 'Never');
 });
 
-test('deleteProvider deletes oauth account for oauth providers', async () => {
+test('deleteProvider deletes oauth providers through the provider API', async () => {
     const state = loadApp();
     const calls = [];
     state.selectedClient = 'openai';
@@ -658,10 +658,38 @@ test('deleteProvider deletes oauth account for oauth providers', async () => {
 
     assert.deepEqual(calls, [
         {
-            url: '/api/oauth/accounts/codex/codex-sean-example-com',
+            url: '/api/providers/openai/codex-sean-example-com',
             method: 'DELETE'
         }
     ]);
+});
+
+test('oauthSessionSuccessMessage reflects provider action', () => {
+    const state = loadApp();
+    state.selectedClient = 'openai';
+
+    const created = state.oauthSessionSuccessMessage({
+        provider: 'codex',
+        provider_name: 'codex-sean-example-com',
+        provider_action: 'created',
+        display_name: 'sean@example.com'
+    });
+    const reused = state.oauthSessionSuccessMessage({
+        provider: 'codex',
+        provider_name: 'codex-sean-example-com',
+        provider_action: 'reused',
+        display_name: 'sean@example.com'
+    });
+    const relinked = state.oauthSessionSuccessMessage({
+        provider: 'codex',
+        provider_name: 'codex-sean-example-com',
+        provider_action: 'relinked',
+        display_name: 'sean@example.com'
+    });
+
+    assert.match(created, /provider codex-sean-example-com/i);
+    assert.match(reused, /refreshed existing provider codex-sean-example-com/i);
+    assert.match(relinked, /relinked provider codex-sean-example-com/i);
 });
 
 test('toggleProvider updates oauth providers through the standard provider API', async () => {
@@ -810,6 +838,12 @@ test('saveProvider starts OAuth authorization flow for oauth provider', async ()
         if (url === '/api/oauth/sessions/sess-1') {
             return {
                 status: 'completed',
+                provider: 'codex'
+            };
+        }
+        if (url === '/api/oauth/sessions/sess-1/link') {
+            return {
+                status: 'completed',
                 provider: 'codex',
                 provider_name: 'codex-sean-example-com',
                 display_name: 'sean@example.com'
@@ -865,7 +899,19 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
             linked_count: 1,
             skipped_count: 1,
             failed_count: 0,
-            message: 'imported 1 account(s), created 1 provider(s), skipped 1 file(s)'
+            message: 'imported 1 account(s), linked 1 provider(s), skipped 1 file(s)',
+            results: [
+                {
+                    file: 'cli/codex-a.json',
+                    status: 'imported',
+                    message: 'imported account and created provider codex-a'
+                },
+                {
+                    file: 'codex-b.json',
+                    status: 'skipped',
+                    message: 'duplicate account in selected files'
+                }
+            ]
         };
     };
     state.showAlert = (...args) => alerts.push(args);
@@ -897,6 +943,9 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
     ]);
     assert.equal(alerts.length, 1);
     assert.equal(alerts[0][0], 'info');
+    assert.match(alerts[0][1], /linked 1 provider/i);
+    assert.match(alerts[0][1], /cli\/codex-a\.json: imported account and created provider codex-a/i);
+    assert.match(alerts[0][1], /codex-b\.json: duplicate account in selected files/i);
     assert.equal(closed, 1);
     assert.equal(loadProvidersCalls, 1);
     assert.equal(refreshStatusCalls, 1);
@@ -1053,6 +1102,160 @@ test('startOAuthProviderAuthorization keeps waiting state in Clipal when popup i
     ]);
 });
 
+test('submitPendingOAuthAuthorizationCode posts pasted input and completes the OAuth flow', async () => {
+    const state = loadApp({
+        localStorageData: {
+            'clipal.pendingOAuthSession': JSON.stringify({
+                session_id: 'sess-manual',
+                provider: 'gemini',
+                client_type: 'gemini',
+                started_at: 1710000000000,
+                expires_at: '2099-04-21T13:00:00Z',
+                auth_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=sess-manual'
+            })
+        }
+    });
+    const calls = [];
+    const alerts = [];
+    let loadProvidersCalls = 0;
+    let refreshStatusCalls = 0;
+    state.selectedClient = 'claude';
+    state.showAddProviderModal = true;
+    state.providerForm = {
+        ...state.providerForm,
+        auth_type: 'oauth',
+        oauth_provider: 'gemini'
+    };
+    state.applyOAuthAuthorizationState(state.loadPendingOAuthSession(), {
+        phase: 'waiting'
+    });
+    state.oauthAuthorization.manual_code = 'http://127.0.0.1:39393/oauth2callback?code=manual-code&state=sess-manual';
+    state.apiCall = async (url, options) => {
+        calls.push({ url, payload: JSON.parse(options.body) });
+        return {
+            status: 'completed',
+            provider: 'gemini',
+            provider_name: 'gemini-sean-example-com',
+            display_name: 'sean@example.com'
+        };
+    };
+    state.showAlert = (...args) => alerts.push(args);
+    state.loadProviders = async () => {
+        loadProvidersCalls++;
+    };
+    state.refreshStatus = async () => {
+        refreshStatusCalls++;
+    };
+
+    await state.submitPendingOAuthAuthorizationCode();
+
+    assert.deepEqual(calls, [
+        {
+            url: '/api/oauth/sessions/sess-manual/code',
+            payload: {
+                code: 'http://127.0.0.1:39393/oauth2callback?code=manual-code&state=sess-manual',
+                client_type: 'gemini'
+            }
+        }
+    ]);
+    assert.equal(state.showAddProviderModal, false);
+    assert.equal(state.__context.localStorage.getItem('clipal.pendingOAuthSession'), null);
+    assert.equal(loadProvidersCalls, 1);
+    assert.equal(refreshStatusCalls, 1);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0][0], 'success');
+});
+
+test('submitPendingOAuthAuthorizationCode keeps OAuth session active on invalid manual input', async () => {
+    const state = loadApp({
+        localStorageData: {
+            'clipal.pendingOAuthSession': JSON.stringify({
+                session_id: 'sess-manual-error',
+                provider: 'gemini',
+                client_type: 'gemini',
+                started_at: 1710000000000,
+                expires_at: '2099-04-21T13:00:00Z',
+                auth_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=sess-manual-error'
+            })
+        }
+    });
+    const resumed = [];
+    state.showAddProviderModal = true;
+    state.providerForm = {
+        ...state.providerForm,
+        auth_type: 'oauth',
+        oauth_provider: 'gemini'
+    };
+    state.applyOAuthAuthorizationState(state.loadPendingOAuthSession(), {
+        phase: 'waiting'
+    });
+    state.oauthAuthorization.manual_code = 'http://127.0.0.1:39393/oauth2callback?foo=bar';
+    state.apiCall = async () => {
+        throw new Error('invalid authorization response: callback URL missing code');
+    };
+    state.resumePendingOAuthSession = async (pending, options) => {
+        resumed.push({ pending, options });
+        return null;
+    };
+    state.showAlert = () => {};
+
+    await state.submitPendingOAuthAuthorizationCode();
+
+    assert.equal(state.showAddProviderModal, true);
+    assert.equal(state.oauthAuthorization.phase, 'waiting');
+    assert.equal(state.oauthAuthorization.manual_submit_busy, false);
+    assert.equal(
+        state.oauthAuthorization.manual_submit_error,
+        'invalid authorization response: callback URL missing code'
+    );
+    assert.notEqual(state.__context.localStorage.getItem('clipal.pendingOAuthSession'), null);
+    assert.deepEqual(JSON.parse(JSON.stringify(resumed)), [
+        {
+            pending: {
+                session_id: 'sess-manual-error',
+                provider: 'gemini',
+                client_type: 'gemini',
+                started_at: 1710000000000,
+                expires_at: '2099-04-21T13:00:00Z',
+                auth_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=sess-manual-error'
+            },
+            options: {
+                showError: false,
+                phase: 'waiting'
+            }
+        }
+    ]);
+});
+
+test('oauth authorization manual-entry copy is provider-aware for Claude', () => {
+    const state = loadApp();
+    state.showAddProviderModal = true;
+    state.providerForm = {
+        ...state.providerForm,
+        auth_type: 'oauth',
+        oauth_provider: 'claude'
+    };
+    state.applyOAuthAuthorizationState({
+        session_id: 'sess-claude',
+        provider: 'claude',
+        client_type: 'claude',
+        started_at: 1710000000000,
+        expires_at: '2099-04-21T13:00:00Z',
+        auth_url: 'https://claude.ai/oauth/authorize?state=sess-claude'
+    }, {
+        phase: 'waiting'
+    });
+
+    assert.equal(state.oauthAuthorizationManualEntryLabel(), 'Callback URL');
+    assert.match(state.oauthAuthorizationManualCodeHint(), /full callback URL/i);
+    assert.match(state.oauthAuthorizationManualCodeHint(), /code and state/i);
+    assert.equal(
+        state.oauthAuthorizationManualCodePlaceholder(),
+        'Paste the full callback URL with code and state'
+    );
+    assert.equal(state.oauthAuthorizationSubmitLabel(), 'Submit Callback URL');
+});
+
 test('resumePendingOAuthSession completes stored session and clears pending storage', async () => {
     const state = loadApp({
         localStorageData: {
@@ -1071,9 +1274,18 @@ test('resumePendingOAuthSession completes stored session and clears pending stor
     let loadProvidersCalls = 0;
     let refreshStatusCalls = 0;
     state.selectedClient = 'claude';
-    state.apiCall = async url => {
+    state.apiCall = async (url, options) => {
         calls.push(url);
         if (url === '/api/oauth/sessions/sess-1') {
+            return {
+                status: 'completed',
+                provider: 'codex'
+            };
+        }
+        if (url === '/api/oauth/sessions/sess-1/link') {
+            assert.deepEqual(JSON.parse(options.body), {
+                client_type: 'openai'
+            });
             return {
                 status: 'completed',
                 provider: 'codex',
@@ -1094,13 +1306,144 @@ test('resumePendingOAuthSession completes stored session and clears pending stor
 
     await state.resumePendingOAuthSession();
 
-    assert.deepEqual(calls, ['/api/oauth/sessions/sess-1']);
+    assert.deepEqual(calls, ['/api/oauth/sessions/sess-1', '/api/oauth/sessions/sess-1/link']);
     assert.equal(state.selectedClient, 'openai');
     assert.equal(loadProvidersCalls, 1);
     assert.equal(refreshStatusCalls, 1);
     assert.equal(state.__context.localStorage.getItem('clipal.pendingOAuthSession'), null);
     assert.equal(alerts.length, 1);
     assert.equal(alerts[0][0], 'success');
+});
+
+test('resumePendingOAuthSession ignores completed poll results after cancellation', async () => {
+    const state = loadApp({
+        localStorageData: {
+            'clipal.pendingOAuthSession': JSON.stringify({
+                session_id: 'sess-race',
+                provider: 'codex',
+                client_type: 'openai',
+                started_at: 1710000000000,
+                expires_at: '2099-04-21T13:00:00Z',
+                auth_url: 'https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%2Fcb'
+            })
+        }
+    });
+    const calls = [];
+    const alerts = [];
+    let resolvePoll;
+    state.apiCall = async (url) => {
+        calls.push(url);
+        if (url === '/api/oauth/sessions/sess-race') {
+            return await new Promise(resolve => {
+                resolvePoll = resolve;
+            });
+        }
+        throw new Error(`unexpected apiCall ${url}`);
+    };
+    state.showAlert = (...args) => alerts.push(args);
+
+    const promise = state.resumePendingOAuthSession();
+    await Promise.resolve();
+    assert.equal(typeof resolvePoll, 'function');
+
+    state.stopOAuthPolling();
+    resolvePoll({
+        status: 'completed',
+        provider: 'codex'
+    });
+
+    const result = await promise;
+    assert.equal(result, null);
+    assert.deepEqual(calls, ['/api/oauth/sessions/sess-race']);
+    assert.equal(alerts.length, 0);
+    assert.notEqual(state.__context.localStorage.getItem('clipal.pendingOAuthSession'), null);
+});
+
+test('manual submit reuses in-flight oauth link request and shows success once', async () => {
+    const state = loadApp({
+        localStorageData: {
+            'clipal.pendingOAuthSession': JSON.stringify({
+                session_id: 'sess-link-race',
+                provider: 'codex',
+                client_type: 'openai',
+                started_at: 1710000000000,
+                expires_at: '2099-04-21T13:00:00Z',
+                auth_url: 'https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%2Fcb'
+            })
+        }
+    });
+    const calls = [];
+    const alerts = [];
+    let loadProvidersCalls = 0;
+    let refreshStatusCalls = 0;
+    let resolveLink;
+    state.selectedClient = 'openai';
+    state.showAddProviderModal = true;
+    state.providerForm = {
+        ...state.providerForm,
+        auth_type: 'oauth',
+        oauth_provider: 'codex'
+    };
+    state.applyOAuthAuthorizationState(state.loadPendingOAuthSession(), {
+        phase: 'waiting'
+    });
+    state.oauthAuthorization.manual_code = 'manual-code';
+    state.apiCall = async (url, options) => {
+        calls.push(url);
+        if (url === '/api/oauth/sessions/sess-link-race') {
+            return {
+                status: 'completed',
+                provider: 'codex'
+            };
+        }
+        if (url === '/api/oauth/sessions/sess-link-race/code') {
+            return {
+                status: 'completed',
+                provider: 'codex'
+            };
+        }
+        if (url === '/api/oauth/sessions/sess-link-race/link') {
+            assert.deepEqual(JSON.parse(options.body), {
+                client_type: 'openai'
+            });
+            return await new Promise(resolve => {
+                resolveLink = resolve;
+            });
+        }
+        throw new Error(`unexpected apiCall ${url}`);
+    };
+    state.showAlert = (...args) => alerts.push(args);
+    state.closeModals = () => {};
+    state.loadProviders = async () => {
+        loadProvidersCalls++;
+    };
+    state.refreshStatus = async () => {
+        refreshStatusCalls++;
+    };
+
+    const pollPromise = state.resumePendingOAuthSession();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(typeof resolveLink, 'function');
+
+    const manualPromise = state.submitPendingOAuthAuthorizationCode();
+    await Promise.resolve();
+    assert.equal(calls.filter(url => url === '/api/oauth/sessions/sess-link-race/link').length, 1);
+
+    resolveLink({
+        status: 'completed',
+        provider: 'codex',
+        provider_name: 'codex-sean-example-com',
+        display_name: 'sean@example.com'
+    });
+
+    const [pollResult, manualResult] = await Promise.all([pollPromise, manualPromise]);
+    assert.equal(pollResult, null);
+    assert.equal(manualResult.provider_name, 'codex-sean-example-com');
+    assert.equal(calls.filter(url => url === '/api/oauth/sessions/sess-link-race/link').length, 1);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0][0], 'success');
+    assert.equal(loadProvidersCalls, 1);
+    assert.equal(refreshStatusCalls, 1);
 });
 
 test('resumePendingOAuthSession does not downgrade a completed OAuth session when popup state becomes cross-origin', async () => {
@@ -1147,8 +1490,17 @@ test('resumePendingOAuthSession does not downgrade a completed OAuth session whe
             throw new Error("Failed to read a named property '__v_isRef' from 'Window': An attempt was made to break through the security policy of the user agent.");
         }
     });
-    state.apiCall = async url => {
-        assert.equal(url, '/api/oauth/sessions/sess-success');
+    state.apiCall = async (url, options) => {
+        if (url === '/api/oauth/sessions/sess-success') {
+            return {
+                status: 'completed',
+                provider: 'codex'
+            };
+        }
+        assert.equal(url, '/api/oauth/sessions/sess-success/link');
+        assert.deepEqual(JSON.parse(options.body), {
+            client_type: 'openai'
+        });
         return {
             status: 'completed',
             provider: 'codex',

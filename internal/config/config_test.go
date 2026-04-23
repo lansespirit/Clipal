@@ -407,6 +407,72 @@ func TestValidate_ProviderOAuthCodexSupportedForOpenAIWithoutBaseURL(t *testing.
 	}
 }
 
+func TestValidate_ProviderOAuthClaudeSupportedForClaudeWithoutBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Global: DefaultGlobalConfig(),
+		Claude: ClientConfig{
+			Mode: ClientModeAuto,
+			Providers: []Provider{
+				{
+					Name:          "claude-oauth",
+					AuthType:      ProviderAuthTypeOAuth,
+					OAuthProvider: OAuthProviderClaude,
+					OAuthRef:      "claude_sean_example_com",
+					Priority:      1,
+				},
+			},
+		},
+		OpenAI: ClientConfig{Mode: ClientModeAuto},
+		Gemini: ClientConfig{Mode: ClientModeAuto},
+	}
+
+	applyClientDefaults(&cfg.Claude)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected validation success, got: %v", err)
+	}
+	if got := cfg.Claude.Providers[0].NormalizedAuthType(); got != ProviderAuthTypeOAuth {
+		t.Fatalf("auth_type = %q, want %q", got, ProviderAuthTypeOAuth)
+	}
+	if got := cfg.Claude.Providers[0].NormalizedOAuthProvider(); got != OAuthProviderClaude {
+		t.Fatalf("oauth_provider = %q, want %q", got, OAuthProviderClaude)
+	}
+}
+
+func TestValidate_ProviderOAuthGeminiSupportedForGeminiWithoutBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Global: DefaultGlobalConfig(),
+		Gemini: ClientConfig{
+			Mode: ClientModeAuto,
+			Providers: []Provider{
+				{
+					Name:          "gemini-oauth",
+					AuthType:      ProviderAuthTypeOAuth,
+					OAuthProvider: OAuthProviderGemini,
+					OAuthRef:      "gemini_sean_example_com_project_123",
+					Priority:      1,
+				},
+			},
+		},
+		OpenAI: ClientConfig{Mode: ClientModeAuto},
+		Claude: ClientConfig{Mode: ClientModeAuto},
+	}
+
+	applyClientDefaults(&cfg.Gemini)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected validation success, got: %v", err)
+	}
+	if got := cfg.Gemini.Providers[0].NormalizedAuthType(); got != ProviderAuthTypeOAuth {
+		t.Fatalf("auth_type = %q, want %q", got, ProviderAuthTypeOAuth)
+	}
+	if got := cfg.Gemini.Providers[0].NormalizedOAuthProvider(); got != OAuthProviderGemini {
+		t.Fatalf("oauth_provider = %q, want %q", got, OAuthProviderGemini)
+	}
+}
+
 func TestValidate_ProviderOAuthRejectsMixedCredentialSources(t *testing.T) {
 	t.Parallel()
 

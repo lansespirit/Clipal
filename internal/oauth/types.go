@@ -62,6 +62,8 @@ type LoginSession struct {
 	pkce        PKCECodes
 	redirectURI string
 	callback    *callbackServer
+
+	completionDone chan struct{}
 }
 
 func (s *LoginSession) Clone() *LoginSession {
@@ -70,6 +72,7 @@ func (s *LoginSession) Clone() *LoginSession {
 	}
 	clone := *s
 	clone.callback = nil
+	clone.completionDone = nil
 	return &clone
 }
 

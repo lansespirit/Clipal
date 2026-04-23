@@ -69,6 +69,9 @@ func formatClientConfigYAML(clientType string, cc config.ClientConfig) []byte {
 			writeBufferString(&b, fmt.Sprintf("    auth_type: %s\n", yamlDoubleQuote(string(authType))))
 			writeBufferString(&b, fmt.Sprintf("    oauth_provider: %s\n", yamlDoubleQuote(string(p.NormalizedOAuthProvider()))))
 			writeBufferString(&b, fmt.Sprintf("    oauth_ref: %s\n", yamlDoubleQuote(p.NormalizedOAuthRef())))
+			if p.NormalizedOAuthIdentity() != "" {
+				writeBufferString(&b, fmt.Sprintf("    oauth_identity: %s\n", yamlDoubleQuote(p.NormalizedOAuthIdentity())))
+			}
 		}
 		if p.NormalizedProxyMode() != config.ProviderProxyModeDefault {
 			writeBufferString(&b, fmt.Sprintf("    proxy_mode: %s\n", yamlDoubleQuote(string(p.NormalizedProxyMode()))))

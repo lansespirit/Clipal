@@ -45,6 +45,10 @@ type CodexClient struct {
 	Now          func() time.Time
 }
 
+func (c *CodexClient) Provider() config.OAuthProvider {
+	return config.OAuthProviderCodex
+}
+
 func NewCodexClient() *CodexClient {
 	client := &CodexClient{
 		AuthURL:      defaultCodexAuthURL,
@@ -99,6 +103,18 @@ func (c *CodexClient) GenerateAuthURL(state string, redirectURI string, pkce PKC
 	return strings.TrimSpace(c.authURL()) + "?" + params.Encode(), nil
 }
 
+func (c *CodexClient) StartLogin(now time.Time, ttl time.Duration) (*LoginSession, error) {
+	return startLoginSession(
+		config.OAuthProviderCodex,
+		now,
+		ttl,
+		c.callbackHost(),
+		c.callbackPort(),
+		c.callbackPath(),
+		c.GenerateAuthURL,
+	)
+}
+
 func (c *CodexClient) ExchangeCode(ctx context.Context, code string, redirectURI string, pkce PKCECodes) (*Credential, error) {
 	token, err := c.exchange(ctx, url.Values{
 		"grant_type":    {"authorization_code"},
@@ -111,6 +127,13 @@ func (c *CodexClient) ExchangeCode(ctx context.Context, code string, redirectURI
 		return nil, err
 	}
 	return c.credentialFromToken(token, nil), nil
+}
+
+func (c *CodexClient) ExchangeSessionCode(ctx context.Context, session *LoginSession, code string) (*Credential, error) {
+	if session == nil {
+		return nil, fmt.Errorf("login session is nil")
+	}
+	return c.ExchangeCode(ctx, code, session.redirectURI, session.pkce)
 }
 
 func (c *CodexClient) Refresh(ctx context.Context, cred *Credential) (*Credential, error) {
