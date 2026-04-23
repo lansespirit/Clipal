@@ -1146,6 +1146,184 @@ func TestHandleImportCLIProxyAPICredentials_DedupesSameAccountAcrossDifferentRef
 	}
 }
 
+func TestHandleImportCLIProxyAPICredentials_ImportsSub2APIBundle(t *testing.T) {
+	api := NewAPI(t.TempDir(), "test", nil)
+
+	req := newOAuthImportRequest(t,
+		"openai",
+		"codex",
+		importedOAuthFile{
+			Name: "sub2api-export.json",
+			Body: `{
+  "exported_at": "2026-04-23T09:35:45Z",
+  "accounts": [
+    {
+      "name": "OpenAI OAuth",
+      "platform": "openai",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "chatgpt_account_id": "acct_123",
+        "chatgpt_user_id": "user_123",
+        "expires_at": 1777776981,
+        "plan_type": "plus"
+      }
+    },
+    {
+      "name": "API Key",
+      "platform": "openai",
+      "type": "apikey",
+      "credentials": {
+        "api_key": "sk-test"
+      }
+    }
+  ]
+}`,
+		},
+	)
+	w := httptest.NewRecorder()
+	api.HandleImportCLIProxyAPICredentials(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var resp OAuthImportResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if resp.ImportedCount != 1 || resp.LinkedCount != 1 || resp.SkippedCount != 1 || resp.FailedCount != 0 {
+		t.Fatalf("unexpected import counts: %#v", resp)
+	}
+	if got := findOAuthImportResult(resp.Results, "sub2api-export.json#accounts[0]"); got.Status != "imported" {
+		t.Fatalf("accounts[0] result = %#v, want imported", got)
+	}
+	if got := findOAuthImportResult(resp.Results, "sub2api-export.json#accounts[1]"); got.Status != "skipped" {
+		t.Fatalf("accounts[1] result = %#v, want skipped", got)
+	}
+
+	cred, err := api.oauth.Load(config.OAuthProviderCodex, "codex-acct-123")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cred.AccountID; got != "acct_123" {
+		t.Fatalf("account_id = %q, want acct_123", got)
+	}
+	if got := cred.Metadata["plan_type"]; got != "plus" {
+		t.Fatalf("plan_type = %q, want plus", got)
+	}
+}
+
+func TestHandleImportCLIProxyAPICredentials_ImportsSub2APIBundleGeminiOnlyForGeminiAdd(t *testing.T) {
+	api := NewAPI(t.TempDir(), "test", nil)
+
+	req := newOAuthImportRequest(t,
+		"gemini",
+		"gemini",
+		importedOAuthFile{
+			Name: "sub2api-gemini.json",
+			Body: `{
+  "exported_at": "2026-04-23T09:35:45Z",
+  "accounts": [
+    {
+      "name": "Gemini OAuth",
+      "platform": "gemini",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "project_id": "proj-123",
+        "oauth_type": "code_assist",
+        "expires_at": "2026-04-29T11:54:11+08:00"
+      }
+    },
+    {
+      "name": "OpenAI OAuth",
+      "platform": "openai",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-2",
+        "chatgpt_account_id": "acct_123",
+        "expires_at": 1777776981
+      }
+    }
+  ]
+}`,
+		},
+	)
+	w := httptest.NewRecorder()
+	api.HandleImportCLIProxyAPICredentials(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var resp OAuthImportResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if resp.ImportedCount != 1 || resp.LinkedCount != 1 || resp.SkippedCount != 1 || resp.FailedCount != 0 {
+		t.Fatalf("unexpected import counts: %#v", resp)
+	}
+	if got := findOAuthImportResult(resp.Results, "sub2api-gemini.json#accounts[0]"); got.Status != "imported" {
+		t.Fatalf("accounts[0] result = %#v, want imported", got)
+	}
+	if got := findOAuthImportResult(resp.Results, "sub2api-gemini.json#accounts[1]"); got.Status != "skipped" {
+		t.Fatalf("accounts[1] result = %#v, want skipped", got)
+	}
+	if _, err := api.oauth.Load(config.OAuthProviderCodex, "codex-acct-123"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected codex credential import err=%v", err)
+	}
+}
+
+func TestHandleImportCLIProxyAPICredentials_FailsSub2APIClaudeWithoutStableIdentity(t *testing.T) {
+	api := NewAPI(t.TempDir(), "test", nil)
+
+	req := newOAuthImportRequest(t,
+		"claude",
+		"claude",
+		importedOAuthFile{
+			Name: "sub2api-claude.json",
+			Body: `{
+  "exported_at": "2026-04-23T09:35:45Z",
+  "accounts": [
+    {
+      "name": "Claude Team A",
+      "platform": "anthropic",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "expires_at": "2026-04-29T11:54:11+08:00"
+      }
+    }
+  ]
+}`,
+		},
+	)
+	w := httptest.NewRecorder()
+	api.HandleImportCLIProxyAPICredentials(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var resp OAuthImportResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if resp.ImportedCount != 0 || resp.LinkedCount != 0 || resp.SkippedCount != 0 || resp.FailedCount != 1 {
+		t.Fatalf("unexpected import counts: %#v", resp)
+	}
+	if got := resp.Message; got != "imported 0 account(s), linked 0 provider(s), failed 1 entry(s)" {
+		t.Fatalf("message = %q, want failed entry summary", got)
+	}
+	if got := findOAuthImportResult(resp.Results, "sub2api-claude.json#accounts[0]"); got.Status != "failed" || got.Message != "claude credential missing email/account_id/organization_id" {
+		t.Fatalf("accounts[0] result = %#v, want failed missing identity", got)
+	}
+	if _, err := api.oauth.Load(config.OAuthProviderClaude, "claude-claude-team-a"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected claude credential import err=%v", err)
+	}
+}
+
 func TestHandleImportCLIProxyAPICredentials_ReportsCanonicalRefAfterStoreMerge(t *testing.T) {
 	api := NewAPI(t.TempDir(), "test", nil)
 	if err := api.oauth.Store().Save(&oauthpkg.Credential{

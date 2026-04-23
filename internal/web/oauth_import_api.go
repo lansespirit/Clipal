@@ -68,9 +68,11 @@ func (a *API) HandleImportCLIProxyAPICredentials(w http.ResponseWriter, r *http.
 	}
 	candidates := make([]oauthImportCandidate, 0, len(headers))
 	for _, header := range headers {
-		candidate := a.parseCLIProxyAPIImportCandidate(header, requestedProvider)
-		resp.addResult(candidate.result)
-		candidates = append(candidates, candidate)
+		fileCandidates := a.parseCLIProxyAPIImportCandidates(header, requestedProvider)
+		for _, candidate := range fileCandidates {
+			resp.addResult(candidate.result)
+			candidates = append(candidates, candidate)
+		}
 	}
 
 	a.configMu.Lock()
@@ -183,49 +185,96 @@ func (a *API) HandleImportCLIProxyAPICredentials(w http.ResponseWriter, r *http.
 	writeJSON(w, resp)
 }
 
-func (a *API) parseCLIProxyAPIImportCandidate(header *multipart.FileHeader, requestedProvider config.OAuthProvider) oauthImportCandidate {
-	result := OAuthImportFileResultResponse{
-		File:   strings.TrimSpace(header.Filename),
+func (a *API) parseCLIProxyAPIImportCandidates(header *multipart.FileHeader, requestedProvider config.OAuthProvider) []oauthImportCandidate {
+	baseFile := strings.TrimSpace(header.Filename)
+	if baseFile == "" {
+		baseFile = "credential.json"
+	}
+
+	baseResult := OAuthImportFileResultResponse{
+		File:   baseFile,
 		Status: "skipped",
 	}
-	if result.File == "" {
-		result.File = "credential.json"
-	}
-	if ext := strings.ToLower(filepath.Ext(result.File)); ext != ".json" {
-		result.Message = "skipped non-JSON file"
-		return oauthImportCandidate{result: result}
+	if ext := strings.ToLower(filepath.Ext(baseFile)); ext != ".json" {
+		baseResult.Message = "skipped non-JSON file"
+		return []oauthImportCandidate{{result: baseResult}}
 	}
 
 	data, err := readOAuthImportFile(header)
 	if err != nil {
-		result.Status = "failed"
-		result.Message = err.Error()
-		return oauthImportCandidate{result: result}
+		baseResult.Status = "failed"
+		baseResult.Message = err.Error()
+		return []oauthImportCandidate{{result: baseResult}}
 	}
-	cred, err := oauthpkg.ParseCLIProxyAPICredential(data)
+
+	entries, err := oauthpkg.ParseOAuthImportEntries(data)
 	if err != nil {
 		switch {
 		case errors.Is(err, oauthpkg.ErrCLIProxyAPINotCredential):
-			result.Message = "skipped file without supported OAuth credential data"
-		case errors.Is(err, oauthpkg.ErrCLIProxyAPIUnsupportedType):
-			result.Message = err.Error()
-		case errors.Is(err, oauthpkg.ErrCLIProxyAPIDisabledCredential):
-			result.Message = "skipped disabled OAuth credential"
+			baseResult.Message = "skipped file without supported OAuth credential data"
 		default:
-			result.Status = "failed"
-			result.Message = err.Error()
+			baseResult.Status = "failed"
+			baseResult.Message = err.Error()
 		}
-		return oauthImportCandidate{result: result}
+		return []oauthImportCandidate{{result: baseResult}}
 	}
-	if cred.Provider != requestedProvider {
-		result.Message = fmt.Sprintf("skipped %s credential while importing %s accounts", cred.Provider, requestedProvider)
-		return oauthImportCandidate{result: result}
+	if len(entries) == 0 {
+		baseResult.Message = "skipped file without supported OAuth credential data"
+		return []oauthImportCandidate{{result: baseResult}}
 	}
 
-	result.Provider = cred.Provider
-	result.Ref = cred.Ref
-	result.Email = cred.Email
-	return oauthImportCandidate{cred: cred, result: result}
+	results := make([]oauthImportCandidate, 0, len(entries))
+	for _, entry := range entries {
+		result := OAuthImportFileResultResponse{
+			File:   oauthImportEntryFile(baseFile, entry.Entry),
+			Status: "skipped",
+		}
+		if entry.Err != nil {
+			switch {
+			case errors.Is(entry.Err, oauthpkg.ErrCLIProxyAPINotCredential):
+				result.Message = "skipped entry without supported OAuth credential data"
+			case errors.Is(entry.Err, oauthpkg.ErrCLIProxyAPIUnsupportedType):
+				result.Message = entry.Err.Error()
+			case errors.Is(entry.Err, oauthpkg.ErrCLIProxyAPIDisabledCredential):
+				result.Message = "skipped disabled OAuth credential"
+			default:
+				result.Status = "failed"
+				result.Message = entry.Err.Error()
+			}
+			results = append(results, oauthImportCandidate{result: result})
+			continue
+		}
+
+		cred := entry.Credential
+		if cred == nil {
+			result.Message = "skipped entry without supported OAuth credential data"
+			results = append(results, oauthImportCandidate{result: result})
+			continue
+		}
+		if cred.Provider != requestedProvider {
+			result.Message = fmt.Sprintf("skipped %s credential while importing %s accounts", cred.Provider, requestedProvider)
+			results = append(results, oauthImportCandidate{result: result})
+			continue
+		}
+
+		result.Provider = cred.Provider
+		result.Ref = cred.Ref
+		result.Email = cred.Email
+		results = append(results, oauthImportCandidate{cred: cred, result: result})
+	}
+	return results
+}
+
+func oauthImportEntryFile(file string, entry string) string {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		file = "credential.json"
+	}
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return file
+	}
+	return file + "#" + entry
 }
 
 func readOAuthImportFile(header *multipart.FileHeader) ([]byte, error) {
@@ -453,10 +502,10 @@ func summarizeOAuthImport(resp OAuthImportResponse) string {
 		fmt.Sprintf("linked %d provider(s)", resp.LinkedCount),
 	}
 	if resp.SkippedCount > 0 {
-		parts = append(parts, fmt.Sprintf("skipped %d file(s)", resp.SkippedCount))
+		parts = append(parts, fmt.Sprintf("skipped %d entry(s)", resp.SkippedCount))
 	}
 	if resp.FailedCount > 0 {
-		parts = append(parts, fmt.Sprintf("failed %d file(s)", resp.FailedCount))
+		parts = append(parts, fmt.Sprintf("failed %d entry(s)", resp.FailedCount))
 	}
 	return strings.Join(parts, ", ")
 }

@@ -899,7 +899,7 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
             linked_count: 1,
             skipped_count: 1,
             failed_count: 0,
-            message: 'imported 1 account(s), linked 1 provider(s), skipped 1 file(s)',
+            message: 'imported 1 account(s), linked 1 provider(s), skipped 1 entry(s)',
             results: [
                 {
                     file: 'cli/codex-a.json',
@@ -949,6 +949,26 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
     assert.equal(closed, 1);
     assert.equal(loadProvidersCalls, 1);
     assert.equal(refreshStatusCalls, 1);
+});
+
+test('oauthImportResultDetails includes all result entries without truncation', () => {
+    const state = loadApp();
+    const details = state.oauthImportResultDetails([
+        { file: 'a.json', status: 'skipped', message: 'reason-a' },
+        { file: 'b.json', status: 'failed', message: 'reason-b' },
+        { file: 'c.json', status: 'skipped', message: 'reason-c' },
+        { file: 'd.json', status: 'failed', message: 'reason-d' },
+        { file: 'e.json', status: 'skipped', message: 'reason-e' },
+        { file: 'f.json', status: 'failed', message: 'reason-f' }
+    ]);
+
+    assert.match(details, /a\.json: reason-a/);
+    assert.match(details, /b\.json: reason-b/);
+    assert.match(details, /c\.json: reason-c/);
+    assert.match(details, /d\.json: reason-d/);
+    assert.match(details, /e\.json: reason-e/);
+    assert.match(details, /f\.json: reason-f/);
+    assert.doesNotMatch(details, /more entries/i);
 });
 
 test('triggerOAuthImportPicker clicks the hidden input', () => {

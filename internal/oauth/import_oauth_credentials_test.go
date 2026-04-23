@@ -181,6 +181,159 @@ func TestParseCLIProxyAPICredential_FillsIdentityFromIDToken(t *testing.T) {
 	}
 }
 
+func TestParseCLIProxyAPICredential_CodexSupportsSub2APIFields(t *testing.T) {
+	cred, err := ParseCLIProxyAPICredential([]byte(`{
+  "type": "codex",
+  "access_token": "access-1",
+  "refresh_token": "refresh-1",
+  "chatgpt_account_id": "acct_123",
+  "chatgpt_user_id": "user_123",
+  "organization_id": "org_123",
+  "plan_type": "plus",
+  "client_id": "client_123",
+  "expires_at": 1777776981
+}`))
+	if err != nil {
+		t.Fatalf("ParseCLIProxyAPICredential: %v", err)
+	}
+	if got := cred.Ref; got != "codex-acct-123" {
+		t.Fatalf("ref = %q, want codex-acct-123", got)
+	}
+	if got := cred.AccountID; got != "acct_123" {
+		t.Fatalf("account_id = %q, want acct_123", got)
+	}
+	if got := cred.Metadata["plan_type"]; got != "plus" {
+		t.Fatalf("plan_type = %q, want plus", got)
+	}
+	if got := cred.Metadata["chatgpt_user_id"]; got != "user_123" {
+		t.Fatalf("chatgpt_user_id = %q, want user_123", got)
+	}
+	wantExpiresAt := time.Unix(1777776981, 0).UTC()
+	if !cred.ExpiresAt.Equal(wantExpiresAt) {
+		t.Fatalf("expires_at = %s, want %s", cred.ExpiresAt, wantExpiresAt)
+	}
+}
+
+func TestParseOAuthImportEntries_Sub2APIBundle(t *testing.T) {
+	results, err := ParseOAuthImportEntries([]byte(`{
+  "exported_at": "2026-04-23T09:35:45Z",
+  "accounts": [
+    {
+      "name": "OpenAI OAuth",
+      "platform": "openai",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "chatgpt_account_id": "acct_123",
+        "expires_at": 1777776981,
+        "plan_type": "plus"
+      }
+    },
+    {
+      "name": "API Key",
+      "platform": "openai",
+      "type": "apikey",
+      "credentials": {
+        "api_key": "sk-test"
+      }
+    }
+  ]
+}`))
+	if err != nil {
+		t.Fatalf("ParseOAuthImportEntries: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results len = %d, want 2", len(results))
+	}
+	if got := results[0].Entry; got != "accounts[0]" {
+		t.Fatalf("entry = %q, want accounts[0]", got)
+	}
+	if results[0].Err != nil {
+		t.Fatalf("results[0].Err = %v, want nil", results[0].Err)
+	}
+	if results[0].Credential == nil {
+		t.Fatalf("results[0].Credential = nil")
+	}
+	if got := results[0].Credential.Provider; got != config.OAuthProviderCodex {
+		t.Fatalf("provider = %q, want codex", got)
+	}
+	if got := results[0].Credential.AccountID; got != "acct_123" {
+		t.Fatalf("account_id = %q, want acct_123", got)
+	}
+	if !errors.Is(results[1].Err, ErrCLIProxyAPINotCredential) {
+		t.Fatalf("results[1].Err = %v, want ErrCLIProxyAPINotCredential", results[1].Err)
+	}
+}
+
+func TestParseOAuthImportEntries_Sub2APIBundleGeminiWithoutEmail(t *testing.T) {
+	results, err := ParseOAuthImportEntries([]byte(`{
+  "exported_at": "2026-04-23T09:35:45Z",
+  "accounts": [
+    {
+      "name": "Gemini OAuth",
+      "platform": "gemini",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "project_id": "proj-123",
+        "oauth_type": "code_assist",
+        "expires_at": "2026-04-29T11:54:11+08:00"
+      }
+    }
+  ]
+}`))
+	if err != nil {
+		t.Fatalf("ParseOAuthImportEntries: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(results))
+	}
+	if results[0].Err != nil {
+		t.Fatalf("results[0].Err = %v, want nil", results[0].Err)
+	}
+	if results[0].Credential == nil {
+		t.Fatalf("results[0].Credential = nil")
+	}
+	if got := results[0].Credential.Provider; got != config.OAuthProviderGemini {
+		t.Fatalf("provider = %q, want gemini", got)
+	}
+	if got := results[0].Credential.AccountID; got != "proj-123" {
+		t.Fatalf("account_id = %q, want proj-123", got)
+	}
+}
+
+func TestParseOAuthImportEntries_Sub2APIBundleClaudeWithoutEmail(t *testing.T) {
+	results, err := ParseOAuthImportEntries([]byte(`{
+  "exported_at": "2026-04-23T09:35:45Z",
+  "accounts": [
+    {
+      "name": "Claude Team A",
+      "platform": "anthropic",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "expires_at": "2026-04-29T11:54:11+08:00"
+      }
+    }
+  ]
+}`))
+	if err != nil {
+		t.Fatalf("ParseOAuthImportEntries: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(results))
+	}
+	if results[0].Credential != nil {
+		t.Fatalf("results[0].Credential = %#v, want nil", results[0].Credential)
+	}
+	if got := results[0].Err; got == nil || got.Error() != "claude credential missing email/account_id/organization_id" {
+		t.Fatalf("results[0].Err = %v, want missing identity error", got)
+	}
+}
+
 func TestParseCLIProxyAPICredential_SkipCases(t *testing.T) {
 	tests := []struct {
 		name string

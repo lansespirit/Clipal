@@ -285,5 +285,8 @@ func codexCredentialPlanType(cred *Credential) string {
 	if cred == nil || cred.Metadata == nil {
 		return ""
 	}
-	return parseCodexPlanType(cred.Metadata["id_token"])
+	if planType := parseCodexPlanType(cred.Metadata["id_token"]); planType != "" {
+		return planType
+	}
+	return strings.TrimSpace(cred.Metadata["plan_type"])
 }

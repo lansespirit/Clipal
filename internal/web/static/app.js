@@ -185,8 +185,8 @@ function app() {
                     oauthUnavailable: 'OAuth is not available for this client yet.',
                     oauthImportCompletedTitle: 'Imported OAuth accounts',
                     oauthImportFailedTitle: 'OAuth import failed',
-                    oauthImportSummary: 'Imported {imported} account(s), linked {linked} provider(s), skipped {skipped} file(s), failed {failed} file(s).',
-                    oauthImportDetailsMore: '+{count} more file(s)',
+                    oauthImportSummary: 'Imported {imported} account(s), linked {linked} provider(s), skipped {skipped} entry(s), failed {failed} entry(s).',
+                    oauthImportDetailsMore: '+{count} more entries',
                     oauthImportBrowserUnsupported: 'Directory import is not supported in this browser.',
                     proxyDirect: 'Direct',
                     proxyCustom: 'Custom'
@@ -554,8 +554,8 @@ function app() {
                     oauthUnavailable: '这个客户端暂时还不能使用 OAuth。',
                     oauthImportCompletedTitle: '已导入 OAuth 账号',
                     oauthImportFailedTitle: 'OAuth 导入失败',
-                    oauthImportSummary: '已导入 {imported} 个账号，关联 {linked} 个 Provider，跳过 {skipped} 个文件，失败 {failed} 个文件。',
-                    oauthImportDetailsMore: '另有 {count} 个文件',
+                    oauthImportSummary: '已导入 {imported} 个账号，关联 {linked} 个 Provider，跳过 {skipped} 条记录，失败 {failed} 条记录。',
+                    oauthImportDetailsMore: '另有 {count} 条记录',
                     oauthImportBrowserUnsupported: '当前浏览器不支持目录导入。',
                     dragToReorder: '拖拽调整优先级',
                     proxyDirect: '直连',
@@ -1523,7 +1523,7 @@ function app() {
                 return '';
             }
             const details = [];
-            for (const item of results.slice(0, 5)) {
+            for (const item of results) {
                 const file = String((item && item.file) || 'credential.json').trim() || 'credential.json';
                 const message = String((item && item.message) || '').trim();
                 const status = String((item && item.status) || '').trim();
@@ -1534,10 +1534,6 @@ function app() {
                 if (status) {
                     details.push(`${file}: ${status}`);
                 }
-            }
-            const remaining = results.length - details.length;
-            if (remaining > 0) {
-                details.push(this.tf('providers.oauthImportDetailsMore', { count: remaining }));
             }
             return details.join('\n');
         },
