@@ -238,6 +238,23 @@
     font-size: var(--text-sm);
 }
 
+.provider-card__detail--usage {
+    gap: 16px;
+}
+
+.provider-card__usage-pair {
+    min-width: 0;
+}
+
+.provider-card__detail--usage .provider-card__detail-label {
+    white-space: nowrap;
+}
+
+.provider-card__detail--usage .provider-card__detail-value {
+    flex: 0 0 auto;
+    max-width: none;
+}
+
 .provider-card__detail-label {
     color: var(--text-secondary);
     font-weight: var(--font-medium);

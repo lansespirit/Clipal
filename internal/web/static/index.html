@@ -264,14 +264,19 @@
                                 <span class="provider-card__detail-value"
                                     x-text="configuredKeyCountLabel(provider.key_count || 0)"></span>
                             </div>
-                            <div class="provider-card__detail" x-show="provider.usage && provider.usage.has_usage">
-                                <div class="flex items-center gap-3">
+                            <div class="provider-card__detail provider-card__detail--usage"
+                                x-show="provider.usage && provider.usage.has_usage">
+                                <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.usageTotal')"></span>
-                                    <span class="provider-card__detail-value" x-text="providerUsageTotal(provider)"></span>
+                                    <span class="provider-card__detail-value"
+                                        :title="providerUsageTotalTitle(provider)"
+                                        x-text="providerUsageTotal(provider)"></span>
                                 </div>
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.usageInOut')"></span>
-                                    <span class="provider-card__detail-value" x-text="providerUsageInOut(provider)"></span>
+                                    <span class="provider-card__detail-value"
+                                        :title="providerUsageInOutTitle(provider)"
+                                        x-text="providerUsageInOut(provider)"></span>
                                 </div>
                             </div>
                         </div>

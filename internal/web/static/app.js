@@ -2307,6 +2307,38 @@ function app() {
             return Number.isFinite(count) ? count.toLocaleString(this.locale === 'zh-CN' ? 'zh-CN' : 'en-US') : '0';
         },
 
+        formatCompactTokenCount(value) {
+            const count = Number(value || 0);
+            if (!Number.isFinite(count)) {
+                return '0';
+            }
+
+            const locale = this.locale === 'zh-CN' ? 'zh-CN' : 'en-US';
+            const sign = count < 0 ? '-' : '';
+            const units = ['', 'K', 'M', 'B', 'T', 'P', 'E', 'Z', 'Y'];
+            let scaled = Math.abs(count);
+            let unitIndex = 0;
+
+            while (scaled >= 1000 && unitIndex < units.length - 1) {
+                scaled /= 1000;
+                unitIndex += 1;
+            }
+
+            let decimals = scaled < 10 ? 2 : scaled < 100 ? 1 : 0;
+            let rounded = Number(scaled.toFixed(decimals));
+            while (rounded >= 1000 && unitIndex < units.length - 1) {
+                scaled = rounded / 1000;
+                unitIndex += 1;
+                decimals = scaled < 10 ? 2 : scaled < 100 ? 1 : 0;
+                rounded = Number(scaled.toFixed(decimals));
+            }
+
+            const numberText = rounded.toLocaleString(locale, {
+                maximumFractionDigits: decimals
+            });
+            return `${sign}${numberText}${units[unitIndex]}`;
+        },
+
         parseTimestamp(value) {
             const text = String(value || '').trim();
             if (!text) {
@@ -2357,10 +2389,26 @@ function app() {
             if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
+            return this.formatCompactTokenCount(usage.total_tokens || 0);
+        },
+
+        providerUsageTotalTitle(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
+                return this.t('common.none');
+            }
             return this.formatTokenCount(usage.total_tokens || 0);
         },
 
         providerUsageInOut(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
+                return this.t('common.none');
+            }
+            return `${this.formatCompactTokenCount(usage.input_tokens || 0)} / ${this.formatCompactTokenCount(usage.output_tokens || 0)}`;
+        },
+
+        providerUsageInOutTitle(provider) {
             const usage = provider && provider.usage;
             if (!usage || !usage.has_usage) {
                 return this.t('common.none');

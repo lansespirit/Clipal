@@ -484,6 +484,42 @@ test('providerCardTitle truncates oauth display name on card', () => {
     assert.equal(title, 'gamebabies@g...');
 });
 
+test('formatCompactTokenCount keeps at most three digits across all units', () => {
+    const state = loadApp();
+
+    assert.equal(state.formatCompactTokenCount(999), '999');
+    assert.equal(state.formatCompactTokenCount(1000), '1K');
+    assert.equal(state.formatCompactTokenCount(1234), '1.23K');
+    assert.equal(state.formatCompactTokenCount(12345), '12.3K');
+    assert.equal(state.formatCompactTokenCount(123456), '123K');
+    assert.equal(state.formatCompactTokenCount(999500), '1M');
+    assert.equal(state.formatCompactTokenCount(3644514), '3.64M');
+    assert.equal(state.formatCompactTokenCount(724117614), '724M');
+    assert.equal(state.formatCompactTokenCount(1250000000), '1.25B');
+    assert.equal(state.formatCompactTokenCount(1234000000000), '1.23T');
+    assert.equal(state.formatCompactTokenCount(1234000000000000), '1.23P');
+    assert.equal(state.formatCompactTokenCount(1234000000000000000), '1.23E');
+    assert.equal(state.formatCompactTokenCount(1234000000000000000000), '1.23Z');
+    assert.equal(state.formatCompactTokenCount(1234000000000000000000000), '1.23Y');
+});
+
+test('providerUsage labels use compact values and preserve exact hover text', () => {
+    const state = loadApp();
+    const provider = {
+        usage: {
+            has_usage: true,
+            total_tokens: 724117614,
+            input_tokens: 720473100,
+            output_tokens: 3644514
+        }
+    };
+
+    assert.equal(state.providerUsageTotal(provider), '724M');
+    assert.equal(state.providerUsageTotalTitle(provider), '724,117,614');
+    assert.equal(state.providerUsageInOut(provider), '720M / 3.64M');
+    assert.equal(state.providerUsageInOutTitle(provider), '720,473,100 / 3,644,514');
+});
+
 test('providerHasVisibleDetails keeps oauth plan summary visible without token usage', () => {
     const state = loadApp();
 
