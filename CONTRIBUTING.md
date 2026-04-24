@@ -9,12 +9,24 @@
 ## Common Commands
 
 ```bash
+make install-hooks
 make test-unit
 make test-smoke
 make lint
+make lint-fix
 make vuln
 make ci
 ```
+
+## Git Hooks
+
+Install the repository hooks once after cloning:
+
+```bash
+make install-hooks
+```
+
+The pre-commit hook runs `gofmt` on staged Go files, stages formatting changes, runs `golangci-lint run --fix ./...`, stages auto-fixed Go files, and finishes with `golangci-lint run ./...`. If a staged Go file also has unstaged changes, the hook blocks first so it does not accidentally add unrelated work to the commit. If `golangci-lint` is installed outside the usual locations, set `GOLANGCI_LINT=/path/to/golangci-lint` before committing.
 
 ## Code Organization
 

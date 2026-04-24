@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged_go_files=()
+while IFS= read -r -d '' file; do
+  staged_go_files+=("$file")
+done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.go')
+
+if [[ ${#staged_go_files[@]} -eq 0 ]]; then
+  echo "pre-commit: no staged Go files, skipping lint fix"
+  exit 0
+fi
+
+partially_staged_files=()
+for file in "${staged_go_files[@]}"; do
+  if ! git diff --quiet -- "$file"; then
+    partially_staged_files+=("$file")
+  fi
+done
+
+if [[ ${#partially_staged_files[@]} -gt 0 ]]; then
+  echo "pre-commit: refusing to auto-fix partially staged Go files" >&2
+  echo "pre-commit: stage or stash unstaged changes in these files first:" >&2
+  printf '  %s\n' "${partially_staged_files[@]}" >&2
+  exit 1
+fi
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "pre-commit: go is required" >&2
+  exit 1
+fi
+
+golangci_lint="${GOLANGCI_LINT:-}"
+if [[ -z "$golangci_lint" ]]; then
+  if command -v golangci-lint >/dev/null 2>&1; then
+    golangci_lint="$(command -v golangci-lint)"
+  else
+    gopath="$(go env GOPATH)"
+    candidates=(
+      "$gopath/bin/golangci-lint"
+      "$HOME/bin/golangci-lint"
+      "/opt/homebrew/bin/golangci-lint"
+      "/usr/local/bin/golangci-lint"
+    )
+    for candidate in "${candidates[@]}"; do
+      if [[ -x "$candidate" ]]; then
+        golangci_lint="$candidate"
+        break
+      fi
+    done
+  fi
+fi
+
+if [[ -z "$golangci_lint" || ! -x "$golangci_lint" ]]; then
+  echo "pre-commit: golangci-lint is required" >&2
+  echo "pre-commit: install it from https://golangci-lint.run/welcome/install/" >&2
+  echo "pre-commit: or set GOLANGCI_LINT=/path/to/golangci-lint" >&2
+  exit 1
+fi
+
+echo "pre-commit: gofmt staged Go files"
+gofmt -w -- "${staged_go_files[@]}"
+git add -- "${staged_go_files[@]}"
+
+echo "pre-commit: golangci-lint --fix"
+"$golangci_lint" run --fix ./...
+
+fixed_go_files=()
+while IFS= read -r -d '' file; do
+  fixed_go_files+=("$file")
+done < <(git diff --name-only -z --diff-filter=ACMR -- '*.go')
+
+if [[ ${#fixed_go_files[@]} -gt 0 ]]; then
+  echo "pre-commit: staging auto-fixed Go files"
+  git add -- "${fixed_go_files[@]}"
+fi
+
+echo "pre-commit: final lint check"
+"$golangci_lint" run ./...
+
+echo "pre-commit: lint fix complete"

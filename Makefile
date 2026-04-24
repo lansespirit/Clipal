@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-smoke test-live-oauth test-live-codex-oauth test-live-claude-oauth test-live-gemini-oauth test-oauth-authorize lint vuln fmt ci
+.PHONY: build test test-unit test-smoke test-live-oauth test-live-codex-oauth test-live-claude-oauth test-live-gemini-oauth test-oauth-authorize lint lint-fix vuln fmt install-hooks ci
 
 GO ?= go
 GOBIN := $(shell $(GO) env GOPATH)/bin
@@ -93,10 +93,16 @@ test-oauth-authorize:
 lint:
 	$(GOLANGCI_LINT) run ./...
 
+lint-fix:
+	$(GOLANGCI_LINT) run --fix ./...
+
 vuln:
 	$(GOVULNCHECK) ./...
 
 fmt:
 	gofmt -w $$(find cmd internal -type f -name '*.go' | sort)
+
+install-hooks:
+	./scripts/install_git_hooks.sh
 
 ci: test-unit lint vuln test-smoke
