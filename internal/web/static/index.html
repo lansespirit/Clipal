@@ -913,11 +913,11 @@
                         <div class="form-hint" x-text="t('modal.provider.oauthDirectHint')"></div>
                         <div class="form-meta" style="margin-top: 10px; align-items: center; gap: 10px;">
                             <button type="button" class="btn btn-secondary btn-sm" @click="triggerOAuthImportPicker()"
-                                x-text="t('modal.provider.importDirectory')"></button>
-                            <input x-ref="oauthImportInput" type="file" style="display: none;" webkitdirectory directory
+                                x-text="t('modal.provider.importFile')"></button>
+                            <input x-ref="oauthImportInput" type="file" style="display: none;" accept=".json,application/json"
                                 multiple @change="handleOAuthImportSelection($event)">
                             <span class="form-hint" style="margin: 0;"
-                                x-text="t('modal.provider.importDirectoryHint')"></span>
+                                x-text="t('modal.provider.importFileHint')"></span>
                         </div>
                     </div>
 

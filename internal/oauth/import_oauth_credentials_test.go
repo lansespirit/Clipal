@@ -3,6 +3,7 @@ package oauth
 import (
 	"encoding/base64"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -214,6 +215,79 @@ func TestParseCLIProxyAPICredential_CodexSupportsSub2APIFields(t *testing.T) {
 	}
 }
 
+func TestParseCodexNativeAuthCredential(t *testing.T) {
+	accessToken := testOAuthJWTWithExp("sean@example.com", "acct_ignored", time.Date(2026, 5, 3, 12, 34, 56, 0, time.UTC))
+	cred, err := ParseCodexNativeAuthCredential([]byte(`{
+  "auth_mode": "chatgpt",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "id_token": "` + testOAuthJWTWithPlan("sean@example.com", "acct_123", "plus") + `",
+    "access_token": "` + accessToken + `",
+    "refresh_token": "refresh-1",
+    "account_id": "acct_123"
+  },
+  "last_refresh": "2026-04-29T14:12:58.368988800Z"
+}`))
+	if err != nil {
+		t.Fatalf("ParseCodexNativeAuthCredential: %v", err)
+	}
+	if got := cred.Provider; got != config.OAuthProviderCodex {
+		t.Fatalf("provider = %q, want codex", got)
+	}
+	if got := cred.Ref; got != "codex-sean-example-com" {
+		t.Fatalf("ref = %q, want codex-sean-example-com", got)
+	}
+	if got := cred.Email; got != "sean@example.com" {
+		t.Fatalf("email = %q", got)
+	}
+	if got := cred.AccountID; got != "acct_123" {
+		t.Fatalf("account_id = %q", got)
+	}
+	if got := cred.AccessToken; got != accessToken {
+		t.Fatalf("access_token was not preserved")
+	}
+	if got := cred.RefreshToken; got != "refresh-1" {
+		t.Fatalf("refresh_token = %q, want refresh-1", got)
+	}
+	if got := cred.Metadata["id_token"]; got == "" {
+		t.Fatalf("expected id_token metadata to be preserved")
+	}
+	if got := cred.Metadata["auth_mode"]; got != "chatgpt" {
+		t.Fatalf("auth_mode = %q, want chatgpt", got)
+	}
+	if got := cred.Metadata["plan_type"]; got != "plus" {
+		t.Fatalf("plan_type = %q, want plus", got)
+	}
+	wantExpiresAt := time.Date(2026, 5, 3, 12, 34, 56, 0, time.UTC)
+	if !cred.ExpiresAt.Equal(wantExpiresAt) {
+		t.Fatalf("expires_at = %s, want %s", cred.ExpiresAt, wantExpiresAt)
+	}
+	wantLastRefresh := time.Date(2026, 4, 29, 14, 12, 58, 368988800, time.UTC)
+	if !cred.LastRefresh.Equal(wantLastRefresh) {
+		t.Fatalf("last_refresh = %s, want %s", cred.LastRefresh, wantLastRefresh)
+	}
+}
+
+func TestParseOAuthImportEntries_CodexNativeAuthJSON(t *testing.T) {
+	results, err := ParseOAuthImportEntries([]byte(`{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "id_token": "` + testOAuthJWT("sean@example.com", "acct_123") + `",
+    "access_token": "` + testOAuthJWTWithExp("sean@example.com", "acct_123", time.Date(2026, 5, 3, 12, 34, 56, 0, time.UTC)) + `",
+    "refresh_token": "refresh-1"
+  }
+}`))
+	if err != nil {
+		t.Fatalf("ParseOAuthImportEntries: %v", err)
+	}
+	if len(results) != 1 || results[0].Err != nil || results[0].Credential == nil {
+		t.Fatalf("results = %#v", results)
+	}
+	if got := results[0].Credential.Ref; got != "codex-sean-example-com" {
+		t.Fatalf("ref = %q, want codex-sean-example-com", got)
+	}
+}
+
 func TestParseOAuthImportEntries_Sub2APIBundle(t *testing.T) {
 	results, err := ParseOAuthImportEntries([]byte(`{
   "exported_at": "2026-04-23T09:35:45Z",
@@ -368,8 +442,23 @@ func TestParseCLIProxyAPICredential_SkipCases(t *testing.T) {
 }
 
 func testOAuthJWT(email string, accountID string) string {
+	return testOAuthJWTWithPlan(email, accountID, "")
+}
+
+func testOAuthJWTWithPlan(email string, accountID string, planType string) string {
 	header := `{"alg":"none","typ":"JWT"}`
-	payload := `{"email":"` + email + `","sub":"sub_123","https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `"}}`
+	auth := `"chatgpt_account_id":"` + accountID + `"`
+	if planType != "" {
+		auth += `,"chatgpt_plan_type":"` + planType + `"`
+	}
+	payload := `{"email":"` + email + `","sub":"sub_123","https://api.openai.com/auth":{` + auth + `}}`
+	return base64.RawURLEncoding.EncodeToString([]byte(header)) + "." +
+		base64.RawURLEncoding.EncodeToString([]byte(payload)) + "."
+}
+
+func testOAuthJWTWithExp(email string, accountID string, expiresAt time.Time) string {
+	header := `{"alg":"none","typ":"JWT"}`
+	payload := `{"email":"` + email + `","sub":"sub_123","exp":` + strconv.FormatInt(expiresAt.Unix(), 10) + `,"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `"}}`
 	return base64.RawURLEncoding.EncodeToString([]byte(header)) + "." +
 		base64.RawURLEncoding.EncodeToString([]byte(payload)) + "."
 }

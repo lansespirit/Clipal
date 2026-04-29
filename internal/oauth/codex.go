@@ -251,7 +251,11 @@ func parseCodexIdentityToken(idToken string) (string, string) {
 	if accountID == "" {
 		accountID = strings.TrimSpace(claims.Sub)
 	}
-	return strings.TrimSpace(claims.Email), accountID
+	email := strings.TrimSpace(claims.Email)
+	if email == "" {
+		email = strings.TrimSpace(claims.Profile.Email)
+	}
+	return email, accountID
 }
 
 func parseCodexPlanType(idToken string) string {
@@ -269,6 +273,9 @@ func parseCodexIdentityClaims(idToken string) (*struct {
 		ChatGPTAccountID string `json:"chatgpt_account_id"`
 		ChatGPTPlanType  string `json:"chatgpt_plan_type"`
 	} `json:"https://api.openai.com/auth"`
+	Profile struct {
+		Email string `json:"email"`
+	} `json:"https://api.openai.com/profile"`
 }, bool) {
 	parts := strings.Split(strings.TrimSpace(idToken), ".")
 	if len(parts) < 2 {
@@ -285,6 +292,9 @@ func parseCodexIdentityClaims(idToken string) (*struct {
 			ChatGPTAccountID string `json:"chatgpt_account_id"`
 			ChatGPTPlanType  string `json:"chatgpt_plan_type"`
 		} `json:"https://api.openai.com/auth"`
+		Profile struct {
+			Email string `json:"email"`
+		} `json:"https://api.openai.com/profile"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, false

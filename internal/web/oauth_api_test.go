@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -63,6 +64,42 @@ func TestHandleStartOAuthProvider_RejectsInvalidProxySettings(t *testing.T) {
 	if w.Result().StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
 	}
+}
+
+func TestHandleCancelOAuthSession_ReleasesCallbackAndDeletesTarget(t *testing.T) {
+	api := newTestOAuthAPI(t)
+	start := startOAuthSessionFor(t, api, "openai", "codex")
+	parsedAuthURL, err := url.Parse(start.AuthURL)
+	if err != nil {
+		t.Fatalf("url.Parse auth_url: %v", err)
+	}
+	redirectURI := parsedAuthURL.Query().Get("redirect_uri")
+	parsedRedirect, err := url.Parse(redirectURI)
+	if err != nil {
+		t.Fatalf("url.Parse redirect_uri: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/oauth/sessions/"+start.SessionID+"/cancel", nil)
+	w := httptest.NewRecorder()
+	api.HandleGetOAuthSession(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("cancel status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+	if got["status"] != "error" {
+		t.Fatalf("status = %v, want error", got["status"])
+	}
+	if got["error"] != "oauth session cancelled" {
+		t.Fatalf("error = %v, want oauth session cancelled", got["error"])
+	}
+	if _, ok := api.getOAuthTargetClient(start.SessionID); ok {
+		t.Fatalf("expected oauth target to be deleted after cancel")
+	}
+	ln, err := net.Listen("tcp", parsedRedirect.Host)
+	if err != nil {
+		t.Fatalf("net.Listen: callback port still busy after cancel: %v", err)
+	}
+	_ = ln.Close()
 }
 
 func TestOAuthProxySettingsFromStartRequest_DefaultIsNotConfigured(t *testing.T) {
@@ -1260,6 +1297,58 @@ func TestHandleImportCLIProxyAPICredentials_ImportsAndLinksProvider(t *testing.T
 	}
 	if got := cred.Email; got != "sean@example.com" {
 		t.Fatalf("email = %q", got)
+	}
+}
+
+func TestHandleImportCLIProxyAPICredentials_ImportsCodexNativeAuthJSON(t *testing.T) {
+	api := NewAPI(t.TempDir(), "test", nil)
+
+	req := newOAuthImportRequest(t,
+		"openai",
+		"codex",
+		importedOAuthFile{
+			Name: "auth.json",
+			Body: `{
+  "auth_mode": "chatgpt",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "id_token": "` + testOAuthJWTWithPlan("sean@example.com", "acct_123", "plus") + `",
+    "access_token": "` + testOAuthJWT("sean@example.com", "acct_123") + `",
+    "refresh_token": "refresh-1",
+    "account_id": "acct_123"
+  },
+  "last_refresh": "2026-04-29T14:12:58.368988800Z"
+}`,
+		},
+	)
+	w := httptest.NewRecorder()
+	api.HandleImportCLIProxyAPICredentials(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var resp OAuthImportResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if resp.ImportedCount != 1 || resp.LinkedCount != 1 || resp.SkippedCount != 0 || resp.FailedCount != 0 {
+		t.Fatalf("unexpected import counts: %#v", resp)
+	}
+	if got := findOAuthImportResult(resp.Results, "auth.json"); got.Status != "imported" || got.ProviderName != "codex-sean-example-com" {
+		t.Fatalf("auth.json result = %#v", got)
+	}
+	cred, err := api.oauth.Load(config.OAuthProviderCodex, "codex-sean-example-com")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cred.Email; got != "sean@example.com" {
+		t.Fatalf("email = %q", got)
+	}
+	if got := cred.Metadata["auth_mode"]; got != "chatgpt" {
+		t.Fatalf("auth_mode = %q, want chatgpt", got)
+	}
+	if got := cred.Metadata["plan_type"]; got != "plus" {
+		t.Fatalf("plan_type = %q, want plus", got)
 	}
 }
 

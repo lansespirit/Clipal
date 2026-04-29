@@ -187,7 +187,7 @@ function app() {
                     oauthImportFailedTitle: 'OAuth import failed',
                     oauthImportSummary: 'Imported {imported} account(s), linked {linked} provider(s), skipped {skipped} entry(s), failed {failed} entry(s).',
                     oauthImportDetailsMore: '+{count} more entries',
-                    oauthImportBrowserUnsupported: 'Directory import is not supported in this browser.',
+                    oauthImportBrowserUnsupported: 'OAuth credential import is not supported in this browser.',
                     proxyDirect: 'Direct',
                     proxyCustom: 'Custom'
                 },
@@ -202,8 +202,8 @@ function app() {
                         oauthProvider: 'Service',
                         oauthProviderCodex: 'Codex',
                         oauthDirectHint: 'After authorization, Clipal will automatically link the account to an existing provider or create one if needed.',
-                        importDirectory: 'Import OAuth Directory',
-                        importDirectoryHint: 'Select a directory of existing OAuth JSON files. Clipal will import supported accounts and link or create providers automatically.',
+                        importFile: 'Import OAuth JSON',
+                        importFileHint: 'Select one or more OAuth JSON credential files. Clipal will import supported accounts and link or create providers automatically.',
                         name: 'Name *',
                         nameHint: 'Letters, numbers, dot (.), underscore (_), and hyphen (-).',
                         baseUrl: 'Base URL *',
@@ -556,7 +556,7 @@ function app() {
                     oauthImportFailedTitle: 'OAuth 导入失败',
                     oauthImportSummary: '已导入 {imported} 个账号，关联 {linked} 个 Provider，跳过 {skipped} 条记录，失败 {failed} 条记录。',
                     oauthImportDetailsMore: '另有 {count} 条记录',
-                    oauthImportBrowserUnsupported: '当前浏览器不支持目录导入。',
+                    oauthImportBrowserUnsupported: '当前浏览器不支持 OAuth 凭据导入。',
                     dragToReorder: '拖拽调整优先级',
                     proxyDirect: '直连',
                     proxyCustom: '自定义'
@@ -572,8 +572,8 @@ function app() {
                         oauthProvider: '服务',
                         oauthProviderCodex: 'Codex',
                         oauthDirectHint: '授权完成后，Clipal 会自动关联到已有 Provider；如果没有，再创建一个。',
-                        importDirectory: '导入 OAuth 目录',
-                        importDirectoryHint: '选择已有 OAuth JSON 文件所在目录。Clipal 会导入支持的账号，并自动关联或创建 Provider。',
+                        importFile: '导入 OAuth JSON',
+                        importFileHint: '选择一个或多个 OAuth 凭据 JSON 文件。Clipal 会导入支持的账号，并自动关联或创建 Provider。',
                         name: '名称 *',
                         nameHint: '允许字母、数字、点号 (.)、下划线 (_) 和连字符 (-)。',
                         baseUrl: 'Base URL *',
@@ -1238,8 +1238,31 @@ function app() {
             return true;
         },
 
+        cancelOAuthSessionOnServer(session = null) {
+            const pending = this.normalizePendingOAuthSession(session)
+                || this.loadPendingOAuthSession()
+                || this.pendingOAuthSession;
+            const sessionID = String((pending && pending.session_id) || '').trim();
+            if (!sessionID) {
+                return Promise.resolve(null);
+            }
+            return this.apiCall(`/api/oauth/sessions/${encodeURIComponent(sessionID)}/cancel`, {
+                method: 'POST'
+            }, true, true).catch(error => {
+                console.error('Failed to cancel OAuth session:', error);
+                return null;
+            });
+        },
+
         cancelOAuthAuthorization(keepModal = true) {
+            const pending = this.normalizePendingOAuthSession(this.oauthAuthorization)
+                || this.loadPendingOAuthSession()
+                || this.pendingOAuthSession;
+            const phase = String((this.oauthAuthorization && this.oauthAuthorization.phase) || '').trim();
             this.stopOAuthPolling();
+            if (pending && phase !== 'completed' && phase !== 'timed_out' && phase !== 'error') {
+                this.cancelOAuthSessionOnServer(pending);
+            }
             this.clearPendingOAuthSession();
             this.resetOAuthAuthorization();
             if (!keepModal) {
@@ -3441,9 +3464,7 @@ function app() {
                     payload.proxy_url = proxyURL;
                 }
             }
-            this.stopOAuthPolling();
-            this.clearPendingOAuthSession();
-            this.resetOAuthAuthorization();
+            this.cancelOAuthAuthorization(true);
             this.showOAuthAuthorizationModal({
                 provider,
                 client_type: this.selectedClient
@@ -3539,7 +3560,7 @@ function app() {
             const input = event && event.target ? event.target : null;
             const files = Array.from((input && input.files) || []);
             try {
-                await this.importCLIProxyAPIDirectory(files);
+                await this.importCLIProxyAPIFiles(files);
             } finally {
                 if (input) {
                     input.value = '';
@@ -3547,7 +3568,7 @@ function app() {
             }
         },
 
-        async importCLIProxyAPIDirectory(files) {
+        async importCLIProxyAPIFiles(files) {
             const provider = String(this.providerForm.oauth_provider || '').trim().toLowerCase();
             if (!provider) {
                 throw new Error(this.t('providers.oauthUnavailable'));
@@ -3566,7 +3587,7 @@ function app() {
                 if (!file) {
                     continue;
                 }
-                const filename = String(file.webkitRelativePath || file.name || 'credential.json').trim() || 'credential.json';
+                const filename = String(file.name || 'credential.json').trim() || 'credential.json';
                 formData.append('files', file, filename);
             }
 
@@ -3687,9 +3708,7 @@ function app() {
                 const pr = typeof p.priority === 'number' ? p.priority : 0;
                 return pr > max ? pr : max;
             }, 0);
-            this.stopOAuthPolling();
-            this.clearPendingOAuthSession();
-            this.resetOAuthAuthorization();
+            this.cancelOAuthAuthorization(true);
             this.providerForm = {
                 auth_type: 'api_key',
                 oauth_provider: this.defaultOAuthProviderValue(),

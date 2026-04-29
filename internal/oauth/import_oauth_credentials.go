@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,18 @@ type cliProxyAPICredentialFile struct {
 		UUID string `json:"uuid"`
 		Name string `json:"name"`
 	} `json:"organization"`
+}
+
+type codexNativeAuthFile struct {
+	AuthMode     string  `json:"auth_mode"`
+	OpenAIAPIKey *string `json:"OPENAI_API_KEY"`
+	Tokens       struct {
+		IDToken      string `json:"id_token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		AccountID    string `json:"account_id"`
+	} `json:"tokens"`
+	LastRefresh any `json:"last_refresh"`
 }
 
 type ParsedImportCredential struct {
@@ -110,7 +123,85 @@ func ParseOAuthImportEntries(data []byte) ([]ParsedImportCredential, error) {
 	if !errors.Is(err, ErrCLIProxyAPINotCredential) {
 		return []ParsedImportCredential{{Err: err}}, nil
 	}
+	cred, err = ParseCodexNativeAuthCredential(data)
+	if err == nil {
+		return []ParsedImportCredential{{Credential: cred}}, nil
+	}
+	if !errors.Is(err, ErrCLIProxyAPINotCredential) {
+		return []ParsedImportCredential{{Err: err}}, nil
+	}
 	return parseSub2APIExportEntries(data)
+}
+
+func ParseCodexNativeAuthCredential(data []byte) (*Credential, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, ErrCLIProxyAPINotCredential
+	}
+
+	var raw codexNativeAuthFile
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse codex auth json: %w", err)
+	}
+	if !isCodexNativeAuthFile(raw) {
+		return nil, ErrCLIProxyAPINotCredential
+	}
+	if strings.TrimSpace(raw.Tokens.AccessToken) == "" {
+		return nil, fmt.Errorf("codex auth.json missing tokens.access_token")
+	}
+
+	email, tokenAccountID := parseCodexIdentityToken(raw.Tokens.IDToken)
+	if accessTokenEmail, accessTokenAccountID := parseCodexIdentityToken(raw.Tokens.AccessToken); accessTokenEmail != "" || accessTokenAccountID != "" {
+		if email == "" {
+			email = accessTokenEmail
+		}
+		if tokenAccountID == "" {
+			tokenAccountID = accessTokenAccountID
+		}
+	}
+	accountID := strings.TrimSpace(firstNonEmpty(raw.Tokens.AccountID, tokenAccountID))
+	if email == "" && accountID == "" {
+		return nil, fmt.Errorf("codex auth.json missing email/account_id")
+	}
+	expiresAt := parseJWTExpiresAt(raw.Tokens.AccessToken)
+	lastRefresh, err := parseCLIProxyAPITimeValue(raw.LastRefresh)
+	if err != nil {
+		return nil, fmt.Errorf("parse codex auth.json last_refresh time: %w", err)
+	}
+
+	cred := &Credential{
+		Ref:          stableCredentialRef(config.OAuthProviderCodex, email, accountID),
+		Provider:     config.OAuthProviderCodex,
+		Email:        email,
+		AccountID:    accountID,
+		AccessToken:  strings.TrimSpace(raw.Tokens.AccessToken),
+		RefreshToken: strings.TrimSpace(raw.Tokens.RefreshToken),
+		ExpiresAt:    expiresAt,
+		LastRefresh:  lastRefresh,
+		Metadata: map[string]string{
+			"auth_mode": strings.TrimSpace(raw.AuthMode),
+		},
+	}
+	if idToken := strings.TrimSpace(raw.Tokens.IDToken); idToken != "" {
+		cred.Metadata["id_token"] = idToken
+	}
+	if accountID != "" {
+		cred.Metadata["chatgpt_account_id"] = accountID
+	}
+	if planType := parseCodexPlanType(raw.Tokens.IDToken); planType != "" {
+		cred.Metadata["plan_type"] = planType
+	}
+	return cred, nil
+}
+
+func isCodexNativeAuthFile(raw codexNativeAuthFile) bool {
+	authMode := strings.ToLower(strings.TrimSpace(raw.AuthMode))
+	if authMode != "chatgpt" {
+		return false
+	}
+	return strings.TrimSpace(raw.Tokens.AccessToken) != "" ||
+		strings.TrimSpace(raw.Tokens.RefreshToken) != "" ||
+		strings.TrimSpace(raw.Tokens.IDToken) != "" ||
+		strings.TrimSpace(raw.Tokens.AccountID) != ""
 }
 
 func parseCLIProxyAPICodexCredential(raw cliProxyAPICredentialFile) (*Credential, error) {
@@ -441,6 +532,38 @@ func unixTimestampToTime(value int64) time.Time {
 		return time.UnixMilli(value).UTC()
 	}
 	return time.Unix(value, 0).UTC()
+}
+
+func parseJWTExpiresAt(token string) time.Time {
+	claims, err := parseJWTClaims(token)
+	if err != nil {
+		return time.Time{}
+	}
+	raw, ok := claims["exp"]
+	if !ok {
+		return time.Time{}
+	}
+	expiresAt, err := parseCLIProxyAPITimeValue(raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return expiresAt
+}
+
+func parseJWTClaims(token string) (map[string]any, error) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("jwt has no payload")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
 }
 
 func firstNonNil(values ...any) any {

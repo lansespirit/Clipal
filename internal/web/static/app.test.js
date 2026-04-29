@@ -905,7 +905,7 @@ test('saveProvider starts OAuth authorization flow for oauth provider', async ()
     });
 });
 
-test('importCLIProxyAPIDirectory uploads files and refreshes providers after success', async () => {
+test('importCLIProxyAPIFiles uploads selected json files and refreshes providers after success', async () => {
     const state = loadApp({
         context: {
             FormData: FakeFormData
@@ -939,7 +939,7 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
             message: 'imported 1 account(s), linked 1 provider(s), skipped 1 entry(s)',
             results: [
                 {
-                    file: 'cli/codex-a.json',
+                    file: 'codex-a.json',
                     status: 'imported',
                     message: 'imported account and created provider codex-a'
                 },
@@ -962,9 +962,9 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
         refreshStatusCalls++;
     };
 
-    await state.importCLIProxyAPIDirectory([
-        { name: 'codex-a.json', webkitRelativePath: 'cli/codex-a.json' },
-        { name: 'codex-b.json', webkitRelativePath: '' }
+    await state.importCLIProxyAPIFiles([
+        { name: 'codex-a.json' },
+        { name: 'codex-b.json' }
     ]);
 
     assert.deepEqual(calls, [
@@ -973,7 +973,7 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
             parts: [
                 { name: 'client_type', filename: undefined, value: 'openai' },
                 { name: 'provider', filename: undefined, value: 'codex' },
-                { name: 'files', filename: 'cli/codex-a.json', value: 'codex-a.json' },
+                { name: 'files', filename: 'codex-a.json', value: 'codex-a.json' },
                 { name: 'files', filename: 'codex-b.json', value: 'codex-b.json' }
             ]
         }
@@ -981,7 +981,7 @@ test('importCLIProxyAPIDirectory uploads files and refreshes providers after suc
     assert.equal(alerts.length, 1);
     assert.equal(alerts[0][0], 'info');
     assert.match(alerts[0][1], /linked 1 provider/i);
-    assert.match(alerts[0][1], /cli\/codex-a\.json: imported account and created provider codex-a/i);
+    assert.match(alerts[0][1], /codex-a\.json: imported account and created provider codex-a/i);
     assert.match(alerts[0][1], /codex-b\.json: duplicate account in selected files/i);
     assert.equal(closed, 1);
     assert.equal(loadProvidersCalls, 1);
@@ -1024,6 +1024,50 @@ test('triggerOAuthImportPicker clicks the hidden input', () => {
 
     assert.equal(state.$refs.oauthImportInput.value, '');
     assert.equal(clicked, 1);
+});
+
+test('importCLIProxyAPIFiles uploads a single selected json file', async () => {
+    const state = loadApp({
+        context: {
+            FormData: FakeFormData
+        }
+    });
+    state.selectedClient = 'openai';
+    state.providerForm = {
+        ...state.providerForm,
+        oauth_provider: 'codex'
+    };
+    const calls = [];
+    state.apiCall = async (url, options) => {
+        calls.push({
+            url,
+            parts: options.body.parts.map(part => ({
+                name: part.name,
+                filename: part.filename,
+                value: typeof part.value === 'object' ? part.value.name : part.value
+            }))
+        });
+        return {
+            imported_count: 0,
+            linked_count: 0,
+            skipped_count: 1,
+            failed_count: 0,
+            results: []
+        };
+    };
+    state.showAlert = () => {};
+
+    await state.importCLIProxyAPIFiles([
+        { name: 'codex-account.json' }
+    ]);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/api/oauth/import/cli-proxy-api');
+    assert.deepEqual(calls[0].parts, [
+        { name: 'client_type', filename: undefined, value: 'openai' },
+        { name: 'provider', filename: undefined, value: 'codex' },
+        { name: 'files', filename: 'codex-account.json', value: 'codex-account.json' }
+    ]);
 });
 
 test('startOAuthProviderAuthorization opens the real auth URL in a new window and keeps Clipal on the current page', async () => {
@@ -1695,6 +1739,39 @@ test('cancelOAuthAuthorization clears pending state and keeps add modal open', (
     assert.equal(state.oauthAuthorization.phase, 'idle');
     assert.equal(state.__context.localStorage.getItem('clipal.pendingOAuthSession'), null);
     assert.equal(popup.closed, true);
+});
+
+test('cancelOAuthAuthorization best-effort cancels backend oauth session', () => {
+    const state = loadApp({
+        localStorageData: {
+            'clipal.pendingOAuthSession': JSON.stringify({
+                session_id: 'sess-cancel',
+                provider: 'codex',
+                client_type: 'openai',
+                started_at: 1710000000000,
+                expires_at: '2099-04-21T13:00:00Z',
+                auth_url: 'https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%2Fcb'
+            })
+        }
+    });
+    const calls = [];
+    state.apiCall = (url, options, background, suppressAlert) => {
+        calls.push({ url, options, background, suppressAlert });
+        return Promise.resolve({ status: 'error' });
+    };
+    state.showAddProviderModal = true;
+    state.applyOAuthAuthorizationState(state.loadPendingOAuthSession(), {
+        phase: 'waiting'
+    });
+
+    state.cancelOAuthAuthorization();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/api/oauth/sessions/sess-cancel/cancel');
+    assert.equal(calls[0].options.method, 'POST');
+    assert.equal(calls[0].background, true);
+    assert.equal(calls[0].suppressAlert, true);
+    assert.equal(state.__context.localStorage.getItem('clipal.pendingOAuthSession'), null);
 });
 
 test('saveGlobalConfig normalizes and clears non-custom upstream proxy settings', async () => {

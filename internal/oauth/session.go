@@ -24,6 +24,7 @@ var ErrSessionNotFound = errors.New("oauth session not found")
 var ErrInvalidAuthorizationResponse = errors.New("invalid authorization response")
 
 const defaultLoginExchangeTimeout = 90 * time.Second
+const defaultTerminalSessionRetention = 10 * time.Minute
 
 type Service struct {
 	store                *Store
@@ -34,6 +35,7 @@ type Service struct {
 	now                  func() time.Time
 	sessionTTL           time.Duration
 	loginExchangeTimeout time.Duration
+	terminalRetention    time.Duration
 	refreshSkew          time.Duration
 
 	mu        sync.Mutex
@@ -57,6 +59,7 @@ func NewService(configDir string, opts ...Option) *Service {
 		now:                  time.Now,
 		sessionTTL:           5 * time.Minute,
 		loginExchangeTimeout: defaultLoginExchangeTimeout,
+		terminalRetention:    defaultTerminalSessionRetention,
 		refreshSkew:          30 * time.Second,
 		sessions:             make(map[string]*LoginSession),
 		refreshes:            make(map[string]*refreshCall),
@@ -129,6 +132,14 @@ func WithLoginExchangeTimeout(timeout time.Duration) Option {
 	}
 }
 
+func WithTerminalSessionRetention(retention time.Duration) Option {
+	return func(s *Service) {
+		if retention >= 0 {
+			s.terminalRetention = retention
+		}
+	}
+}
+
 func WithRefreshSkew(skew time.Duration) Option {
 	return func(s *Service) {
 		if skew >= 0 {
@@ -185,6 +196,7 @@ func (s *Service) supersedePendingSessionsLocked(provider config.OAuthProvider) 
 		session.callback = nil
 		session.Status = LoginStatusError
 		session.Error = "oauth session superseded by a new authorization attempt"
+		session.terminalAt = s.now()
 	}
 	return callbacks
 }
@@ -227,6 +239,7 @@ func (s *Service) CompleteLoginWithCodeWithHTTPClient(ctx context.Context, sessi
 		session.callback = nil
 		session.Status = LoginStatusExpired
 		session.Error = "oauth session expired"
+		session.terminalAt = s.now()
 		out := session.Clone()
 		s.mu.Unlock()
 		if callback != nil {
@@ -264,6 +277,43 @@ func (s *Service) CompleteLoginWithCodeWithHTTPClient(ctx context.Context, sessi
 	}
 
 	return s.completeSessionWithCode(ctx, sessionSnapshot, parsed.Code, callback, httpClient), nil
+}
+
+func (s *Service) CancelLogin(sessionID string) (*LoginSession, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, ErrSessionNotFound
+	}
+
+	s.mu.Lock()
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, ErrSessionNotFound
+	}
+	if session.completionDone != nil {
+		done := session.completionDone
+		s.mu.Unlock()
+		return s.waitForSessionCompletion(context.Background(), sessionID, done), nil
+	}
+	if session.Status != LoginStatusPending {
+		out := session.Clone()
+		s.mu.Unlock()
+		return out, nil
+	}
+
+	callback := session.callback
+	session.callback = nil
+	session.Status = LoginStatusError
+	session.Error = "oauth session cancelled"
+	session.terminalAt = s.now()
+	out := session.Clone()
+	s.mu.Unlock()
+
+	if callback != nil {
+		_ = callback.Close()
+	}
+	return out, nil
 }
 
 func (s *Service) Load(provider config.OAuthProvider, ref string) (*Credential, error) {
@@ -413,6 +463,7 @@ func (s *Service) beginSessionCompletion(sessionID string) (*LoginSession, *call
 		session.completionDone = nil
 		session.Status = LoginStatusExpired
 		session.Error = "oauth session expired"
+		session.terminalAt = s.now()
 		out := session.Clone()
 		s.mu.Unlock()
 		if callback != nil {
@@ -496,6 +547,9 @@ func (s *Service) finalizeSession(sessionID string, callback *callbackServer, ap
 	if session != nil {
 		apply(session)
 		session.callback = nil
+		if isLoginStatusTerminal(session.Status) && session.terminalAt.IsZero() {
+			session.terminalAt = s.now()
+		}
 		done = session.completionDone
 		session.completionDone = nil
 		out = session.Clone()
@@ -523,6 +577,7 @@ func (s *Service) pollLogin(sessionID string, httpClient *http.Client) (*LoginSe
 		session.callback = nil
 		session.Status = LoginStatusExpired
 		session.Error = "oauth session expired"
+		session.terminalAt = s.now()
 		s.mu.Unlock()
 		if callback != nil {
 			_ = callback.Close()
@@ -794,16 +849,37 @@ func parseOAuthCallbackInput(input string) (*manualAuthorizationInput, error) {
 func (s *Service) sweepExpiredSessionsLocked() {
 	now := s.now()
 	for id, session := range s.sessions {
-		if session == nil || session.callback == nil {
+		if session == nil {
+			delete(s.sessions, id)
 			continue
 		}
-		if !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(now) {
+		if isLoginStatusTerminal(session.Status) && session.callback == nil {
+			if session.terminalAt.IsZero() {
+				session.terminalAt = now
+				s.sessions[id] = session
+			}
+			if s.terminalRetention == 0 || !session.terminalAt.Add(s.terminalRetention).After(now) {
+				delete(s.sessions, id)
+			}
+			continue
+		}
+		if session.callback != nil && !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(now) {
 			_ = session.callback.Close()
 			session.callback = nil
 			session.Status = LoginStatusExpired
 			session.Error = "oauth session expired"
+			session.terminalAt = now
 			s.sessions[id] = session
 		}
+	}
+}
+
+func isLoginStatusTerminal(status LoginStatus) bool {
+	switch status {
+	case LoginStatusCompleted, LoginStatusExpired, LoginStatusError:
+		return true
+	default:
+		return false
 	}
 }
 

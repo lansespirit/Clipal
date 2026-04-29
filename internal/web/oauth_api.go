@@ -116,6 +116,10 @@ func (a *API) HandleGetOAuthSession(w http.ResponseWriter, r *http.Request) {
 		a.HandleLinkOAuthSession(w, r)
 		return
 	}
+	if subresource == "cancel" {
+		a.HandleCancelOAuthSession(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -218,6 +222,33 @@ func (a *API) HandleLinkOAuthSession(w http.ResponseWriter, r *http.Request) {
 	if oauthSessionTerminal(session) {
 		a.deleteOAuthTargetClient(sessionID)
 	}
+}
+
+func (a *API) HandleCancelOAuthSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID, subresource := extractOAuthSessionPath(r.URL.EscapedPath())
+	if sessionID == "" || subresource != "cancel" {
+		writeError(w, "invalid oauth session", http.StatusBadRequest)
+		return
+	}
+
+	target, _ := a.getOAuthTargetClient(sessionID)
+	session, err := a.oauth.CancelLogin(sessionID)
+	if err != nil {
+		if errors.Is(err, oauthpkg.ErrSessionNotFound) {
+			a.deleteOAuthTargetClient(sessionID)
+			writeError(w, "oauth session not found", http.StatusNotFound)
+			return
+		}
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a.deleteOAuthTargetClient(sessionID)
+	a.writeOAuthSessionResponse(w, target, session, false)
 }
 
 func (a *API) HandleListOAuthAccounts(w http.ResponseWriter, r *http.Request) {

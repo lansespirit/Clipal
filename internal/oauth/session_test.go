@@ -271,6 +271,46 @@ func TestCompleteLoginWithCode_CompletesSessionAndClosesCallback(t *testing.T) {
 	_ = ln.Close()
 }
 
+func TestCancelLogin_ClosesPendingCallback(t *testing.T) {
+	dir := t.TempDir()
+	callback, redirectURI, err := startCallbackServer("127.0.0.1", 0, "/auth/callback")
+	if err != nil {
+		t.Fatalf("startCallbackServer: %v", err)
+	}
+	parsed, err := url.Parse(redirectURI)
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+
+	svc := NewService(dir)
+	svc.sessions["session-cancel"] = &LoginSession{
+		ID:          "session-cancel",
+		Provider:    config.OAuthProviderCodex,
+		AuthURL:     "https://auth.openai.com/oauth/authorize?state=session-cancel",
+		Status:      LoginStatusPending,
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+		redirectURI: redirectURI,
+		callback:    callback,
+	}
+
+	session, err := svc.CancelLogin("session-cancel")
+	if err != nil {
+		t.Fatalf("CancelLogin: %v", err)
+	}
+	if session.Status != LoginStatusError {
+		t.Fatalf("status = %q, want %q", session.Status, LoginStatusError)
+	}
+	if session.Error != "oauth session cancelled" {
+		t.Fatalf("error = %q, want oauth session cancelled", session.Error)
+	}
+
+	ln, err := net.Listen("tcp", parsed.Host)
+	if err != nil {
+		t.Fatalf("net.Listen: callback port still busy after cancel: %v", err)
+	}
+	_ = ln.Close()
+}
+
 func TestCompleteLoginWithCode_ClaudeRequiresStateInManualInput(t *testing.T) {
 	dir := t.TempDir()
 	callback, redirectURI, err := startCallbackServer("127.0.0.1", 0, "/callback")
@@ -320,6 +360,40 @@ func TestCompleteLoginWithCode_ReturnsNotFoundForUnknownSession(t *testing.T) {
 	_, err := svc.CompleteLoginWithCode(context.Background(), "missing-session", "manual-code")
 	if !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestSweepExpiredSessionsLocked_RemovesOldTerminalSessions(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 4, 18, 16, 0, 0, 0, time.UTC)
+	current := now
+
+	svc := NewService(dir,
+		WithNowFunc(func() time.Time { return current }),
+		WithTerminalSessionRetention(time.Minute),
+	)
+	svc.sessions["completed-old"] = &LoginSession{
+		ID:         "completed-old",
+		Provider:   config.OAuthProviderCodex,
+		Status:     LoginStatusCompleted,
+		terminalAt: now.Add(-2 * time.Minute),
+	}
+	svc.sessions["error-fresh"] = &LoginSession{
+		ID:         "error-fresh",
+		Provider:   config.OAuthProviderCodex,
+		Status:     LoginStatusError,
+		terminalAt: now.Add(-30 * time.Second),
+	}
+
+	svc.mu.Lock()
+	svc.sweepExpiredSessionsLocked()
+	svc.mu.Unlock()
+
+	if _, ok := svc.sessions["completed-old"]; ok {
+		t.Fatalf("expected old terminal session to be removed")
+	}
+	if _, ok := svc.sessions["error-fresh"]; !ok {
+		t.Fatalf("expected fresh terminal session to remain")
 	}
 }
 

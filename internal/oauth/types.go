@@ -66,6 +66,7 @@ type LoginSession struct {
 	httpClient  *http.Client
 
 	completionDone chan struct{}
+	terminalAt     time.Time
 }
 
 func (s *LoginSession) Clone() *LoginSession {
@@ -75,6 +76,7 @@ func (s *LoginSession) Clone() *LoginSession {
 	clone := *s
 	clone.callback = nil
 	clone.completionDone = nil
+	clone.terminalAt = time.Time{}
 	return &clone
 }
 
