@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -62,6 +63,7 @@ type LoginSession struct {
 	pkce        PKCECodes
 	redirectURI string
 	callback    *callbackServer
+	httpClient  *http.Client
 
 	completionDone chan struct{}
 }

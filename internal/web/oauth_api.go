@@ -14,6 +14,7 @@ import (
 
 	"github.com/lansespirit/Clipal/internal/config"
 	oauthpkg "github.com/lansespirit/Clipal/internal/oauth"
+	proxypkg "github.com/lansespirit/Clipal/internal/proxy"
 	"github.com/lansespirit/Clipal/internal/telemetry"
 )
 
@@ -29,6 +30,12 @@ type oauthProviderLinkResult struct {
 	Provider config.Provider
 	Action   oauthProviderAction
 	Changed  bool
+}
+
+type oauthProviderProxySettings struct {
+	Configured bool
+	Mode       config.ProviderProxyMode
+	URL        string
 }
 
 func (a *API) HandleListOAuthProviders(w http.ResponseWriter, r *http.Request) {
@@ -72,13 +79,25 @@ func (a *API) HandleStartOAuthProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	proxySettings, err := oauthProxySettingsFromStartRequest(req)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	session, err := a.oauth.StartLogin(provider)
+	target := oauthTargetClient{
+		ClientType:      clientType,
+		Provider:        provider,
+		ProxyConfigured: proxySettings.Configured,
+		ProxyMode:       proxySettings.Mode,
+		ProxyURL:        proxySettings.URL,
+	}
+	session, err := a.oauth.StartLoginWithHTTPClient(provider, a.oauthHTTPClientForTarget(target, provider))
 	if err != nil {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.setOAuthTargetClient(session.ID, clientType, session.ExpiresAt)
+	a.setOAuthTargetClient(session.ID, clientType, session.ExpiresAt, proxySettings, provider)
 	writeJSON(w, OAuthStartResponse{
 		SessionID: session.ID,
 		Provider:  session.Provider,
@@ -105,16 +124,16 @@ func (a *API) HandleGetOAuthSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "invalid oauth session", http.StatusBadRequest)
 		return
 	}
-	clientType, _ := a.getOAuthTargetClient(sessionID)
+	target, _ := a.getOAuthTargetClient(sessionID)
 
-	session, err := a.oauth.PollLogin(sessionID)
+	session, err := a.oauth.PollLoginWithHTTPClient(sessionID, a.oauthHTTPClientForTarget(target, sessionProviderFromTarget(target)))
 	if err != nil {
 		a.deleteOAuthTargetClient(sessionID)
 		writeError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	a.writeOAuthSessionResponse(w, clientType, session, false)
-	if oauthSessionTerminal(session) {
+	a.writeOAuthSessionResponse(w, target, session, false)
+	if session.Status == oauthpkg.LoginStatusExpired || session.Status == oauthpkg.LoginStatusError {
 		a.deleteOAuthTargetClient(sessionID)
 	}
 }
@@ -136,7 +155,7 @@ func (a *API) HandleSubmitOAuthSessionCode(w http.ResponseWriter, r *http.Reques
 		writeError(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
-	clientType, ok := a.resolveOAuthTargetClient(sessionID, req.ClientType)
+	target, ok := a.resolveOAuthTargetClient(sessionID, req.ClientType)
 	if !ok {
 		writeError(w, "oauth session not found", http.StatusNotFound)
 		return
@@ -146,7 +165,7 @@ func (a *API) HandleSubmitOAuthSessionCode(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	session, err := a.oauth.CompleteLoginWithCode(r.Context(), sessionID, req.Code)
+	session, err := a.oauth.CompleteLoginWithCodeWithHTTPClient(r.Context(), sessionID, req.Code, a.oauthHTTPClientForTarget(target, sessionProviderFromTarget(target)))
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, oauthpkg.ErrSessionNotFound) {
@@ -158,7 +177,7 @@ func (a *API) HandleSubmitOAuthSessionCode(w http.ResponseWriter, r *http.Reques
 		writeError(w, err.Error(), status)
 		return
 	}
-	a.writeOAuthSessionResponse(w, clientType, session, true)
+	a.writeOAuthSessionResponse(w, target, session, true)
 	if oauthSessionTerminal(session) {
 		a.deleteOAuthTargetClient(sessionID)
 	}
@@ -183,19 +202,19 @@ func (a *API) HandleLinkOAuthSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	clientType, ok := a.resolveOAuthTargetClient(sessionID, req.ClientType)
+	target, ok := a.resolveOAuthTargetClient(sessionID, req.ClientType)
 	if !ok {
 		writeError(w, "oauth session not found", http.StatusNotFound)
 		return
 	}
 
-	session, err := a.oauth.PollLogin(sessionID)
+	session, err := a.oauth.PollLoginWithHTTPClient(sessionID, a.oauthHTTPClientForTarget(target, sessionProviderFromTarget(target)))
 	if err != nil {
 		a.deleteOAuthTargetClient(sessionID)
 		writeError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	a.writeOAuthSessionResponse(w, clientType, session, true)
+	a.writeOAuthSessionResponse(w, target, session, true)
 	if oauthSessionTerminal(session) {
 		a.deleteOAuthTargetClient(sessionID)
 	}
@@ -298,7 +317,7 @@ func (a *API) HandleGetProviderOAuthMetadata(w http.ResponseWriter, r *http.Requ
 	}
 
 	usageCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	details, err := a.oauth.GetCodexUsage(usageCtx, provider.NormalizedOAuthRef())
+	details, err := a.oauth.GetCodexUsageWithHTTPClient(usageCtx, provider.NormalizedOAuthRef(), proxypkg.NewOAuthHTTPClientForProvider(*provider, cfg.Global))
 	cancel()
 	if err != nil {
 		writeAPIError(w, newAPIError(http.StatusBadGateway, fmt.Sprintf("failed to load oauth metadata: %v", err), err))
@@ -396,9 +415,13 @@ func oauthAuthStatus(cred *oauthpkg.Credential, now time.Time) string {
 	}
 }
 
-func ensureOAuthProviderLinked(cc *config.ClientConfig, cred *oauthpkg.Credential, lookup func(config.OAuthProvider, string) (*oauthpkg.Credential, error)) oauthProviderLinkResult {
+func ensureOAuthProviderLinked(cc *config.ClientConfig, cred *oauthpkg.Credential, lookup func(config.OAuthProvider, string) (*oauthpkg.Credential, error), proxySettings ...oauthProviderProxySettings) oauthProviderLinkResult {
 	if cc == nil || cred == nil {
 		return oauthProviderLinkResult{}
+	}
+	settings := oauthProviderProxySettings{}
+	if len(proxySettings) > 0 {
+		settings = proxySettings[0]
 	}
 	if provider := findLinkedOAuthProvider(cc.Providers, cred.Provider, cred.Ref); provider != nil {
 		changed := backfillOAuthProviderIdentity(provider, cred)
@@ -411,6 +434,7 @@ func ensureOAuthProviderLinked(cc *config.ClientConfig, cred *oauthpkg.Credentia
 
 	if provider := findRelinkableOAuthProvider(cc.Providers, cred, lookup); provider != nil {
 		applyOAuthCredentialToProvider(provider, cred)
+		_ = applyOAuthProviderProxySettings(provider, settings)
 		return oauthProviderLinkResult{
 			Provider: *provider,
 			Action:   oauthProviderActionRelinked,
@@ -428,12 +452,28 @@ func ensureOAuthProviderLinked(cc *config.ClientConfig, cred *oauthpkg.Credentia
 		Priority:      nextProviderPriority(cc.Providers),
 		Enabled:       ptr(true),
 	}
+	applyOAuthProviderProxySettings(&provider, settings)
 	cc.Providers = append(cc.Providers, provider)
 	return oauthProviderLinkResult{
 		Provider: provider,
 		Action:   oauthProviderActionCreated,
 		Changed:  true,
 	}
+}
+
+func applyOAuthProviderProxySettings(provider *config.Provider, settings oauthProviderProxySettings) bool {
+	if provider == nil || !settings.Configured {
+		return false
+	}
+	oldMode := provider.NormalizedProxyMode()
+	oldURL := provider.NormalizedProxyURL()
+	mode := string(settings.Mode)
+	proxyURL := settings.URL
+	_ = config.ApplyProviderProxySettings(provider, config.ProviderProxySettingsPatch{
+		Mode: &mode,
+		URL:  &proxyURL,
+	}, true)
+	return provider.NormalizedProxyMode() != oldMode || provider.NormalizedProxyURL() != oldURL
 }
 
 func findLinkedOAuthProvider(providers []config.Provider, oauthProvider config.OAuthProvider, ref string) *config.Provider {
@@ -679,11 +719,77 @@ func formatTimeRFC3339(ts time.Time) string {
 	return ts.Format(time.RFC3339)
 }
 
-func (a *API) writeOAuthSessionResponse(w http.ResponseWriter, clientType string, session *oauthpkg.LoginSession, linkCompleted bool) {
+func oauthProxySettingsFromStartRequest(req OAuthStartRequest) (oauthProviderProxySettings, error) {
+	if req.ProxyMode == nil && req.ProxyURL == nil {
+		return oauthProviderProxySettings{}, nil
+	}
+	provider := config.Provider{}
+	if err := config.ApplyProviderProxySettings(&provider, config.ProviderProxySettingsPatch{
+		Mode: req.ProxyMode,
+		URL:  req.ProxyURL,
+	}, false); err != nil {
+		return oauthProviderProxySettings{}, err
+	}
+	if provider.NormalizedProxyMode() == config.ProviderProxyModeDefault && provider.NormalizedProxyURL() == "" {
+		return oauthProviderProxySettings{}, nil
+	}
+	return oauthProviderProxySettings{
+		Configured: true,
+		Mode:       provider.NormalizedProxyMode(),
+		URL:        provider.NormalizedProxyURL(),
+	}, nil
+}
+
+func (target oauthTargetClient) proxySettings() oauthProviderProxySettings {
+	return oauthProviderProxySettings{
+		Configured: target.ProxyConfigured,
+		Mode:       target.ProxyMode,
+		URL:        target.ProxyURL,
+	}
+}
+
+func sessionProviderFromTarget(target oauthTargetClient) config.OAuthProvider {
+	return config.OAuthProvider(strings.ToLower(strings.TrimSpace(string(target.Provider))))
+}
+
+func (a *API) oauthHTTPClientForTarget(target oauthTargetClient, oauthProvider config.OAuthProvider) *http.Client {
+	cfg, err := config.Load(a.configDir)
+	if err != nil {
+		return nil
+	}
+	globalMode := cfg.Global.NormalizedUpstreamProxyMode()
+	if target.ProxyConfigured && target.ProxyMode == config.ProviderProxyModeDirect && oauthProvider == config.OAuthProviderClaude {
+		return nil
+	}
+	if !target.ProxyConfigured && globalMode == config.GlobalUpstreamProxyModeDirect && oauthProvider == config.OAuthProviderClaude {
+		return nil
+	}
+	if !target.ProxyConfigured {
+		switch globalMode {
+		case config.GlobalUpstreamProxyModeDirect, config.GlobalUpstreamProxyModeCustom:
+		default:
+			if !proxypkg.OAuthProviderUsesEnvironmentProxy(oauthProvider) {
+				return nil
+			}
+		}
+	}
+	provider := config.Provider{
+		Name:          "oauth-session",
+		OAuthProvider: oauthProvider,
+	}
+	if target.ProxyConfigured {
+		provider.ProxyMode = target.ProxyMode
+		provider.ProxyURL = target.ProxyURL
+	}
+	return proxypkg.NewOAuthHTTPClientForProvider(provider, cfg.Global)
+}
+
+func (a *API) writeOAuthSessionResponse(w http.ResponseWriter, target oauthTargetClient, session *oauthpkg.LoginSession, linkCompleted bool) {
 	if session == nil {
 		writeError(w, "oauth session not found", http.StatusNotFound)
 		return
 	}
+	clientType := strings.TrimSpace(target.ClientType)
 	resp := OAuthSessionResponse{
 		SessionID:     session.ID,
 		Provider:      session.Provider,
@@ -751,7 +857,7 @@ func (a *API) writeOAuthSessionResponse(w http.ResponseWriter, clientType string
 		return
 	}
 
-	link := ensureOAuthProviderLinked(cc, cred, a.oauth.Load)
+	link := ensureOAuthProviderLinked(cc, cred, a.oauth.Load, target.proxySettings())
 	if link.Changed {
 		if !a.saveClientConfigOrWriteError(w, clientType, cfg) {
 			return
@@ -793,36 +899,44 @@ func extractOAuthAccountRef(path string) (config.OAuthProvider, string) {
 	return "", ""
 }
 
-func (a *API) setOAuthTargetClient(sessionID string, clientType string, expiresAt time.Time) {
+func (a *API) setOAuthTargetClient(sessionID string, clientType string, expiresAt time.Time, proxySettings oauthProviderProxySettings, provider ...config.OAuthProvider) {
 	a.oauthMu.Lock()
 	defer a.oauthMu.Unlock()
 	a.sweepOAuthTargetsLocked(time.Now())
+	oauthProvider := config.OAuthProvider("")
+	if len(provider) > 0 {
+		oauthProvider = config.OAuthProvider(strings.ToLower(strings.TrimSpace(string(provider[0]))))
+	}
 	a.oauthTargets[strings.TrimSpace(sessionID)] = oauthTargetClient{
-		ClientType: strings.TrimSpace(clientType),
-		ExpiresAt:  expiresAt,
+		ClientType:      strings.TrimSpace(clientType),
+		Provider:        oauthProvider,
+		ProxyConfigured: proxySettings.Configured,
+		ProxyMode:       proxySettings.Mode,
+		ProxyURL:        proxySettings.URL,
+		ExpiresAt:       expiresAt,
 	}
 }
 
-func (a *API) getOAuthTargetClient(sessionID string) (string, bool) {
+func (a *API) getOAuthTargetClient(sessionID string) (oauthTargetClient, bool) {
 	a.oauthMu.Lock()
 	defer a.oauthMu.Unlock()
 	a.sweepOAuthTargetsLocked(time.Now())
 	target, ok := a.oauthTargets[strings.TrimSpace(sessionID)]
 	if !ok || strings.TrimSpace(target.ClientType) == "" {
-		return "", false
+		return oauthTargetClient{}, false
 	}
-	return target.ClientType, true
+	return target, true
 }
 
-func (a *API) resolveOAuthTargetClient(sessionID string, fallback string) (string, bool) {
-	if clientType, ok := a.getOAuthTargetClient(sessionID); ok {
-		return clientType, true
+func (a *API) resolveOAuthTargetClient(sessionID string, fallback string) (oauthTargetClient, bool) {
+	if target, ok := a.getOAuthTargetClient(sessionID); ok {
+		return target, true
 	}
 	clientType, ok := config.CanonicalClientType(strings.TrimSpace(fallback))
 	if !ok {
-		return "", false
+		return oauthTargetClient{}, false
 	}
-	return clientType, true
+	return oauthTargetClient{ClientType: clientType}, true
 }
 
 func (a *API) deleteOAuthTargetClient(sessionID string) {

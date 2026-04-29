@@ -900,7 +900,8 @@ test('saveProvider starts OAuth authorization flow for oauth provider', async ()
     );
     assert.deepEqual(calls[0].options, {
         client_type: 'openai',
-        provider: 'codex'
+        provider: 'codex',
+        proxy_mode: 'default'
     });
 });
 
@@ -1051,7 +1052,8 @@ test('startOAuthProviderAuthorization opens the real auth URL in a new window an
         assert.equal(state.__context.window.location.href, 'http://localhost/');
         assert.deepEqual(JSON.parse(options.body), {
             client_type: 'openai',
-            provider: 'codex'
+            provider: 'codex',
+            proxy_mode: 'default'
         });
         return {
             session_id: 'sess-popup',
@@ -1103,6 +1105,36 @@ test('startOAuthProviderAuthorization opens the real auth URL in a new window an
             }
         }
     ]);
+});
+
+test('startOAuthProviderAuthorization sends custom proxy settings', async () => {
+    const state = loadApp();
+    state.selectedClient = 'openai';
+    state.providerForm = {
+        ...state.providerForm,
+        auth_type: 'oauth',
+        oauth_provider: 'codex',
+        proxy_mode: 'custom',
+        proxy_url: ' http://127.0.0.1:7890 '
+    };
+    state.apiCall = async (url, options) => {
+        assert.equal(url, '/api/oauth/providers/start');
+        assert.deepEqual(JSON.parse(options.body), {
+            client_type: 'openai',
+            provider: 'codex',
+            proxy_mode: 'custom',
+            proxy_url: 'http://127.0.0.1:7890'
+        });
+        return {
+            session_id: 'sess-proxy',
+            provider: 'codex',
+            auth_url: 'https://auth.openai.com/oauth/authorize'
+        };
+    };
+    state.resumePendingOAuthSession = async () => null;
+    state.showAlert = () => {};
+
+    await state.startOAuthProviderAuthorization();
 });
 
 test('startOAuthProviderAuthorization keeps waiting state in Clipal when popup is blocked', async () => {

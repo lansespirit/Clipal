@@ -184,6 +184,76 @@ func TestStoreRecordCanSkipSuccessCount(t *testing.T) {
 	}
 }
 
+func TestStoreRecordPersistsAsynchronously(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	store.persistInterval = 10 * time.Millisecond
+
+	if err := store.RecordUsage("openai", "p1", UsageSnapshot{
+		UsageDelta: UsageDelta{InputTokens: 1, OutputTokens: 2},
+	}, time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		data, err := os.ReadFile(filepath.Join(dir, storeFilename))
+		if err == nil && len(data) > 0 {
+			var persisted storeState
+			if err := json.Unmarshal(data, &persisted); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			got := persisted.Clients["openai"].Providers["p1"]
+			if got.TotalTokens == 3 && got.RequestCount == 1 && got.SuccessCount == 1 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for async telemetry persistence")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestStoreRecordPersistenceIsThrottledNotDebounced(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	store.persistInterval = 200 * time.Millisecond
+
+	start := time.Now()
+	if err := store.RecordUsage("openai", "p1", UsageSnapshot{
+		UsageDelta: UsageDelta{InputTokens: 1},
+	}, time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("RecordUsage first: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if err := store.RecordUsage("openai", "p1", UsageSnapshot{
+		UsageDelta: UsageDelta{OutputTokens: 2},
+	}, time.Date(2026, 4, 8, 12, 0, 1, 0, time.UTC)); err != nil {
+		t.Fatalf("RecordUsage second: %v", err)
+	}
+
+	deadline := start.Add(300 * time.Millisecond)
+	for {
+		data, err := os.ReadFile(filepath.Join(dir, storeFilename))
+		if err == nil && len(data) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for first scheduled telemetry persistence")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestStoreDeleteProvidersWithRollbackRestoresDeletedUsage(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)

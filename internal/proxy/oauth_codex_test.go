@@ -131,6 +131,115 @@ func TestCreateProxyRequest_CodexOAuthNonStreamingUsesCompactEndpoint(t *testing
 	}
 }
 
+func TestCreateCodexOAuthRequest_RefreshUsesProviderCustomProxy(t *testing.T) {
+	now := time.Date(2026, 4, 18, 21, 0, 0, 0, time.UTC)
+	var proxyHits int32
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&proxyHits, 1)
+		if got := r.URL.Host; got != "auth.example" {
+			t.Fatalf("proxied host = %q, want auth.example", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}`)
+	}))
+	defer proxyServer.Close()
+
+	svc := oauthpkg.NewService(t.TempDir(), oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+		TokenURL: "http://auth.example/token",
+		ClientID: "test-client",
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatalf("refresh used default oauth HTTP client")
+			return nil, nil
+		})},
+		Now: func() time.Time { return now },
+	}))
+	if err := svc.Store().Save(&oauthpkg.Credential{
+		Ref:          "codex-sean-example-com",
+		Provider:     config.OAuthProviderCodex,
+		Email:        "sean@example.com",
+		AccountID:    "acct_123",
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    now.Add(-time.Minute),
+		LastRefresh:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	provider := config.Provider{
+		Name:          "codex-oauth",
+		AuthType:      config.ProviderAuthTypeOAuth,
+		OAuthProvider: config.OAuthProviderCodex,
+		OAuthRef:      "codex-sean-example-com",
+		ProxyMode:     config.ProviderProxyModeCustom,
+		ProxyURL:      proxyServer.URL,
+		Priority:      1,
+	}
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{provider}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.oauth = svc
+	body := []byte(`{"model":"gpt-5.2","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withRequestContext(req, RequestContext{
+		ClientType:     ClientOpenAI,
+		Family:         ProtocolFamilyOpenAI,
+		Capability:     CapabilityOpenAIResponses,
+		UpstreamPath:   "/v1/responses",
+		UnifiedIngress: true,
+	})
+
+	proxyReq, err := cp.createCodexOAuthRequestWithPayloadForProvider(req, provider, 0, "/v1/responses", newRequestPayload(body))
+	if err != nil {
+		t.Fatalf("createCodexOAuthRequestWithPayloadForProvider: %v", err)
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "Bearer access-2" {
+		t.Fatalf("Authorization = %q, want refreshed token", got)
+	}
+	if got := atomic.LoadInt32(&proxyHits); got != 1 {
+		t.Fatalf("proxy hits = %d, want 1", got)
+	}
+}
+
+func TestOAuthHTTPClientForProvider_ClaudeDirectPreservesProviderClient(t *testing.T) {
+	providerDirect := config.Provider{
+		Name:          "claude-oauth",
+		AuthType:      config.ProviderAuthTypeOAuth,
+		OAuthProvider: config.OAuthProviderClaude,
+		OAuthRef:      "claude-ref",
+		ProxyMode:     config.ProviderProxyModeDirect,
+		Priority:      1,
+	}
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{providerDirect}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	if got := cp.oauthHTTPClientForProvider(providerDirect, 0); got != nil {
+		t.Fatalf("provider direct oauthHTTPClientForProvider = %T, want nil", got)
+	}
+
+	providerDefault := config.Provider{
+		Name:          "claude-oauth",
+		AuthType:      config.ProviderAuthTypeOAuth,
+		OAuthProvider: config.OAuthProviderClaude,
+		OAuthRef:      "claude-ref",
+		Priority:      1,
+	}
+	cp = newClientProxyWithGlobalProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{providerDefault}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{}, config.GlobalUpstreamProxyModeDirect, "")
+	if got := cp.oauthHTTPClientForProvider(providerDefault, 0); got != nil {
+		t.Fatalf("global direct oauthHTTPClientForProvider = %T, want nil", got)
+	}
+
+	codexDirect := config.Provider{
+		Name:          "codex-oauth",
+		AuthType:      config.ProviderAuthTypeOAuth,
+		OAuthProvider: config.OAuthProviderCodex,
+		OAuthRef:      "codex-ref",
+		ProxyMode:     config.ProviderProxyModeDirect,
+		Priority:      1,
+	}
+	cp = newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{codexDirect}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	if got := cp.oauthHTTPClientForProvider(codexDirect, 0); got == nil {
+		t.Fatalf("codex direct oauthHTTPClientForProvider = nil, want direct override client")
+	}
+}
+
 func TestCreateProxyRequest_CodexOAuthStreamingUsesResponsesEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	svc := oauthpkg.NewService(dir)

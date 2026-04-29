@@ -101,6 +101,16 @@ type geminiUserInfoResponse struct {
 
 var _ ProviderClient = (*GeminiClient)(nil)
 
+func (c *GeminiClient) WithHTTPClient(httpClient *http.Client) ProviderClient {
+	if c == nil || httpClient == nil {
+		return c
+	}
+	clone := *c
+	clone.HTTPClient = httpClient
+	clone.Scopes = append([]string(nil), c.Scopes...)
+	return &clone
+}
+
 func NewGeminiClient() *GeminiClient {
 	client := &GeminiClient{
 		AuthURL:          defaultGeminiAuthURL,

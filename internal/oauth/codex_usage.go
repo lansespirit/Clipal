@@ -75,6 +75,10 @@ type codexUsageWindow struct {
 }
 
 func (s *Service) GetCodexUsage(ctx context.Context, ref string) (*CodexUsageDetails, error) {
+	return s.GetCodexUsageWithHTTPClient(ctx, ref, nil)
+}
+
+func (s *Service) GetCodexUsageWithHTTPClient(ctx context.Context, ref string, httpClient *http.Client) (*CodexUsageDetails, error) {
 	if s == nil {
 		return nil, fmt.Errorf("oauth service is nil")
 	}
@@ -95,7 +99,7 @@ func (s *Service) GetCodexUsage(ctx context.Context, ref string) (*CodexUsageDet
 		return details, nil
 	}
 
-	refreshed, err := s.RefreshIfNeeded(ctx, config.OAuthProviderCodex, ref)
+	refreshed, err := s.RefreshIfNeededWithHTTPClient(ctx, config.OAuthProviderCodex, ref, httpClient)
 	if err != nil {
 		return details, err
 	}
@@ -110,6 +114,7 @@ func (s *Service) GetCodexUsage(ctx context.Context, ref string) (*CodexUsageDet
 	if !ok {
 		return details, fmt.Errorf("unsupported oauth provider %q", config.OAuthProviderCodex)
 	}
+	client = providerClientWithHTTPClient(client, httpClient)
 	fetcher, ok := client.(codexUsageFetcher)
 	if !ok {
 		return details, fmt.Errorf("oauth provider %q does not support usage retrieval", config.OAuthProviderCodex)

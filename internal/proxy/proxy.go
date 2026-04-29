@@ -20,12 +20,14 @@ import (
 	"github.com/lansespirit/Clipal/internal/notify"
 	oauthpkg "github.com/lansespirit/Clipal/internal/oauth"
 	"github.com/lansespirit/Clipal/internal/telemetry"
+	"golang.org/x/net/http/httpproxy"
 )
 
 var (
-	loggerSetLevelFunc    = logger.SetLevel
-	notifyConfigureFunc   = notify.Configure
-	detectAuthCarrierFunc = detectAuthCarrier
+	loggerSetLevelFunc      = logger.SetLevel
+	notifyConfigureFunc     = notify.Configure
+	detectAuthCarrierFuncMu sync.RWMutex
+	detectAuthCarrierFunc   = detectAuthCarrier
 )
 
 func registerExactAndSubtree(mux *http.ServeMux, path string, h http.HandlerFunc) {
@@ -369,6 +371,55 @@ func newUpstreamHTTPClient(dialer *net.Dialer, responseHeaderTimeout time.Durati
 	}
 }
 
+func NewOAuthHTTPClientForProvider(provider config.Provider, global config.GlobalConfig) *http.Client {
+	durations, err := global.RuntimeDurations()
+	if err != nil {
+		durations = config.DefaultRuntimeDurations()
+	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	sharedClient := newUpstreamHTTPClient(dialer, durations.ResponseHeaderTimeout, http.ProxyFromEnvironment)
+	policy := effectiveProviderProxyPolicy(provider, global.NormalizedUpstreamProxyMode(), global.EffectiveUpstreamProxyIdentity())
+	return newProviderHTTPClient(policy, provider.Name, sharedClient, dialer, durations.ResponseHeaderTimeout)
+}
+
+func OAuthProviderUsesEnvironmentProxy(provider config.OAuthProvider) bool {
+	proxyFunc := httpproxy.FromEnvironment().ProxyFunc()
+	for _, rawURL := range oauthProviderEnvironmentProxyProbeURLs(provider) {
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			continue
+		}
+		proxyURL, err := proxyFunc(req.URL)
+		if err == nil && proxyURL != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func oauthProviderEnvironmentProxyProbeURLs(provider config.OAuthProvider) []string {
+	switch config.OAuthProvider(strings.ToLower(strings.TrimSpace(string(provider)))) {
+	case config.OAuthProviderCodex:
+		return []string{
+			"https://auth.openai.com/oauth/token",
+			"https://chatgpt.com/backend-api/wham/usage",
+		}
+	case config.OAuthProviderClaude:
+		return []string{"https://api.anthropic.com/v1/oauth/token"}
+	case config.OAuthProviderGemini:
+		return []string{
+			"https://oauth2.googleapis.com/token",
+			"https://www.googleapis.com/oauth2/v1/userinfo",
+			"https://cloudcode-pa.googleapis.com",
+		}
+	default:
+		return nil
+	}
+}
+
 func effectiveProviderProxyPolicy(provider config.Provider, globalMode config.GlobalUpstreamProxyMode, globalURL string) upstreamProxyPolicyKey {
 	switch provider.NormalizedProxyMode() {
 	case config.ProviderProxyModeDirect:
@@ -542,7 +593,7 @@ func (r *Router) Stop() error {
 	}
 	var flushErr error
 	if r.telemetry != nil {
-		flushErr = r.telemetry.Flush()
+		flushErr = r.telemetry.Close()
 		if flushErr != nil {
 			logger.Warn("failed to flush usage telemetry: %v", flushErr)
 		}
@@ -1067,8 +1118,19 @@ func isClaudeCountTokensPath(path string) bool {
 
 // createProxyRequest creates a new request to forward to the provider
 func (cp *ClientProxy) createProxyRequest(original *http.Request, provider config.Provider, apiKey string, path string, body []byte) (*http.Request, error) {
+	return cp.createProxyRequestWithPayload(original, provider, apiKey, path, newRequestPayload(body))
+}
+
+func (cp *ClientProxy) createProxyRequestWithPayload(original *http.Request, provider config.Provider, apiKey string, path string, payload *requestPayload) (*http.Request, error) {
+	return cp.createProxyRequestWithPayloadForProvider(original, provider, -1, apiKey, path, payload)
+}
+
+func (cp *ClientProxy) createProxyRequestWithPayloadForProvider(original *http.Request, provider config.Provider, providerIndex int, apiKey string, path string, payload *requestPayload) (*http.Request, error) {
+	if payload == nil {
+		payload = newRequestPayload(nil)
+	}
 	if provider.UsesOAuth() {
-		return cp.createOAuthProxyRequest(original, provider, path, body)
+		return cp.createOAuthProxyRequestWithPayloadForProvider(original, provider, providerIndex, path, payload)
 	}
 
 	targetURL, err := buildTargetURL(provider.BaseURL, path, original.URL.RawQuery)
@@ -1079,7 +1141,7 @@ func (cp *ClientProxy) createProxyRequest(original *http.Request, provider confi
 	if !ok {
 		requestCtx = requestContextForClientPath(cp.clientType, path, false)
 	}
-	body = applyProviderRequestOverrides(original, requestCtx, provider, body)
+	body := payload.providerBody(original, requestCtx, provider)
 
 	// Create the request
 	proxyReq, err := http.NewRequestWithContext(original.Context(), original.Method, targetURL, bytes.NewReader(body))
@@ -1119,7 +1181,7 @@ func applyProviderAPIKey(proxyReq *http.Request, original *http.Request, apiKey 
 
 	clearAuthCarriers(proxyReq)
 
-	switch detectAuthCarrierFunc(original) {
+	switch detectAuthCarrierForRequest(original) {
 	case authCarrierNone:
 		applyDefaultProviderAPIKey(proxyReq, original, apiKey)
 	case authCarrierClaudeHeader:
@@ -1137,6 +1199,13 @@ func applyProviderAPIKey(proxyReq *http.Request, original *http.Request, apiKey 
 		// fall back to the protocol family's default auth style.
 		applyDefaultProviderAPIKey(proxyReq, original, apiKey)
 	}
+}
+
+func detectAuthCarrierForRequest(original *http.Request) authCarrier {
+	detectAuthCarrierFuncMu.RLock()
+	fn := detectAuthCarrierFunc
+	detectAuthCarrierFuncMu.RUnlock()
+	return fn(original)
 }
 
 func applyDefaultProviderAPIKey(proxyReq *http.Request, original *http.Request, apiKey string) {

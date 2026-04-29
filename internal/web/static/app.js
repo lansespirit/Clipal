@@ -3429,6 +3429,18 @@ function app() {
             if (!provider) {
                 throw new Error(this.t('providers.oauthUnavailable'));
             }
+            const proxyMode = this.normalizeProviderProxyMode(this.providerForm.proxy_mode);
+            const payload = {
+                client_type: this.selectedClient,
+                provider,
+                proxy_mode: proxyMode
+            };
+            if (proxyMode === 'custom') {
+                const proxyURL = String(this.providerForm.proxy_url || '').trim();
+                if (proxyURL) {
+                    payload.proxy_url = proxyURL;
+                }
+            }
             this.stopOAuthPolling();
             this.clearPendingOAuthSession();
             this.resetOAuthAuthorization();
@@ -3450,10 +3462,7 @@ function app() {
             try {
                 started = await this.apiCall('/api/oauth/providers/start', {
                     method: 'POST',
-                    body: JSON.stringify({
-                        client_type: this.selectedClient,
-                        provider
-                    })
+                    body: JSON.stringify(payload)
                 });
             } catch (error) {
                 this.closeOAuthAuthorizationPopup();

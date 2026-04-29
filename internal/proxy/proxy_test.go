@@ -28,6 +28,47 @@ type readerFunc func([]byte) (int, error)
 
 func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
+type trackingReadCloser struct {
+	readCalled  bool
+	closeCalled bool
+}
+
+func (r *trackingReadCloser) Read(_ []byte) (int, error) {
+	r.readCalled = true
+	return 0, errors.New("body should not be read")
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closeCalled = true
+	return nil
+}
+
+type flushCountingResponseWriter struct {
+	header  http.Header
+	body    bytes.Buffer
+	status  int
+	flushes int
+}
+
+func (w *flushCountingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *flushCountingResponseWriter) Write(p []byte) (int, error) {
+	return w.body.Write(p)
+}
+
+func (w *flushCountingResponseWriter) WriteHeader(statusCode int) {
+	w.status = statusCode
+}
+
+func (w *flushCountingResponseWriter) Flush() {
+	w.flushes++
+}
+
 func newResponse(status int, hdr http.Header, body string) *http.Response {
 	if hdr == nil {
 		hdr = make(http.Header)
@@ -62,6 +103,36 @@ func TestPathPrefixMatchAndStrip(t *testing.T) {
 	}
 	if got := stripClientPrefix("/claudecode/v1/messages", "/claudecode"); got != "/v1/messages" {
 		t.Fatalf("expected '/v1/messages', got %q", got)
+	}
+}
+
+func TestResponseBodyWriterFlushesOnlyStreamingResponses(t *testing.T) {
+	t.Parallel()
+
+	plainWriter := &flushCountingResponseWriter{}
+	plainResp := newResponse(http.StatusOK, http.Header{"Content-Type": []string{"application/json"}}, "")
+	plainBody := responseBodyWriter(plainWriter, httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", nil), plainResp)
+	if _, err := plainBody.Write([]byte("a")); err != nil {
+		t.Fatalf("plain write: %v", err)
+	}
+	if _, err := plainBody.Write([]byte("b")); err != nil {
+		t.Fatalf("plain write: %v", err)
+	}
+	if plainWriter.flushes != 0 {
+		t.Fatalf("plain flushes: got %d want 0", plainWriter.flushes)
+	}
+
+	streamWriter := &flushCountingResponseWriter{}
+	streamResp := newResponse(http.StatusOK, http.Header{"Content-Type": []string{"text/event-stream"}}, "")
+	streamBody := responseBodyWriter(streamWriter, httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/responses", nil), streamResp)
+	if _, err := streamBody.Write([]byte("a")); err != nil {
+		t.Fatalf("stream write: %v", err)
+	}
+	if _, err := streamBody.Write([]byte("b")); err != nil {
+		t.Fatalf("stream write: %v", err)
+	}
+	if streamWriter.flushes != 2 {
+		t.Fatalf("stream flushes: got %d want 2", streamWriter.flushes)
 	}
 }
 
@@ -421,8 +492,6 @@ func TestCreateProxyRequest_UsesGeminiXGoogAPIKeyStyle(t *testing.T) {
 }
 
 func TestApplyProviderAPIKey_UnknownCarrierFallsBackToProtocolDefault(t *testing.T) {
-	t.Parallel()
-
 	original := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/messages", nil)
 	original = withRequestContext(original, RequestContext{
 		ClientType:     ClientClaude,
@@ -435,9 +504,15 @@ func TestApplyProviderAPIKey_UnknownCarrierFallsBackToProtocolDefault(t *testing
 	proxyReq := httptest.NewRequest(http.MethodPost, "http://upstream/v1/messages", nil)
 	proxyReq.Header.Set("Authorization", "Bearer stale")
 
+	detectAuthCarrierFuncMu.Lock()
 	origDetect := detectAuthCarrierFunc
 	detectAuthCarrierFunc = func(*http.Request) authCarrier { return authCarrier("future-carrier") }
-	defer func() { detectAuthCarrierFunc = origDetect }()
+	detectAuthCarrierFuncMu.Unlock()
+	defer func() {
+		detectAuthCarrierFuncMu.Lock()
+		detectAuthCarrierFunc = origDetect
+		detectAuthCarrierFuncMu.Unlock()
+	}()
 
 	applyProviderAPIKey(proxyReq, original, "provider-key")
 
@@ -692,6 +767,29 @@ func TestForwardWithFailover_DeactivateOn401(t *testing.T) {
 	}
 	if got := cp.getCurrentIndex(); got != 1 {
 		t.Fatalf("currentIndex: got %d want %d", got, 1)
+	}
+}
+
+func TestForwardWithFailover_AllUnavailableDoesNotReadBody(t *testing.T) {
+	t.Parallel()
+
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
+		{Name: "p1", BaseURL: "http://p1", APIKey: "k1", Priority: 1},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.deactivateFor(0, "rate_limit", http.StatusTooManyRequests, "limited", time.Hour)
+
+	body := &trackingReadCloser{}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/test", nil)
+	req.Body = body
+
+	cp.forwardWithFailover(rr, req, "/v1/test")
+
+	if body.readCalled {
+		t.Fatalf("expected unavailable request to return before reading body")
+	}
+	if rr.Result().StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d want %d", rr.Result().StatusCode, http.StatusTooManyRequests)
 	}
 }
 

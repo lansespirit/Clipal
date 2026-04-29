@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -14,6 +15,20 @@ type ProviderClient interface {
 	StartLogin(now time.Time, ttl time.Duration) (*LoginSession, error)
 	ExchangeSessionCode(ctx context.Context, session *LoginSession, code string) (*Credential, error)
 	Refresh(ctx context.Context, cred *Credential) (*Credential, error)
+}
+
+type httpClientProviderClient interface {
+	WithHTTPClient(*http.Client) ProviderClient
+}
+
+func providerClientWithHTTPClient(client ProviderClient, httpClient *http.Client) ProviderClient {
+	if client == nil || httpClient == nil {
+		return client
+	}
+	if cloneable, ok := client.(httpClientProviderClient); ok {
+		return cloneable.WithHTTPClient(httpClient)
+	}
+	return client
 }
 
 func startLoginSession(

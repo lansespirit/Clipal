@@ -40,8 +40,12 @@ type API struct {
 }
 
 type oauthTargetClient struct {
-	ClientType string
-	ExpiresAt  time.Time
+	ClientType      string
+	Provider        config.OAuthProvider
+	ProxyConfigured bool
+	ProxyMode       config.ProviderProxyMode
+	ProxyURL        string
+	ExpiresAt       time.Time
 }
 
 // NewAPI creates a new API handler

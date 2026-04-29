@@ -12,7 +12,7 @@ import (
 
 const defaultClaudeOAuthBaseURL = "https://api.anthropic.com"
 
-func (cp *ClientProxy) createClaudeOAuthRequest(original *http.Request, provider config.Provider, path string, body []byte) (*http.Request, error) {
+func (cp *ClientProxy) createClaudeOAuthRequestWithPayloadForProvider(original *http.Request, provider config.Provider, providerIndex int, path string, payload *requestPayload) (*http.Request, error) {
 	if original == nil {
 		return nil, fmt.Errorf("original request is nil")
 	}
@@ -27,7 +27,7 @@ func (cp *ClientProxy) createClaudeOAuthRequest(original *http.Request, provider
 		return nil, fmt.Errorf("claude oauth does not support %s requests", requestCtx.Capability)
 	}
 
-	cred, err := cp.oauth.RefreshIfNeeded(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef())
+	cred, err := cp.oauth.RefreshIfNeededWithHTTPClient(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef(), cp.oauthHTTPClientForProvider(provider, providerIndex))
 	if err != nil {
 		return nil, fmt.Errorf("load oauth credential: %w", err)
 	}
@@ -39,7 +39,7 @@ func (cp *ClientProxy) createClaudeOAuthRequest(original *http.Request, provider
 		return nil, fmt.Errorf("oauth credential %q has no access token", provider.NormalizedOAuthRef())
 	}
 
-	body = applyProviderRequestOverrides(original, requestCtx, provider, body)
+	body := payload.providerBody(original, requestCtx, provider)
 	targetURL, err := buildTargetURL(defaultClaudeOAuthBaseURL, path, original.URL.RawQuery)
 	if err != nil {
 		return nil, err

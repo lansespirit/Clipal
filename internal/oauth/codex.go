@@ -49,6 +49,15 @@ func (c *CodexClient) Provider() config.OAuthProvider {
 	return config.OAuthProviderCodex
 }
 
+func (c *CodexClient) WithHTTPClient(httpClient *http.Client) ProviderClient {
+	if c == nil || httpClient == nil {
+		return c
+	}
+	clone := *c
+	clone.HTTPClient = httpClient
+	return &clone
+}
+
 func NewCodexClient() *CodexClient {
 	client := &CodexClient{
 		AuthURL:      defaultCodexAuthURL,

@@ -53,6 +53,91 @@ func TestHandleStartOAuthProvider_ReturnsAuthURLAndSessionID(t *testing.T) {
 	}
 }
 
+func TestHandleStartOAuthProvider_RejectsInvalidProxySettings(t *testing.T) {
+	api := newTestOAuthAPI(t)
+
+	body := []byte(`{"client_type":"openai","provider":"codex","proxy_mode":"custom","proxy_url":"ftp://127.0.0.1:21"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/oauth/providers/start", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	api.HandleStartOAuthProvider(w, req)
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+}
+
+func TestOAuthProxySettingsFromStartRequest_DefaultIsNotConfigured(t *testing.T) {
+	mode := "default"
+	settings, err := oauthProxySettingsFromStartRequest(OAuthStartRequest{
+		ClientType: "claude",
+		Provider:   config.OAuthProviderClaude,
+		ProxyMode:  &mode,
+	})
+	if err != nil {
+		t.Fatalf("oauthProxySettingsFromStartRequest: %v", err)
+	}
+	if settings.Configured {
+		t.Fatalf("settings.Configured = true, want false")
+	}
+}
+
+func TestHandleGetOAuthSession_CreatesProviderWithOAuthStartProxySettings(t *testing.T) {
+	now := time.Date(2026, 4, 18, 21, 10, 0, 0, time.UTC)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"access_token":"access-1","refresh_token":"refresh-1","id_token":"%s","expires_in":3600}`, testOAuthJWT("sean@example.com", "acct_123")))
+	}))
+	defer tokenServer.Close()
+
+	api := newTestOAuthAPI(t, oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+		AuthURL:      "https://auth.openai.com/oauth/authorize",
+		TokenURL:     tokenServer.URL,
+		ClientID:     "test-client",
+		CallbackHost: "127.0.0.1",
+		CallbackPort: 0,
+		CallbackPath: "/auth/callback",
+		HTTPClient:   tokenServer.Client(),
+		Now:          func() time.Time { return now },
+	}))
+
+	body := []byte(fmt.Sprintf(`{"client_type":"openai","provider":"codex","proxy_mode":"custom","proxy_url":%q}`, tokenServer.URL))
+	req := httptest.NewRequest(http.MethodPost, "/api/oauth/providers/start", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	api.HandleStartOAuthProvider(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+	sessionID, ok := got["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("session_id = %v", got["session_id"])
+	}
+	authURL, ok := got["auth_url"].(string)
+	if !ok || authURL == "" {
+		t.Fatalf("auth_url = %v", got["auth_url"])
+	}
+	start := startedOAuthSession{
+		SessionID: sessionID,
+		AuthURL:   authURL,
+	}
+	completeOAuthCallback(t, start)
+	linkOAuthSessionFor(t, api, start.SessionID, "openai")
+
+	cfg, err := config.Load(api.configDir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(cfg.OpenAI.Providers) != 1 {
+		t.Fatalf("providers len = %d, want 1", len(cfg.OpenAI.Providers))
+	}
+	provider := cfg.OpenAI.Providers[0]
+	if got := provider.NormalizedProxyMode(); got != config.ProviderProxyModeCustom {
+		t.Fatalf("proxy_mode = %q, want custom", got)
+	}
+	if got := provider.NormalizedProxyURL(); got != tokenServer.URL {
+		t.Fatalf("proxy_url = %q, want %q", got, tokenServer.URL)
+	}
+}
+
 func TestHandleListOAuthProviders_ReturnsAvailableProvidersForClient(t *testing.T) {
 	api := newTestOAuthAPI(t)
 
@@ -178,6 +263,123 @@ func TestHandleGetOAuthSession_CompletedFlowRequiresExplicitLink(t *testing.T) {
 	}
 	if _, ok := api.getOAuthTargetClient(start.SessionID); ok {
 		t.Fatalf("expected oauth target for completed session to be cleaned up")
+	}
+}
+
+func TestHandleGetOAuthSession_PollThenLinkPreservesOAuthStartProxySettings(t *testing.T) {
+	now := time.Date(2026, 4, 18, 21, 15, 0, 0, time.UTC)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"access_token":"access-1","refresh_token":"refresh-1","id_token":"%s","expires_in":3600}`, testOAuthJWT("sean@example.com", "acct_123")))
+	}))
+	defer tokenServer.Close()
+
+	api := newTestOAuthAPI(t, oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+		AuthURL:      "https://auth.openai.com/oauth/authorize",
+		TokenURL:     tokenServer.URL,
+		ClientID:     "test-client",
+		CallbackHost: "127.0.0.1",
+		CallbackPort: 0,
+		CallbackPath: "/auth/callback",
+		HTTPClient:   tokenServer.Client(),
+		Now:          func() time.Time { return now },
+	}))
+
+	body := []byte(fmt.Sprintf(`{"client_type":"openai","provider":"codex","proxy_mode":"custom","proxy_url":%q}`, tokenServer.URL))
+	req := httptest.NewRequest(http.MethodPost, "/api/oauth/providers/start", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	api.HandleStartOAuthProvider(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+	got := testutil.DecodeJSONMap(t, w.Body.Bytes())
+	sessionID, ok := got["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("session_id = %v", got["session_id"])
+	}
+	authURL, ok := got["auth_url"].(string)
+	if !ok || authURL == "" {
+		t.Fatalf("auth_url = %v", got["auth_url"])
+	}
+	start := startedOAuthSession{
+		SessionID: sessionID,
+		AuthURL:   authURL,
+	}
+	completeOAuthCallback(t, start)
+
+	pollReq := httptest.NewRequest(http.MethodGet, "/api/oauth/sessions/"+start.SessionID, nil)
+	pollW := httptest.NewRecorder()
+	api.HandleGetOAuthSession(pollW, pollReq)
+	if pollW.Result().StatusCode != http.StatusOK {
+		t.Fatalf("poll status=%d body=%s", pollW.Result().StatusCode, pollW.Body.String())
+	}
+	poll := testutil.DecodeJSONMap(t, pollW.Body.Bytes())
+	if poll["status"] != "completed" {
+		t.Fatalf("poll status = %v, want completed", poll["status"])
+	}
+
+	linkOAuthSessionFor(t, api, start.SessionID, "openai")
+	cfg, err := config.Load(api.configDir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(cfg.OpenAI.Providers) != 1 {
+		t.Fatalf("providers len = %d, want 1", len(cfg.OpenAI.Providers))
+	}
+	provider := cfg.OpenAI.Providers[0]
+	if got := provider.NormalizedProxyMode(); got != config.ProviderProxyModeCustom {
+		t.Fatalf("proxy_mode = %q, want custom", got)
+	}
+	if got := provider.NormalizedProxyURL(); got != tokenServer.URL {
+		t.Fatalf("proxy_url = %q, want %q", got, tokenServer.URL)
+	}
+}
+
+func TestOAuthHTTPClientForTarget_DefaultEnvironmentPreservesProviderClient(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("ALL_PROXY", "")
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("http_proxy", "")
+	t.Setenv("https_proxy", "")
+	t.Setenv("all_proxy", "")
+	t.Setenv("no_proxy", "")
+	api := newTestOAuthAPI(t)
+
+	client := api.oauthHTTPClientForTarget(oauthTargetClient{
+		ClientType: "claude",
+		Provider:   config.OAuthProviderClaude,
+	}, config.OAuthProviderClaude)
+	if client != nil {
+		t.Fatalf("oauthHTTPClientForTarget default = %T, want nil", client)
+	}
+}
+
+func TestOAuthHTTPClientForTarget_ClaudeDirectPreservesProviderClient(t *testing.T) {
+	api := newTestOAuthAPI(t)
+	cfg, err := config.Load(api.configDir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	cfg.Global.UpstreamProxyMode = config.GlobalUpstreamProxyModeDirect
+	writeConfigFixture(t, api.configDir, cfg)
+
+	client := api.oauthHTTPClientForTarget(oauthTargetClient{
+		ClientType: "claude",
+		Provider:   config.OAuthProviderClaude,
+	}, config.OAuthProviderClaude)
+	if client != nil {
+		t.Fatalf("global direct oauthHTTPClientForTarget = %T, want nil", client)
+	}
+
+	client = api.oauthHTTPClientForTarget(oauthTargetClient{
+		ClientType:      "claude",
+		Provider:        config.OAuthProviderClaude,
+		ProxyConfigured: true,
+		ProxyMode:       config.ProviderProxyModeDirect,
+	}, config.OAuthProviderClaude)
+	if client != nil {
+		t.Fatalf("provider direct oauthHTTPClientForTarget = %T, want nil", client)
 	}
 }
 
@@ -631,6 +833,42 @@ func TestEnsureOAuthProviderLinked_BackfillsIdentityForReusedProvider(t *testing
 	}
 	if got := cc.Providers[0].NormalizedOAuthIdentity(); got != "acct:acct_123" {
 		t.Fatalf("oauth_identity = %q, want acct:acct_123", got)
+	}
+}
+
+func TestEnsureOAuthProviderLinked_PreservesProxySettingsForReusedProvider(t *testing.T) {
+	cc := &config.ClientConfig{
+		Providers: []config.Provider{
+			{
+				Name:          "codex-sean-example-com",
+				AuthType:      config.ProviderAuthTypeOAuth,
+				OAuthProvider: config.OAuthProviderCodex,
+				OAuthRef:      "codex-sean-example-com",
+				ProxyMode:     config.ProviderProxyModeDirect,
+				Priority:      1,
+				Enabled:       ptr(true),
+			},
+		},
+	}
+	cred := &oauthpkg.Credential{
+		Ref:      "codex-sean-example-com",
+		Provider: config.OAuthProviderCodex,
+		Email:    "sean@example.com",
+	}
+
+	link := ensureOAuthProviderLinked(cc, cred, nil, oauthProviderProxySettings{
+		Configured: true,
+		Mode:       config.ProviderProxyModeCustom,
+		URL:        "http://127.0.0.1:7890",
+	})
+	if got := link.Action; got != oauthProviderActionReused {
+		t.Fatalf("action = %q, want reused", got)
+	}
+	if got := cc.Providers[0].NormalizedProxyMode(); got != config.ProviderProxyModeDirect {
+		t.Fatalf("proxy_mode = %q, want direct", got)
+	}
+	if got := cc.Providers[0].NormalizedProxyURL(); got != "" {
+		t.Fatalf("proxy_url = %q, want empty", got)
 	}
 }
 

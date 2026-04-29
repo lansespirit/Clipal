@@ -48,8 +48,10 @@ func stickyScopeKey(scope routingScope, key string) string {
 }
 
 func extractRequestStickyKey(requestCtx RequestContext, body []byte) stickyKey {
-	root := decodeStickyRoot(body)
+	return extractRequestStickyKeyFromRoot(requestCtx, decodeStickyRoot(body))
+}
 
+func extractRequestStickyKeyFromRoot(requestCtx RequestContext, root map[string]any) stickyKey {
 	if requestCtx.Capability == CapabilityOpenAIResponses {
 		if v := strings.TrimSpace(stringField(root, "previous_response_id")); v != "" {
 			return stickyKey{Level: stickyKeyLevelL1, Key: v, Source: "previous_response_id"}
@@ -74,7 +76,10 @@ func extractRequestStickyKey(requestCtx RequestContext, body []byte) stickyKey {
 }
 
 func extractResponseLearningStickyKey(requestCtx RequestContext, body []byte) stickyKey {
-	root := decodeStickyRoot(body)
+	return extractResponseLearningStickyKeyFromRoot(requestCtx, decodeStickyRoot(body))
+}
+
+func extractResponseLearningStickyKeyFromRoot(requestCtx RequestContext, root map[string]any) stickyKey {
 	humanMessages := extractHumanMessages(requestCtx, root)
 	if len(humanMessages) == 0 {
 		return stickyKey{}
@@ -271,7 +276,7 @@ func (cp *ClientProxy) resolveStickyProvider(scope routingScope, key stickyKey, 
 	return 0, 0, false
 }
 
-func (cp *ClientProxy) learnStickySuccess(scope routingScope, requestCtx RequestContext, requestKey stickyKey, requestBody []byte, responseBody []byte, providerIndex int, keyIndex int, now time.Time) {
+func (cp *ClientProxy) learnStickySuccessWithPayload(scope routingScope, requestCtx RequestContext, requestKey stickyKey, payload *requestPayload, responseBody []byte, providerIndex int, keyIndex int, now time.Time) {
 	if cp == nil || providerIndex < 0 {
 		return
 	}
@@ -303,7 +308,7 @@ func (cp *ClientProxy) learnStickySuccess(scope routingScope, requestCtx Request
 	// Even when the request is anchored by an explicit L1 key, learn the current
 	// human-message feature as an L3 hint so a later stateless follow-up can
 	// still prefer the same provider.
-	if learned := extractResponseLearningStickyKey(requestCtx, requestBody); learned.Level == stickyKeyLevelL3 && learned.Key != "" {
+	if learned := payload.responseLearningStickyKey(requestCtx); learned.Level == stickyKeyLevelL3 && learned.Key != "" {
 		cp.dynamicFeatureBindings[stickyScopeKey(scope, learned.Key)] = stickyLookupEntry{
 			ProviderIndex: providerIndex,
 			KeyIndex:      keyIndex,

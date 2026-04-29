@@ -77,6 +77,12 @@ type Store struct {
 	dirty       bool
 	lastPersist time.Time
 	revision    uint64
+
+	persistCh chan struct{}
+	closeCh   chan struct{}
+	doneCh    chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
 }
 
 var afterCloneForFlush func()
@@ -94,6 +100,10 @@ func NewStore(configDir string) (*Store, error) {
 		return s, nil
 	}
 	s.path = filepath.Join(configDir, storeFilename)
+	s.persistCh = make(chan struct{}, 1)
+	s.closeCh = make(chan struct{})
+	s.doneCh = make(chan struct{})
+	s.startPersistenceWorker()
 	if err := s.load(); err != nil {
 		return s, err
 	}
@@ -175,12 +185,9 @@ func (s *Store) Record(clientType string, provider string, snapshot UsageSnapsho
 	s.state.UpdatedAt = when
 	s.dirty = true
 	s.revision++
-	shouldPersist := s.lastPersist.IsZero() || when.Sub(s.lastPersist) >= s.persistInterval
 	s.mu.Unlock()
 
-	if shouldPersist {
-		return s.Flush()
-	}
+	s.notifyPersist()
 	return nil
 }
 
@@ -354,6 +361,88 @@ func (s *Store) Flush() error {
 			return nil
 		}
 		s.mu.Unlock()
+	}
+}
+
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.closeCh != nil {
+		s.closeOnce.Do(func() {
+			close(s.closeCh)
+			if s.doneCh != nil {
+				<-s.doneCh
+			}
+		})
+	}
+	return s.Flush()
+}
+
+func (s *Store) notifyPersist() {
+	if s == nil || strings.TrimSpace(s.path) == "" || s.persistCh == nil {
+		return
+	}
+	s.startPersistenceWorker()
+	select {
+	case s.persistCh <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Store) startPersistenceWorker() {
+	if s == nil || s.persistCh == nil || s.closeCh == nil || s.doneCh == nil {
+		return
+	}
+	s.startOnce.Do(func() {
+		go s.persistenceWorker()
+	})
+}
+
+func (s *Store) persistenceWorker() {
+	defer close(s.doneCh)
+
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	stopTimer := func() {
+		if timer == nil {
+			return
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer = nil
+		timerC = nil
+	}
+	scheduleFlush := func() {
+		if s.persistInterval <= 0 {
+			_ = s.Flush()
+			return
+		}
+		if timer != nil {
+			return
+		}
+		timer = time.NewTimer(s.persistInterval)
+		timerC = timer.C
+	}
+
+	for {
+		select {
+		case <-s.persistCh:
+			scheduleFlush()
+		case <-timerC:
+			timer = nil
+			timerC = nil
+			if err := s.Flush(); err != nil {
+				scheduleFlush()
+			}
+		case <-s.closeCh:
+			stopTimer()
+			return
+		}
 	}
 }
 

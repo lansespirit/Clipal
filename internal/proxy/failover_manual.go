@@ -15,21 +15,6 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 		return
 	}
 
-	bodyBytes, err := io.ReadAll(req.Body)
-	if err != nil {
-		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			cp.recordTerminalRequest(time.Now(), req, "", http.StatusRequestEntityTooLarge, "request_rejected", "Request body too large.")
-			writeProxyError(w, "Request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		cp.recordTerminalRequest(time.Now(), req, "", http.StatusBadRequest, "request_rejected", "Failed to read request body.")
-		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer func() { _ = req.Body.Close() }()
-
 	index := cp.pinnedIndex
 	if index < 0 && cp.pinnedProvider != "" {
 		// Defensive fallback: pinnedIndex should be resolved during initialization.
@@ -70,9 +55,26 @@ func (cp *ClientProxy) forwardManual(w http.ResponseWriter, req *http.Request, p
 		return
 	}
 	keyIndex := cp.preferredKeyIndexForScope(index, scope)
+
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			cp.recordTerminalRequest(time.Now(), req, "", http.StatusRequestEntityTooLarge, "request_rejected", "Request body too large.")
+			writeProxyError(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		cp.recordTerminalRequest(time.Now(), req, "", http.StatusBadRequest, "request_rejected", "Failed to read request body.")
+		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer func() { _ = req.Body.Close() }()
+	payload := newRequestPayload(bodyBytes)
+
 	attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
 	reqWithAttemptCtx := req.WithContext(attemptCtx)
-	resp, prepared, err := cp.doProviderRequest(reqWithAttemptCtx, provider, index, cp.providerKeys[index][keyIndex], path, bodyBytes)
+	resp, prepared, err := cp.doProviderRequestWithPayload(reqWithAttemptCtx, provider, index, cp.providerKeys[index][keyIndex], path, payload)
 	if err != nil {
 		cancelAttempt(nil)
 		if !prepared {

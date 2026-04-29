@@ -65,6 +65,15 @@ func (c *ClaudeClient) Provider() config.OAuthProvider {
 	return config.OAuthProviderClaude
 }
 
+func (c *ClaudeClient) WithHTTPClient(httpClient *http.Client) ProviderClient {
+	if c == nil || httpClient == nil {
+		return c
+	}
+	clone := *c
+	clone.HTTPClient = httpClient
+	return &clone
+}
+
 func NewClaudeClient() *ClaudeClient {
 	client := &ClaudeClient{
 		AuthURL:      defaultClaudeAuthURL,

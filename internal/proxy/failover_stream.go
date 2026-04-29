@@ -123,7 +123,7 @@ func (cp *ClientProxy) streamResponseToClient(w http.ResponseWriter, resp *http.
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
-	fw := newFlushWriter(w)
+	fw := responseBodyWriter(w, originalReq, resp)
 	if firstN > 0 {
 		if _, err := fw.Write(buf[:firstN]); err != nil {
 			_ = resp.Body.Close()
@@ -282,6 +282,29 @@ func newFlushWriter(w http.ResponseWriter) io.Writer {
 		return w
 	}
 	return &flushWriter{w: w}
+}
+
+func responseBodyWriter(w http.ResponseWriter, req *http.Request, resp *http.Response) io.Writer {
+	if shouldFlushResponse(req, resp) {
+		return newFlushWriter(w)
+	}
+	return w
+}
+
+func shouldFlushResponse(req *http.Request, resp *http.Response) bool {
+	if resp != nil && strings.Contains(strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type"))), "text/event-stream") {
+		return true
+	}
+	requestCtx, ok := requestContextFromRequest(req)
+	if !ok {
+		return false
+	}
+	switch requestCtx.Capability {
+	case CapabilityGeminiStreamGenerate:
+		return true
+	default:
+		return false
+	}
 }
 
 func (fw *flushWriter) Write(p []byte) (int, error) {

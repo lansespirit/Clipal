@@ -109,24 +109,8 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	// Read the request body once for potential retries
-	bodyBytes, err := io.ReadAll(req.Body)
-	if err != nil {
-		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			cp.recordTerminalRequest(time.Now(), req, "", http.StatusRequestEntityTooLarge, "request_rejected", "Request body too large.")
-			writeProxyError(w, "Request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		cp.recordTerminalRequest(time.Now(), req, "", http.StatusBadRequest, "request_rejected", "Failed to read request body.")
-		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer func() { _ = req.Body.Close() }()
-	requestKey := extractRequestStickyKey(requestCtx, bodyBytes)
-
-	// Atomically get active count and start index to avoid TOCTOU race.
+	// This availability check does not depend on the request body, so do it
+	// before buffering potentially large prompts.
 	active, startIndex := cp.getActiveCountAndStartIndexForScope(scope, requestCtx.Capability)
 	if active == 0 {
 		if wait, reason, ok := cp.timeUntilNextAvailable(); ok && wait > 0 {
@@ -142,6 +126,24 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 		writeProxyError(w, "All providers are unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
+	// Read the request body once for potential retries
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			cp.recordTerminalRequest(time.Now(), req, "", http.StatusRequestEntityTooLarge, "request_rejected", "Request body too large.")
+			writeProxyError(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		cp.recordTerminalRequest(time.Now(), req, "", http.StatusBadRequest, "request_rejected", "Failed to read request body.")
+		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer func() { _ = req.Body.Close() }()
+	payload := newRequestPayload(bodyBytes)
+	requestKey := payload.requestStickyKey(requestCtx)
 	if preferredIndex, preferredKeyIndex, ok := cp.resolveStickyProvider(scope, requestKey, time.Now()); ok {
 		if providerSupportsCapability(cp.providers[preferredIndex], requestCtx.Capability) &&
 			!cp.isDeactivated(preferredIndex) &&
@@ -220,7 +222,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 
 			attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
 			reqWithAttemptCtx := req.WithContext(attemptCtx)
-			resp, prepared, err := cp.doProviderRequest(reqWithAttemptCtx, provider, index, apiKey, path, bodyBytes)
+			resp, prepared, err := cp.doProviderRequestWithPayload(reqWithAttemptCtx, provider, index, apiKey, path, payload)
 			if err != nil {
 				if !prepared {
 					summary := describeRequestBuildFailure(provider.Name, err)
@@ -400,7 +402,7 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 				}
 				cp.clearProviderBusy(index)
 				now := time.Now()
-				cp.learnStickySuccess(scope, requestCtx, requestKey, bodyBytes, success.responseBody, index, keyIndex, now)
+				cp.learnStickySuccessWithPayload(scope, requestCtx, requestKey, payload, success.responseBody, index, keyIndex, now)
 				cp.recordCompletedUsage(req, provider.Name, resp.StatusCode, success.usage, now)
 			}
 
@@ -515,19 +517,6 @@ func (cp *ClientProxy) forwardCountTokensSingleShot(w http.ResponseWriter, req *
 		return
 	}
 
-	bodyBytes, err := io.ReadAll(req.Body)
-	if err != nil {
-		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeProxyError(w, "Request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer func() { _ = req.Body.Close() }()
-
 	index, provider, keyIndex, ok := cp.countTokensSingleShotTarget()
 	if !ok {
 		if wait, reason, ok := cp.timeUntilNextAvailable(); ok && wait > 0 {
@@ -546,13 +535,27 @@ func (cp *ClientProxy) forwardCountTokensSingleShot(w http.ResponseWriter, req *
 		}
 	}
 
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		logger.Error("[%s] failed to read request body: %v", cp.clientType, err)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProxyError(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		writeProxyError(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer func() { _ = req.Body.Close() }()
+	payload := newRequestPayload(bodyBytes)
+
 	logger.Debug("[%s] forwarding to: %s (count_tokens single-shot, keys=%d)", cp.clientType, provider.Name, len(cp.providerKeys[index]))
 
 	attemptCtx, cancelAttempt := context.WithCancelCause(req.Context())
 	defer cancelAttempt(nil)
 
 	reqWithAttemptCtx := req.WithContext(attemptCtx)
-	resp, _, err := cp.doProviderRequest(reqWithAttemptCtx, provider, index, cp.providerKeys[index][keyIndex], path, bodyBytes)
+	resp, _, err := cp.doProviderRequestWithPayload(reqWithAttemptCtx, provider, index, cp.providerKeys[index][keyIndex], path, payload)
 	if err != nil {
 		if req.Context().Err() != nil {
 			return
@@ -566,7 +569,7 @@ func (cp *ClientProxy) forwardCountTokensSingleShot(w http.ResponseWriter, req *
 
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-	n, copyErr := io.Copy(newFlushWriter(w), resp.Body)
+	n, copyErr := io.Copy(responseBodyWriter(w, req, resp), resp.Body)
 	if copyErr == nil {
 		cp.logRequestResult(req, provider.Name, resp.StatusCode, streamResult{
 			kind:     streamFinal,

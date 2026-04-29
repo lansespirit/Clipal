@@ -1,34 +1,12 @@
 package proxy
 
 import (
-	"encoding/json"
 	"mime"
 	"net/http"
 	"strings"
 
 	"github.com/lansespirit/Clipal/internal/config"
 )
-
-func applyProviderRequestOverrides(original *http.Request, requestCtx RequestContext, provider config.Provider, body []byte) []byte {
-	if len(body) == 0 || !hasProviderRequestOverrides(provider) || !isJSONRequest(original) {
-		return body
-	}
-
-	var root map[string]any
-	if err := json.Unmarshal(body, &root); err != nil || root == nil {
-		return body
-	}
-
-	if !applyProviderRequestOverridesToRoot(root, requestCtx, provider) {
-		return body
-	}
-
-	rewritten, err := json.Marshal(root)
-	if err != nil {
-		return body
-	}
-	return rewritten
-}
 
 func hasProviderRequestOverrides(provider config.Provider) bool {
 	return provider.ModelOverride() != "" ||

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -74,24 +73,27 @@ func supportedCapabilitySummary(provider config.Provider) string {
 	}
 }
 
-func (cp *ClientProxy) createOAuthProxyRequest(original *http.Request, provider config.Provider, path string, body []byte) (*http.Request, error) {
+func (cp *ClientProxy) createOAuthProxyRequestWithPayloadForProvider(original *http.Request, provider config.Provider, providerIndex int, path string, payload *requestPayload) (*http.Request, error) {
 	if cp == nil || cp.oauth == nil {
 		return nil, fmt.Errorf("oauth service is unavailable")
+	}
+	if payload == nil {
+		payload = newRequestPayload(nil)
 	}
 
 	switch provider.NormalizedOAuthProvider() {
 	case config.OAuthProviderCodex:
-		return cp.createCodexOAuthRequest(original, provider, path, body)
+		return cp.createCodexOAuthRequestWithPayloadForProvider(original, provider, providerIndex, path, payload)
 	case config.OAuthProviderClaude:
-		return cp.createClaudeOAuthRequest(original, provider, path, body)
+		return cp.createClaudeOAuthRequestWithPayloadForProvider(original, provider, providerIndex, path, payload)
 	case config.OAuthProviderGemini:
-		return cp.createGeminiOAuthRequest(original, provider, path, body)
+		return cp.createGeminiOAuthRequestWithPayloadForProvider(original, provider, providerIndex, path, payload)
 	default:
 		return nil, fmt.Errorf("unsupported oauth provider %q", provider.NormalizedOAuthProvider())
 	}
 }
 
-func (cp *ClientProxy) createCodexOAuthRequest(original *http.Request, provider config.Provider, path string, body []byte) (*http.Request, error) {
+func (cp *ClientProxy) createCodexOAuthRequestWithPayloadForProvider(original *http.Request, provider config.Provider, providerIndex int, path string, payload *requestPayload) (*http.Request, error) {
 	if original == nil {
 		return nil, fmt.Errorf("original request is nil")
 	}
@@ -104,7 +106,7 @@ func (cp *ClientProxy) createCodexOAuthRequest(original *http.Request, provider 
 		return nil, fmt.Errorf("codex oauth only supports OpenAI responses requests")
 	}
 
-	cred, err := cp.oauth.RefreshIfNeeded(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef())
+	cred, err := cp.oauth.RefreshIfNeededWithHTTPClient(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef(), cp.oauthHTTPClientForProvider(provider, providerIndex))
 	if err != nil {
 		return nil, fmt.Errorf("load oauth credential: %w", err)
 	}
@@ -116,8 +118,7 @@ func (cp *ClientProxy) createCodexOAuthRequest(original *http.Request, provider 
 		return nil, fmt.Errorf("oauth credential %q has no access token", provider.NormalizedOAuthRef())
 	}
 
-	body = applyProviderRequestOverrides(original, requestCtx, provider, body)
-	targetPath, stream, requestBody, err := buildCodexOAuthRequest(path, body)
+	targetPath, stream, requestBody, err := payload.codexOAuthRequest(original, requestCtx, provider, path)
 	if err != nil {
 		return nil, err
 	}
@@ -142,17 +143,28 @@ func (cp *ClientProxy) createCodexOAuthRequest(original *http.Request, provider 
 }
 
 func buildCodexOAuthRequest(path string, body []byte) (string, bool, []byte, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return "", false, nil, fmt.Errorf("responses request body is required")
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return "", false, nil, fmt.Errorf("responses request body must be valid json: %w", err)
+	}
+	return buildCodexOAuthRequestFromRoot(path, root, body)
+}
+
+func buildCodexOAuthRequestFromRoot(path string, root map[string]any, body []byte) (string, bool, []byte, error) {
 	path = normalizeUpstreamPath(path)
 
 	switch {
 	case matchesExactPath(path, "/v1/responses/compact"):
-		_, rewritten, err := normalizeCodexOAuthResponsesBody(body, true)
+		_, rewritten, err := normalizeCodexOAuthResponsesRoot(root, true)
 		if err != nil {
 			return "", false, nil, err
 		}
 		return "/responses/compact", false, rewritten, nil
 	case matchesExactPath(path, "/v1/responses"):
-		stream, rewritten, err := normalizeCodexOAuthResponsesBody(body, false)
+		stream, rewritten, err := normalizeCodexOAuthResponsesRoot(root, false)
 		if err != nil {
 			return "", false, nil, err
 		}
@@ -167,16 +179,10 @@ func buildCodexOAuthRequest(path string, body []byte) (string, bool, []byte, err
 	}
 }
 
-func normalizeCodexOAuthResponsesBody(body []byte, forceCompact bool) (bool, []byte, error) {
-	if len(bytes.TrimSpace(body)) == 0 {
-		return false, nil, fmt.Errorf("responses request body is required")
+func normalizeCodexOAuthResponsesRoot(root map[string]any, forceCompact bool) (bool, []byte, error) {
+	if root == nil {
+		return false, nil, fmt.Errorf("responses request body must be a json object")
 	}
-
-	var root map[string]any
-	if err := json.Unmarshal(body, &root); err != nil {
-		return false, nil, fmt.Errorf("responses request body must be valid json: %w", err)
-	}
-
 	stream, _ := root["stream"].(bool)
 	if forceCompact {
 		stream = false
@@ -390,12 +396,12 @@ func extractCodexOAuthContentText(content any) string {
 	}
 }
 
-func (cp *ClientProxy) doProviderRequest(original *http.Request, provider config.Provider, providerIndex int, apiKey string, path string, body []byte) (*http.Response, bool, error) {
-	proxyReq, err := cp.createProxyRequest(original, provider, apiKey, path, body)
+func (cp *ClientProxy) doProviderRequestWithPayload(original *http.Request, provider config.Provider, providerIndex int, apiKey string, path string, payload *requestPayload) (*http.Response, bool, error) {
+	proxyReq, err := cp.createProxyRequestWithPayloadForProvider(original, provider, providerIndex, apiKey, path, payload)
 	if err != nil {
 		return nil, false, err
 	}
-	resp, err := cp.doPreparedProviderRequest(proxyReq, providerIndex, body)
+	resp, err := cp.doPreparedProviderRequest(proxyReq, providerIndex)
 	if err != nil || !provider.UsesOAuth() || resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		if err != nil || resp == nil {
 			return resp, true, err
@@ -406,17 +412,17 @@ func (cp *ClientProxy) doProviderRequest(original *http.Request, provider config
 	if cp == nil || cp.oauth == nil {
 		return resp, true, err
 	}
-	refreshed, refreshErr := cp.oauth.Refresh(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef())
+	refreshed, refreshErr := cp.oauth.RefreshWithHTTPClient(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef(), cp.oauthHTTPClientForProvider(provider, providerIndex))
 	if refreshErr != nil || refreshed == nil || strings.TrimSpace(refreshed.AccessToken) == "" {
 		return resp, true, err
 	}
 
 	_ = resp.Body.Close()
-	proxyReq, err = cp.createProxyRequest(original, provider, apiKey, path, body)
+	proxyReq, err = cp.createProxyRequestWithPayloadForProvider(original, provider, providerIndex, apiKey, path, payload)
 	if err != nil {
 		return nil, false, err
 	}
-	resp, err = cp.doPreparedProviderRequest(proxyReq, providerIndex, body)
+	resp, err = cp.doPreparedProviderRequest(proxyReq, providerIndex)
 	if err != nil || resp == nil {
 		return resp, true, err
 	}
@@ -424,12 +430,25 @@ func (cp *ClientProxy) doProviderRequest(original *http.Request, provider config
 	return resp, true, err
 }
 
-func (cp *ClientProxy) doPreparedProviderRequest(proxyReq *http.Request, providerIndex int, body []byte) (*http.Response, error) {
+func (cp *ClientProxy) oauthHTTPClientForProvider(provider config.Provider, providerIndex int) *http.Client {
+	if cp == nil || providerIndex < 0 {
+		return nil
+	}
+	if providerIndex < len(cp.providerProxyPolicies) && cp.providerProxyPolicies[providerIndex].mode == upstreamProxyPolicyDirect && provider.NormalizedOAuthProvider() == config.OAuthProviderClaude {
+		return nil
+	}
+	if providerIndex < len(cp.providerProxyPolicies) && cp.providerProxyPolicies[providerIndex].mode == upstreamProxyPolicyEnvironment {
+		if OAuthProviderUsesEnvironmentProxy(provider.NormalizedOAuthProvider()) {
+			return cp.upstreamHTTPClient(providerIndex)
+		}
+		return nil
+	}
+	return cp.upstreamHTTPClient(providerIndex)
+}
+
+func (cp *ClientProxy) doPreparedProviderRequest(proxyReq *http.Request, providerIndex int) (*http.Response, error) {
 	if proxyReq == nil {
 		return nil, fmt.Errorf("proxy request is nil")
-	}
-	proxyReq.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
 	}
 	//nolint:gosec // proxyReq.URL is controlled by buildCodexOAuthRequest, not user input
 	return cp.upstreamHTTPClient(providerIndex).Do(proxyReq)

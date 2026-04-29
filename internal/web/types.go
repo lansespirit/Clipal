@@ -275,6 +275,8 @@ type ProviderExport struct {
 type OAuthStartRequest struct {
 	ClientType string               `json:"client_type"`
 	Provider   config.OAuthProvider `json:"provider"`
+	ProxyMode  *string              `json:"proxy_mode,omitempty"`
+	ProxyURL   *string              `json:"proxy_url,omitempty"`
 }
 
 type OAuthProviderOptionResponse struct {

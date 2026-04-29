@@ -21,7 +21,7 @@ const (
 	geminiOAuthCountTokensPath = "/v1internal:countTokens"
 )
 
-func (cp *ClientProxy) createGeminiOAuthRequest(original *http.Request, provider config.Provider, path string, body []byte) (*http.Request, error) {
+func (cp *ClientProxy) createGeminiOAuthRequestWithPayloadForProvider(original *http.Request, provider config.Provider, providerIndex int, path string, payload *requestPayload) (*http.Request, error) {
 	if original == nil {
 		return nil, fmt.Errorf("original request is nil")
 	}
@@ -31,7 +31,7 @@ func (cp *ClientProxy) createGeminiOAuthRequest(original *http.Request, provider
 		requestCtx = requestContextForClientPath(cp.clientType, path, false)
 	}
 
-	cred, err := cp.oauth.RefreshIfNeeded(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef())
+	cred, err := cp.oauth.RefreshIfNeededWithHTTPClient(original.Context(), provider.NormalizedOAuthProvider(), provider.NormalizedOAuthRef(), cp.oauthHTTPClientForProvider(provider, providerIndex))
 	if err != nil {
 		return nil, fmt.Errorf("load oauth credential: %w", err)
 	}
@@ -45,8 +45,7 @@ func (cp *ClientProxy) createGeminiOAuthRequest(original *http.Request, provider
 		return nil, fmt.Errorf("oauth credential %q has no access token", provider.NormalizedOAuthRef())
 	}
 
-	body = applyProviderRequestOverrides(original, requestCtx, provider, body)
-	targetPath, modelName, rewrittenBody, err := buildGeminiOAuthRequest(requestCtx.Capability, path, body, projectID)
+	targetPath, modelName, rewrittenBody, err := payload.geminiOAuthRequest(original, requestCtx, provider, path, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +77,13 @@ func buildGeminiOAuthRequest(capability RequestCapability, path string, body []b
 	if err := json.Unmarshal(body, &root); err != nil {
 		return "", "", nil, fmt.Errorf("gemini oauth request body must be valid json: %w", err)
 	}
+	return buildGeminiOAuthRequestFromRoot(capability, path, root, projectID)
+}
 
+func buildGeminiOAuthRequestFromRoot(capability RequestCapability, path string, root map[string]any, projectID string) (string, string, []byte, error) {
+	if root == nil {
+		return "", "", nil, fmt.Errorf("gemini oauth request body must be a json object")
+	}
 	modelName, err := geminiModelFromPath(path)
 	if err != nil {
 		return "", "", nil, err
