@@ -16,6 +16,7 @@ import (
 
 	"github.com/lansespirit/Clipal/internal/config"
 	"github.com/lansespirit/Clipal/internal/logger"
+	oauthpkg "github.com/lansespirit/Clipal/internal/oauth"
 )
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -2231,6 +2232,68 @@ func TestForwardWithFailover_429RetryAfterCappedAtOneHour(t *testing.T) {
 	remaining := time.Until(until)
 	if remaining > time.Hour+5*time.Second {
 		t.Fatalf("expected cooldown capped near 1h, got %s", remaining)
+	}
+}
+
+func TestForwardWithFailover_OAuthRetryAfterNotCappedAtOneHour(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	svc := oauthpkg.NewService(dir)
+	if err := svc.Store().Save(&oauthpkg.Credential{
+		Ref:         "claude-sean-example-com",
+		Provider:    config.OAuthProviderClaude,
+		Email:       "sean@example.com",
+		AccountID:   "acct_123",
+		AccessToken: "access-1",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "api.anthropic.com":
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Retry-After", "7200")
+			return newResponse(http.StatusTooManyRequests, h, `{"type":"error","error":{"type":"rate_limit_error","message":"rate limit"}}`), nil
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	})
+
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{
+		{
+			Name:          "claude-oauth",
+			AuthType:      config.ProviderAuthTypeOAuth,
+			OAuthProvider: config.OAuthProviderClaude,
+			OAuthRef:      "claude-sean-example-com",
+			Priority:      1,
+		},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.oauth = svc
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages", bytes.NewReader([]byte(`{"model":"claude-3-5-sonnet","messages":[]}`)))
+	cp.forwardWithFailover(rr, req, "/v1/messages")
+
+	if rr.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want %d body=%s", rr.Result().StatusCode, http.StatusOK, rr.Body.String())
+	}
+	if !cp.isDeactivated(0) {
+		t.Fatalf("expected oauth provider to be in cooldown")
+	}
+	remaining := time.Until(cp.deactivationUntil(0))
+	if remaining < 90*time.Minute {
+		t.Fatalf("expected oauth cooldown to exceed 1h cap, got %s", remaining)
+	}
+	if remaining > 2*time.Hour+5*time.Second {
+		t.Fatalf("expected oauth cooldown near 2h, got %s", remaining)
 	}
 }
 

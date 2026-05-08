@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -435,6 +436,115 @@ func TestForwardCountTokensSingleShot_ClaudeOAuthRefreshesAndRetriesOn401(t *tes
 	}
 	if got := atomic.LoadInt32(&upstreamCalls); got != 2 {
 		t.Fatalf("upstream calls = %d, want 2", got)
+	}
+}
+
+func TestForwardWithFailover_ClaudeOAuthUsesUsageResetForCooldown(t *testing.T) {
+	dir := t.TempDir()
+	resetAt := time.Now().Add(5 * time.Hour).UTC()
+	var usageCalls int32
+	var claudeCalls int32
+
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&usageCalls, 1)
+		if got := r.Method; got != http.MethodGet {
+			t.Fatalf("usage method = %q, want GET", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer access-1" {
+			t.Fatalf("usage authorization = %q", got)
+		}
+		if got := r.Header.Get("Anthropic-Beta"); got != "oauth-2025-04-20" {
+			t.Fatalf("usage beta = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{
+			"five_hour": {
+				"utilization": 100,
+				"resets_at": %q
+			},
+			"seven_day": {
+				"utilization": 100,
+				"resets_at": %q
+			}
+		}`, resetAt.Format(time.RFC3339), resetAt.Add(72*time.Hour).Format(time.RFC3339)))
+	}))
+	defer usageServer.Close()
+
+	svc := oauthpkg.NewService(dir,
+		oauthpkg.WithClaudeClient(&oauthpkg.ClaudeClient{
+			UsageURL:     usageServer.URL,
+			HTTPClient:   usageServer.Client(),
+			CallbackHost: "127.0.0.1",
+			CallbackPort: 0,
+			CallbackPath: "/callback",
+			Now:          time.Now,
+		}),
+	)
+	if err := svc.Store().Save(&oauthpkg.Credential{
+		Ref:         "claude-sean-example-com",
+		Provider:    config.OAuthProviderClaude,
+		Email:       "sean@example.com",
+		AccessToken: "access-1",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cp := newClientProxy(ClientClaude, config.ClientModeAuto, "", []config.Provider{
+		{
+			Name:          "claude-oauth",
+			AuthType:      config.ProviderAuthTypeOAuth,
+			OAuthProvider: config.OAuthProviderClaude,
+			OAuthRef:      "claude-sean-example-com",
+			Priority:      1,
+		},
+		{Name: "fallback", BaseURL: "http://fallback", APIKey: "k2", Priority: 2},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.oauth = svc
+	cp.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "api.anthropic.com":
+			atomic.AddInt32(&claudeCalls, 1)
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			h.Set("Anthropic-RateLimit-Unified-Representative-Claim", "five_hour")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit"}}`), nil
+		case "fallback":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			t.Fatalf("unexpected host %q", r.URL.Host)
+			return nil, nil
+		}
+	})
+
+	rr := httptest.NewRecorder()
+	body := []byte(`{"model":"claude-sonnet-4-5","messages":[]}`)
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/claudecode/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withRequestContext(req, RequestContext{
+		ClientType:     ClientClaude,
+		Family:         ProtocolFamilyClaude,
+		Capability:     CapabilityClaudeMessages,
+		UpstreamPath:   "/v1/messages",
+		UnifiedIngress: true,
+	})
+
+	cp.forwardWithFailover(rr, req, "/v1/messages")
+
+	if got := rr.Result().StatusCode; got != http.StatusOK {
+		t.Fatalf("status = %d body=%s", got, rr.Body.String())
+	}
+	if got := atomic.LoadInt32(&claudeCalls); got != 1 {
+		t.Fatalf("claude calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&usageCalls); got != 1 {
+		t.Fatalf("usage calls = %d, want 1", got)
+	}
+	if !cp.isDeactivated(0) {
+		t.Fatalf("expected claude oauth provider to be in cooldown")
+	}
+	if remaining := time.Until(cp.deactivationUntil(0)); remaining < 4*time.Hour {
+		t.Fatalf("expected cooldown from usage reset, got %s", remaining)
 	}
 }
 

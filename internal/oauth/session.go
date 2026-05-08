@@ -25,6 +25,7 @@ var ErrInvalidAuthorizationResponse = errors.New("invalid authorization response
 
 const defaultLoginExchangeTimeout = 90 * time.Second
 const defaultTerminalSessionRetention = 10 * time.Minute
+const defaultGeminiUsageTTL = 30 * time.Second
 
 type Service struct {
 	store                *Store
@@ -37,16 +38,30 @@ type Service struct {
 	loginExchangeTimeout time.Duration
 	terminalRetention    time.Duration
 	refreshSkew          time.Duration
+	geminiUsageTTL       time.Duration
 
-	mu        sync.Mutex
-	sessions  map[string]*LoginSession
-	refreshes map[string]*refreshCall
+	mu               sync.Mutex
+	sessions         map[string]*LoginSession
+	refreshes        map[string]*refreshCall
+	geminiUsageCache map[string]geminiUsageCacheEntry
+	geminiUsageCalls map[string]*geminiUsageCall
 }
 
 type refreshCall struct {
 	done chan struct{}
 	cred *Credential
 	err  error
+}
+
+type geminiUsageCall struct {
+	done    chan struct{}
+	details *GeminiUsageDetails
+	err     error
+}
+
+type geminiUsageCacheEntry struct {
+	fetchedAt time.Time
+	details   *GeminiUsageDetails
 }
 
 func NewService(configDir string, opts ...Option) *Service {
@@ -61,8 +76,11 @@ func NewService(configDir string, opts ...Option) *Service {
 		loginExchangeTimeout: defaultLoginExchangeTimeout,
 		terminalRetention:    defaultTerminalSessionRetention,
 		refreshSkew:          30 * time.Second,
+		geminiUsageTTL:       defaultGeminiUsageTTL,
 		sessions:             make(map[string]*LoginSession),
 		refreshes:            make(map[string]*refreshCall),
+		geminiUsageCache:     make(map[string]geminiUsageCacheEntry),
+		geminiUsageCalls:     make(map[string]*geminiUsageCall),
 	}
 	svc.registerProviderClient(svc.codex)
 	svc.registerProviderClient(svc.claude)
@@ -144,6 +162,14 @@ func WithRefreshSkew(skew time.Duration) Option {
 	return func(s *Service) {
 		if skew >= 0 {
 			s.refreshSkew = skew
+		}
+	}
+}
+
+func WithGeminiUsageTTL(ttl time.Duration) Option {
+	return func(s *Service) {
+		if ttl >= 0 {
+			s.geminiUsageTTL = ttl
 		}
 	}
 }
@@ -404,6 +430,9 @@ func (s *Service) refreshCredential(ctx context.Context, cred *Credential, httpC
 	}
 	if err := s.store.Save(refreshed); err != nil {
 		return nil, err
+	}
+	if refreshed.Provider == config.OAuthProviderGemini {
+		s.invalidateGeminiUsageCache(refreshed.Ref)
 	}
 	return refreshed, nil
 }

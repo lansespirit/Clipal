@@ -19,17 +19,21 @@ type codexUsageFetcher interface {
 }
 
 type CodexUsageDetails struct {
-	PlanType   string
-	Primary    *CodexUsageWindow
-	Secondary  *CodexUsageWindow
-	Additional []CodexAdditionalRateLimit
+	PlanType     string
+	Allowed      bool
+	LimitReached bool
+	Primary      *CodexUsageWindow
+	Secondary    *CodexUsageWindow
+	Additional   []CodexAdditionalRateLimit
 }
 
 type CodexAdditionalRateLimit struct {
-	LimitID   string
-	LimitName string
-	Primary   *CodexUsageWindow
-	Secondary *CodexUsageWindow
+	LimitID      string
+	LimitName    string
+	Allowed      bool
+	LimitReached bool
+	Primary      *CodexUsageWindow
+	Secondary    *CodexUsageWindow
 }
 
 type CodexUsageWindow struct {
@@ -185,6 +189,8 @@ func mapCodexUsagePayload(payload codexUsagePayload, now time.Time) *CodexUsageD
 		PlanType: strings.TrimSpace(payload.PlanType),
 	}
 	if payload.RateLimit != nil {
+		out.Allowed = payload.RateLimit.Allowed
+		out.LimitReached = payload.RateLimit.LimitReached
 		out.Primary = mapCodexUsageWindow(payload.RateLimit.primaryWindow(), now)
 		out.Secondary = mapCodexUsageWindow(payload.RateLimit.secondaryWindow(), now)
 	}
@@ -223,6 +229,8 @@ func mapCodexAdditionalRateLimit(item codexAdditionalLimit, now time.Time) Codex
 		out.LimitID = out.LimitName
 	}
 	if item.RateLimit != nil {
+		out.Allowed = item.RateLimit.Allowed
+		out.LimitReached = item.RateLimit.LimitReached
 		out.Primary = mapCodexUsageWindow(item.RateLimit.primaryWindow(), now)
 		out.Secondary = mapCodexUsageWindow(item.RateLimit.secondaryWindow(), now)
 	}

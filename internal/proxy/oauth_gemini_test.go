@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -463,5 +464,107 @@ func TestForwardCountTokensSingleShot_GeminiOAuthRefreshesAndRetriesOn401(t *tes
 	}
 	if got := atomic.LoadInt32(&upstreamCalls); got != 2 {
 		t.Fatalf("upstream calls = %d, want 2", got)
+	}
+}
+
+func TestForwardWithFailover_GeminiOAuthUsesQuotaResetForCooldown(t *testing.T) {
+	dir := t.TempDir()
+	var generateCalls int32
+	var usageCalls int32
+	resetTime := time.Now().Add(5 * time.Hour).UTC().Format(time.RFC3339)
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "cloudcode-pa.googleapis.com":
+			switch r.URL.Path {
+			case "/v1internal:generateContent":
+				atomic.AddInt32(&generateCalls, 1)
+				return newResponse(http.StatusTooManyRequests, http.Header{
+					"Content-Type": []string{"application/json"},
+					"Retry-After":  []string{"30"},
+				}, `{"error":{"code":429,"message":"quota exhausted"}}`), nil
+			case "/v1internal:retrieveUserQuota":
+				atomic.AddInt32(&usageCalls, 1)
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("io.ReadAll: %v", err)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer access-1" {
+					t.Fatalf("Authorization = %q, want Bearer access-1", got)
+				}
+				if got := string(body); got != `{"project":"project-123"}` {
+					t.Fatalf("usage body = %q", got)
+				}
+				return newResponse(http.StatusOK, http.Header{"Content-Type": []string{"application/json"}}, `{"buckets":[{"modelId":"gemini-2.5-pro","remainingFraction":0.03,"resetTime":"`+resetTime+`"}]}`), nil
+			default:
+				t.Fatalf("unexpected cloudcode path %q", r.URL.Path)
+				return nil, nil
+			}
+		case "p2":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			t.Fatalf("unexpected host %q", r.URL.Host)
+			return nil, nil
+		}
+	})
+
+	svc := oauthpkg.NewService(dir, oauthpkg.WithGeminiClient(&oauthpkg.GeminiClient{
+		HTTPClient: &http.Client{Transport: rt},
+	}))
+	if err := svc.Store().Save(&oauthpkg.Credential{
+		Ref:         "gemini-sean-example-com-project-123",
+		Provider:    config.OAuthProviderGemini,
+		Email:       "sean@example.com",
+		AccountID:   "project-123",
+		AccessToken: "access-1",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Metadata: map[string]string{
+			"project_id": "project-123",
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cp := newClientProxy(ClientGemini, config.ClientModeAuto, "", []config.Provider{
+		{
+			Name:          "gemini-oauth",
+			AuthType:      config.ProviderAuthTypeOAuth,
+			OAuthProvider: config.OAuthProviderGemini,
+			OAuthRef:      "gemini-sean-example-com-project-123",
+			Priority:      1,
+		},
+		{Name: "p2", BaseURL: "http://p2", APIKey: "k2", Priority: 2},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.oauth = svc
+	cp.httpClient.Transport = rt
+
+	rr := httptest.NewRecorder()
+	body := []byte(`{"contents":[]}`)
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/gemini/v1beta/models/gemini-2.5-pro:generateContent", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withRequestContext(req, RequestContext{
+		ClientType:     ClientGemini,
+		Family:         ProtocolFamilyGemini,
+		Capability:     CapabilityGeminiGenerateContent,
+		UpstreamPath:   "/v1beta/models/gemini-2.5-pro:generateContent",
+		UnifiedIngress: true,
+	})
+
+	cp.forwardWithFailover(rr, req, "/v1beta/models/gemini-2.5-pro:generateContent")
+
+	if got := rr.Result().StatusCode; got != http.StatusOK {
+		t.Fatalf("status = %d body=%s", got, rr.Body.String())
+	}
+	if got := atomic.LoadInt32(&generateCalls); got != 1 {
+		t.Fatalf("generate calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&usageCalls); got != 1 {
+		t.Fatalf("usage calls = %d, want 1", got)
+	}
+	if !cp.isDeactivated(0) {
+		t.Fatalf("expected gemini oauth provider to be in cooldown")
+	}
+	if remaining := time.Until(cp.deactivationUntil(0)); remaining < 4*time.Hour {
+		t.Fatalf("expected cooldown from usage reset, got %s", remaining)
 	}
 }

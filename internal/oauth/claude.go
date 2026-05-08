@@ -17,6 +17,7 @@ import (
 const (
 	defaultClaudeAuthURL      = "https://claude.ai/oauth/authorize"
 	defaultClaudeTokenURL     = "https://api.anthropic.com/v1/oauth/token"
+	defaultClaudeUsageURL     = "https://api.anthropic.com/api/oauth/usage"
 	defaultClaudeClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultClaudeScope        = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 	defaultClaudeCallbackHost = "localhost"
@@ -27,6 +28,7 @@ const (
 type ClaudeClient struct {
 	AuthURL      string
 	TokenURL     string
+	UsageURL     string
 	ClientID     string
 	Scope        string
 	CallbackHost string
@@ -78,6 +80,7 @@ func NewClaudeClient() *ClaudeClient {
 	client := &ClaudeClient{
 		AuthURL:      defaultClaudeAuthURL,
 		TokenURL:     defaultClaudeTokenURL,
+		UsageURL:     defaultClaudeUsageURL,
 		ClientID:     defaultClaudeClientID,
 		Scope:        defaultClaudeScope,
 		CallbackHost: defaultClaudeCallbackHost,
@@ -329,6 +332,13 @@ func (c *ClaudeClient) clientID() string {
 	return defaultClaudeClientID
 }
 
+func (c *ClaudeClient) usageURL() string {
+	if c != nil && strings.TrimSpace(c.UsageURL) != "" {
+		return strings.TrimSpace(c.UsageURL)
+	}
+	return defaultClaudeUsageURL
+}
+
 func (c *ClaudeClient) scope() string {
 	if c != nil && strings.TrimSpace(c.Scope) != "" {
 		return strings.TrimSpace(c.Scope)
@@ -384,6 +394,9 @@ func applyClaudeClientEnvOverrides(c *ClaudeClient) {
 	}
 	if v, ok := lookupNonEmptyEnv("CLIPAL_OAUTH_CLAUDE_TOKEN_URL"); ok {
 		c.TokenURL = v
+	}
+	if v, ok := lookupNonEmptyEnv("CLIPAL_OAUTH_CLAUDE_USAGE_URL"); ok {
+		c.UsageURL = v
 	}
 	if v, ok := lookupNonEmptyEnv("CLIPAL_OAUTH_CLAUDE_CLIENT_ID"); ok {
 		c.ClientID = v

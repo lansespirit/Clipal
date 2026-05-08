@@ -799,6 +799,116 @@ func TestForwardWithFailover_CodexOAuthRefreshesAndRetriesOn401(t *testing.T) {
 	}
 }
 
+func TestForwardWithFailover_CodexOAuthUsesUsageResetForCooldown(t *testing.T) {
+	dir := t.TempDir()
+	resetAt := time.Now().Add(5 * time.Hour).UTC()
+	var usageCalls int32
+
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&usageCalls, 1)
+		if got := r.Header.Get("Authorization"); got != "Bearer access-1" {
+			t.Fatalf("usage authorization = %q", got)
+		}
+		if got := r.Header.Get("Chatgpt-Account-Id"); got != "acct_123" {
+			t.Fatalf("usage account = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{
+  "plan_type": "pro",
+  "rate_limit": {
+    "allowed": false,
+    "limit_reached": true,
+    "primary_window": {
+      "used_percent": 100,
+      "window_minutes": 300,
+      "reset_at": %d
+    }
+  }
+}`, resetAt.Unix()))
+	}))
+	defer usageServer.Close()
+
+	svc := oauthpkg.NewService(dir,
+		oauthpkg.WithCodexClient(&oauthpkg.CodexClient{
+			AuthURL:      "https://auth.openai.com/oauth/authorize",
+			TokenURL:     "https://auth.openai.com/oauth/token",
+			UsageURL:     usageServer.URL,
+			ClientID:     "test-client",
+			CallbackHost: "127.0.0.1",
+			CallbackPort: 0,
+			CallbackPath: "/auth/callback",
+			HTTPClient:   usageServer.Client(),
+			Now:          time.Now,
+		}),
+	)
+	if err := svc.Store().Save(&oauthpkg.Credential{
+		Ref:         "codex-sean-example-com",
+		Provider:    config.OAuthProviderCodex,
+		Email:       "sean@example.com",
+		AccountID:   "acct_123",
+		AccessToken: "access-1",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	var codexCalls int32
+	cp := newClientProxy(ClientOpenAI, config.ClientModeAuto, "", []config.Provider{
+		{
+			Name:          "codex-oauth",
+			AuthType:      config.ProviderAuthTypeOAuth,
+			OAuthProvider: config.OAuthProviderCodex,
+			OAuthRef:      "codex-sean-example-com",
+			Priority:      1,
+		},
+		{Name: "fallback", BaseURL: "http://fallback", APIKey: "k2", Priority: 2},
+	}, time.Hour, 0, testResponseHeaderTimeout, circuitBreakerConfig{})
+	cp.oauth = svc
+	cp.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "chatgpt.com":
+			atomic.AddInt32(&codexCalls, 1)
+			h := make(http.Header)
+			h.Set("Content-Type", "application/json")
+			return newResponse(http.StatusTooManyRequests, h, `{"error":{"message":"rate limit","type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}`), nil
+		case "fallback":
+			return newResponse(http.StatusOK, nil, "ok"), nil
+		default:
+			t.Fatalf("unexpected host %q", r.URL.Host)
+			return nil, nil
+		}
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/codex/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5.2","input":"hello"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withRequestContext(req, RequestContext{
+		ClientType:     ClientOpenAI,
+		Family:         ProtocolFamilyOpenAI,
+		Capability:     CapabilityOpenAIResponses,
+		UpstreamPath:   "/v1/responses",
+		UnifiedIngress: true,
+	})
+
+	cp.forwardWithFailover(rr, req, "/v1/responses")
+
+	if got := rr.Result().StatusCode; got != http.StatusOK {
+		t.Fatalf("status = %d body=%s", got, rr.Body.String())
+	}
+	if got := atomic.LoadInt32(&codexCalls); got != 1 {
+		t.Fatalf("codex calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&usageCalls); got != 1 {
+		t.Fatalf("usage calls = %d, want 1", got)
+	}
+	if !cp.isDeactivated(0) {
+		t.Fatalf("expected codex oauth provider to be in cooldown")
+	}
+	if remaining := time.Until(cp.deactivationUntil(0)); remaining < 4*time.Hour {
+		t.Fatalf("expected cooldown from usage reset, got %s", remaining)
+	}
+}
+
 func TestForwardManual_CodexOAuthRefreshesAndRetriesOn401(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)

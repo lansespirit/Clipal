@@ -88,6 +88,52 @@ func TestCodexFetchUsage_ComputesResetTimeFromRelativeSeconds(t *testing.T) {
 	}
 }
 
+func TestMapCodexUsagePayload_PreservesLimitFlags(t *testing.T) {
+	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(5 * time.Hour)
+
+	details := mapCodexUsagePayload(codexUsagePayload{
+		PlanType: "pro",
+		RateLimit: &codexUsageRateLimitDetails{
+			Allowed:      false,
+			LimitReached: true,
+			PrimaryWindow: &codexUsageWindow{
+				UsedPercent:   99.5,
+				WindowMinutes: 300,
+				ResetAt:       reset.Unix(),
+			},
+		},
+		AdditionalRateLimits: []codexAdditionalLimit{
+			{
+				LimitName:      "Code review",
+				MeteredFeature: "code_review",
+				RateLimit: &codexUsageRateLimitDetails{
+					Allowed:      true,
+					LimitReached: false,
+					PrimaryWindow: &codexUsageWindow{
+						UsedPercent:       75,
+						LimitWindowSecs:   604800,
+						ResetAfterSeconds: 3600,
+					},
+				},
+			},
+		},
+	}, now)
+
+	if details.Allowed || !details.LimitReached {
+		t.Fatalf("limit flags = allowed=%v reached=%v, want false/true", details.Allowed, details.LimitReached)
+	}
+	if details.Primary == nil || !details.Primary.ResetsAt.Equal(reset) {
+		t.Fatalf("primary = %#v, want reset %s", details.Primary, reset.Format(time.RFC3339))
+	}
+	if len(details.Additional) != 1 {
+		t.Fatalf("additional len = %d, want 1", len(details.Additional))
+	}
+	if !details.Additional[0].Allowed || details.Additional[0].LimitReached {
+		t.Fatalf("additional flags = allowed=%v reached=%v, want true/false", details.Additional[0].Allowed, details.Additional[0].LimitReached)
+	}
+}
+
 func TestServiceGetCodexUsage_UsesRegisteredProviderClient(t *testing.T) {
 	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
 	dir := t.TempDir()

@@ -81,7 +81,12 @@ func isKeyScopedFailure(reason string) bool {
 
 func keyFailureDuration(reason string, cooldown time.Duration, reactivateAfter time.Duration) time.Duration {
 	switch reason {
-	case "auth", "billing", "quota":
+	case "auth", "billing":
+		return reactivateAfter
+	case "quota":
+		if cooldown > 0 {
+			return cooldown
+		}
 		return reactivateAfter
 	case "rate_limit", "overloaded":
 		return cooldown
@@ -288,6 +293,9 @@ func (cp *ClientProxy) forwardWithFailover(w http.ResponseWriter, req *http.Requ
 			if inspect {
 				body, truncated := readResponseBodyBytes(resp, 32*1024)
 				action, reason, msg, cooldown = classifyUpstreamFailure(resp.StatusCode, resp.Header, body, truncated)
+				if resp.StatusCode == http.StatusTooManyRequests && provider.UsesOAuth() && isOAuthCooldownReason(reason) {
+					cooldown = cp.oauthCooldownForFailure(req.Context(), provider, index, path, resp.Header, body, cooldown)
+				}
 			} else {
 				action = failureReturnToClient
 			}
