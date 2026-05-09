@@ -240,6 +240,15 @@ func TestMapProviderUsageResponse_IncludesSpendRollups(t *testing.T) {
 	if resp.ReasoningTokens != 11 || resp.ThoughtsTokens != 22 {
 		t.Fatalf("expected reasoning/thought tokens: %#v", resp)
 	}
+	if len(resp.UsageBreakdowns) != 2 {
+		t.Fatalf("expected usage_breakdowns, got %#v", resp.UsageBreakdowns)
+	}
+	if resp.UsageBreakdowns[0] != (ProviderUsageBreakdownEntry{Kind: "reasoning", Parent: "output", Tokens: 11}) {
+		t.Fatalf("unexpected first breakdown: %#v", resp.UsageBreakdowns[0])
+	}
+	if resp.UsageBreakdowns[1] != (ProviderUsageBreakdownEntry{Kind: "thoughts", Parent: "total", Tokens: 22}) {
+		t.Fatalf("unexpected second breakdown: %#v", resp.UsageBreakdowns[1])
+	}
 	if resp.SpendTodayMicros != 1_250_000 {
 		t.Fatalf("spend_today_micros = %d", resp.SpendTodayMicros)
 	}

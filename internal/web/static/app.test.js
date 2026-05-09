@@ -522,7 +522,7 @@ test('formatCompactTokenCount keeps at most three digits across all units', () =
     assert.equal(state.formatCompactTokenCount(1234000000000000000000000), '1.23Y');
 });
 
-test('providerUsage labels use compact values and preserve exact hover text', () => {
+test('providerUsage labels attach reasoning/thoughts to their parent metrics', () => {
     const state = loadApp();
     const provider = {
         usage: {
@@ -535,14 +535,56 @@ test('providerUsage labels use compact values and preserve exact hover text', ()
         }
     };
 
-    assert.equal(state.providerUsageTotal(provider), '724M');
-    assert.equal(state.providerUsageTotalTitle(provider), '724,117,614');
-    assert.equal(state.providerUsageInOut(provider), '720M / 3.64M');
-    assert.equal(state.providerUsageInOutTitle(provider), '720,473,100 / 3,644,514');
-    assert.equal(state.providerUsageReasoning(provider), '120K');
-    assert.equal(state.providerUsageReasoningTitle(provider), '120,045');
-    assert.equal(state.providerUsageThoughts(provider), '9.88K');
-    assert.equal(state.providerUsageThoughtsTitle(provider), '9,876');
+    assert.equal(state.providerUsageTotal(provider), '724M · incl. Thoughts 9.88K');
+    assert.equal(state.providerUsageTotalMain(provider), '724M');
+    assert.equal(state.providerUsageTotalBreakdown(provider), '· incl. Thoughts 9.88K');
+    assert.equal(state.providerUsageTotalTitle(provider), '724,117,614 = 720,473,100 + 3,644,514 + incl. Thoughts 9,876');
+    assert.equal(state.providerUsageInOut(provider), '720M / 3.64M · incl. Reasoning 120K');
+    assert.equal(state.providerUsageInOutMain(provider), '720M / 3.64M');
+    assert.equal(state.providerUsageInOutBreakdown(provider), '· incl. Reasoning 120K');
+    assert.equal(state.providerUsageInOutTitle(provider), '720,473,100 / 3,644,514 · incl. Reasoning 120,045');
+});
+
+test('providerUsage breakdowns prefer structured entries and preserve parent semantics', () => {
+    const state = loadApp();
+    const provider = {
+        usage: {
+            has_usage: true,
+            total_tokens: 25,
+            input_tokens: 7,
+            output_tokens: 1,
+            usage_breakdowns: [
+                { kind: 'thoughts', parent: 'total', tokens: 17 },
+                { kind: 'reasoning', parent: 'output', tokens: 0 }
+            ]
+        }
+    };
+
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(state.providerUsageBreakdowns(provider, 'total'))),
+        [{ kind: 'thoughts', parent: 'total', tokens: 17 }]
+    );
+    assert.equal(state.providerUsageTotal(provider), '25 · incl. Thoughts 17');
+    assert.equal(state.providerUsageTotalTitle(provider), '25 = 7 + 1 + incl. Thoughts 17');
+    assert.equal(state.providerUsageInOut(provider), '7 / 1');
+    assert.equal(state.providerUsageInOutTitle(provider), '7 / 1');
+});
+
+test('providerUsage titles fall back to plain formulas without breakdowns', () => {
+    const state = loadApp();
+    const provider = {
+        usage: {
+            has_usage: true,
+            total_tokens: 92,
+            input_tokens: 23,
+            output_tokens: 69
+        }
+    };
+
+    assert.equal(state.providerUsageTotal(provider), '92');
+    assert.equal(state.providerUsageTotalTitle(provider), '92 = 23 + 69');
+    assert.equal(state.providerUsageInOut(provider), '23 / 69');
+    assert.equal(state.providerUsageInOutTitle(provider), '23 / 69');
 });
 
 test('providerSpend labels format micros and preserve exact hover text', () => {

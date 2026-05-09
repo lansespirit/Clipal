@@ -104,8 +104,13 @@ function app() {
                     apiKeys: 'API Keys',
                     usageTotal: 'Usage',
                     usageInOut: 'Input / Output',
-                    usageReasoning: 'Reasoning (in Output)',
+                    usageReasoning: 'Reasoning',
                     usageThoughts: 'Thoughts',
+                    usageIncluded: 'incl. {label} {tokens}',
+                    usageTotalFormula: '{total} = {input} + {output} + {extra}',
+                    usageTotalFormulaSimple: '{total} = {input} + {output}',
+                    usageInOutFormula: '{input} / {output}',
+                    usageBreakdownJoiner: ', ',
                     spendToday: 'Spend Today',
                     spendWeek: 'Spend 7d',
                     planAndLimits: 'Plan & Limits',
@@ -481,8 +486,13 @@ function app() {
                     apiKeys: 'API Keys',
                     usageTotal: '用量',
                     usageInOut: '输入 / 输出',
-                    usageReasoning: '推理（含在输出中）',
+                    usageReasoning: '推理',
                     usageThoughts: '思考',
+                    usageIncluded: '含{label} {tokens}',
+                    usageTotalFormula: '{total} = {input} + {output} + {extra}',
+                    usageTotalFormulaSimple: '{total} = {input} + {output}',
+                    usageInOutFormula: '{input} / {output}',
+                    usageBreakdownJoiner: '，',
                     spendToday: '今日消费',
                     spendWeek: '近 7 天消费',
                     planAndLimits: '套餐与限额',
@@ -2503,7 +2513,21 @@ function app() {
             if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
+            const base = this.formatCompactTokenCount(usage.total_tokens || 0);
+            const suffix = this.providerUsageBreakdownSuffix(provider, 'total');
+            return suffix ? `${base} ${suffix}` : base;
+        },
+
+        providerUsageTotalMain(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
+                return this.t('common.none');
+            }
             return this.formatCompactTokenCount(usage.total_tokens || 0);
+        },
+
+        providerUsageTotalBreakdown(provider) {
+            return this.providerUsageBreakdownSuffix(provider, 'total');
         },
 
         providerUsageTotalTitle(provider) {
@@ -2511,7 +2535,7 @@ function app() {
             if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
-            return this.formatTokenCount(usage.total_tokens || 0);
+            return this.providerUsageTotalTooltip(provider);
         },
 
         providerUsageInOut(provider) {
@@ -2519,7 +2543,21 @@ function app() {
             if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
+            const base = `${this.formatCompactTokenCount(usage.input_tokens || 0)} / ${this.formatCompactTokenCount(usage.output_tokens || 0)}`;
+            const suffix = this.providerUsageBreakdownSuffix(provider, 'output');
+            return suffix ? `${base} ${suffix}` : base;
+        },
+
+        providerUsageInOutMain(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
+                return this.t('common.none');
+            }
             return `${this.formatCompactTokenCount(usage.input_tokens || 0)} / ${this.formatCompactTokenCount(usage.output_tokens || 0)}`;
+        },
+
+        providerUsageInOutBreakdown(provider) {
+            return this.providerUsageBreakdownSuffix(provider, 'output');
         },
 
         providerUsageInOutTitle(provider) {
@@ -2527,43 +2565,107 @@ function app() {
             if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
-            return `${this.formatTokenCount(usage.input_tokens || 0)} / ${this.formatTokenCount(usage.output_tokens || 0)}`;
+            return this.providerUsageInOutTooltip(provider);
         },
 
-        providerUsageReasoningVisible(provider) {
-            return !!(provider && provider.usage && Number(provider.usage.reasoning_tokens || 0) > 0);
+        providerUsageBreakdowns(provider, parent) {
+            const usage = provider && provider.usage;
+            const entries = Array.isArray(usage && usage.usage_breakdowns)
+                ? provider.usage.usage_breakdowns
+                : [];
+            const normalized = entries.filter((entry) => {
+                if (!entry || String(entry.parent || '') !== String(parent || '')) {
+                    return false;
+                }
+                return Number(entry.tokens || 0) > 0;
+            });
+            if (normalized.length > 0) {
+                return normalized;
+            }
+
+            const fallback = [];
+            if (parent === 'output' && Number(usage && usage.reasoning_tokens || 0) > 0) {
+                fallback.push({
+                    kind: 'reasoning',
+                    parent: 'output',
+                    tokens: Number(usage.reasoning_tokens || 0)
+                });
+            }
+            if (parent === 'total' && Number(usage && usage.thoughts_tokens || 0) > 0) {
+                fallback.push({
+                    kind: 'thoughts',
+                    parent: 'total',
+                    tokens: Number(usage.thoughts_tokens || 0)
+                });
+            }
+            return fallback;
         },
 
-        providerUsageReasoning(provider) {
-            if (!this.providerUsageReasoningVisible(provider)) {
+        providerUsageBreakdownLabel(kind) {
+            switch (String(kind || '')) {
+                case 'reasoning':
+                    return this.t('providers.usageReasoning');
+                case 'thoughts':
+                    return this.t('providers.usageThoughts');
+                default:
+                    return String(kind || '').trim();
+            }
+        },
+
+        providerUsageBreakdownSummary(entry, compact = false) {
+            if (!entry) {
+                return '';
+            }
+            const label = this.providerUsageBreakdownLabel(entry.kind);
+            const tokens = compact
+                ? this.formatCompactTokenCount(entry.tokens || 0)
+                : this.formatTokenCount(entry.tokens || 0);
+            return this.tf('providers.usageIncluded', { label, tokens });
+        },
+
+        providerUsageBreakdownSuffix(provider, parent) {
+            const entries = this.providerUsageBreakdowns(provider, parent);
+            if (!entries.length) {
+                return '';
+            }
+            const summary = this.providerUsageBreakdownSummary(entries[0], true);
+            return summary ? `· ${summary}` : '';
+        },
+
+        providerUsageTotalTooltip(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
-            return this.formatCompactTokenCount(provider.usage.reasoning_tokens || 0);
+            const entries = this.providerUsageBreakdowns(provider, 'total');
+            const total = this.formatTokenCount(usage.total_tokens || 0);
+            const input = this.formatTokenCount(usage.input_tokens || 0);
+            const output = this.formatTokenCount(usage.output_tokens || 0);
+            if (!entries.length) {
+                return this.tf('providers.usageTotalFormulaSimple', { total, input, output });
+            }
+            const extra = entries
+                .map((entry) => this.providerUsageBreakdownSummary(entry, false))
+                .join(this.t('providers.usageBreakdownJoiner'));
+            return this.tf('providers.usageTotalFormula', { total, input, output, extra });
         },
 
-        providerUsageReasoningTitle(provider) {
-            if (!this.providerUsageReasoningVisible(provider)) {
+        providerUsageInOutTooltip(provider) {
+            const usage = provider && provider.usage;
+            if (!usage || !usage.has_usage) {
                 return this.t('common.none');
             }
-            return this.formatTokenCount(provider.usage.reasoning_tokens || 0);
-        },
-
-        providerUsageThoughtsVisible(provider) {
-            return !!(provider && provider.usage && Number(provider.usage.thoughts_tokens || 0) > 0);
-        },
-
-        providerUsageThoughts(provider) {
-            if (!this.providerUsageThoughtsVisible(provider)) {
-                return this.t('common.none');
+            const input = this.formatTokenCount(usage.input_tokens || 0);
+            const output = this.formatTokenCount(usage.output_tokens || 0);
+            const formula = this.tf('providers.usageInOutFormula', { input, output });
+            const entries = this.providerUsageBreakdowns(provider, 'output');
+            if (!entries.length) {
+                return formula;
             }
-            return this.formatCompactTokenCount(provider.usage.thoughts_tokens || 0);
-        },
-
-        providerUsageThoughtsTitle(provider) {
-            if (!this.providerUsageThoughtsVisible(provider)) {
-                return this.t('common.none');
-            }
-            return this.formatTokenCount(provider.usage.thoughts_tokens || 0);
+            const suffix = entries
+                .map((entry) => this.providerUsageBreakdownSummary(entry, false))
+                .join(this.t('providers.usageBreakdownJoiner'));
+            return `${formula} · ${suffix}`;
         },
 
         providerSpendVisible(provider) {

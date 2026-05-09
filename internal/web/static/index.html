@@ -284,28 +284,26 @@
                                 <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.usageTotal')"></span>
                                     <span class="provider-card__detail-value"
+                                        :data-has-breakdown="providerUsageTotalBreakdown(provider) ? 'true' : 'false'"
                                         :title="providerUsageTotalTitle(provider)"
-                                        x-text="providerUsageTotal(provider)"></span>
+                                        >
+                                        <span x-text="providerUsageTotalMain(provider)"></span>
+                                        <span class="provider-card__detail-subvalue"
+                                            x-show="providerUsageTotalBreakdown(provider)"
+                                            x-text="providerUsageTotalBreakdown(provider)"></span>
+                                    </span>
                                 </div>
                                 <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.usageInOut')"></span>
                                     <span class="provider-card__detail-value"
+                                        :data-has-breakdown="providerUsageInOutBreakdown(provider) ? 'true' : 'false'"
                                         :title="providerUsageInOutTitle(provider)"
-                                        x-text="providerUsageInOut(provider)"></span>
-                                </div>
-                                <div class="flex items-center gap-3 provider-card__usage-pair"
-                                    x-show="providerUsageReasoningVisible(provider)">
-                                    <span class="provider-card__detail-label" x-text="t('providers.usageReasoning')"></span>
-                                    <span class="provider-card__detail-value"
-                                        :title="providerUsageReasoningTitle(provider)"
-                                        x-text="providerUsageReasoning(provider)"></span>
-                                </div>
-                                <div class="flex items-center gap-3 provider-card__usage-pair"
-                                    x-show="providerUsageThoughtsVisible(provider)">
-                                    <span class="provider-card__detail-label" x-text="t('providers.usageThoughts')"></span>
-                                    <span class="provider-card__detail-value"
-                                        :title="providerUsageThoughtsTitle(provider)"
-                                        x-text="providerUsageThoughts(provider)"></span>
+                                        >
+                                        <span x-text="providerUsageInOutMain(provider)"></span>
+                                        <span class="provider-card__detail-subvalue"
+                                            x-show="providerUsageInOutBreakdown(provider)"
+                                            x-text="providerUsageInOutBreakdown(provider)"></span>
+                                    </span>
                                 </div>
                             </div>
                         </div>

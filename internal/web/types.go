@@ -204,18 +204,25 @@ type ProviderResponse struct {
 }
 
 type ProviderUsageResponse struct {
-	RequestCount     int64  `json:"request_count,omitempty"`
-	SuccessCount     int64  `json:"success_count,omitempty"`
-	InputTokens      int64  `json:"input_tokens,omitempty"`
-	OutputTokens     int64  `json:"output_tokens,omitempty"`
-	TotalTokens      int64  `json:"total_tokens,omitempty"`
-	ReasoningTokens  int64  `json:"reasoning_tokens,omitempty"`
-	ThoughtsTokens   int64  `json:"thoughts_tokens,omitempty"`
-	SpendTodayMicros int64  `json:"spend_today_micros,omitempty"`
-	SpendWeekMicros  int64  `json:"spend_week_micros,omitempty"`
-	LastUsedAt       string `json:"last_used_at,omitempty"`
-	HasUsage         bool   `json:"has_usage,omitempty"`
-	HasCost          bool   `json:"has_cost,omitempty"`
+	RequestCount     int64                         `json:"request_count,omitempty"`
+	SuccessCount     int64                         `json:"success_count,omitempty"`
+	InputTokens      int64                         `json:"input_tokens,omitempty"`
+	OutputTokens     int64                         `json:"output_tokens,omitempty"`
+	TotalTokens      int64                         `json:"total_tokens,omitempty"`
+	ReasoningTokens  int64                         `json:"reasoning_tokens,omitempty"`
+	ThoughtsTokens   int64                         `json:"thoughts_tokens,omitempty"`
+	UsageBreakdowns  []ProviderUsageBreakdownEntry `json:"usage_breakdowns,omitempty"`
+	SpendTodayMicros int64                         `json:"spend_today_micros,omitempty"`
+	SpendWeekMicros  int64                         `json:"spend_week_micros,omitempty"`
+	LastUsedAt       string                        `json:"last_used_at,omitempty"`
+	HasUsage         bool                          `json:"has_usage,omitempty"`
+	HasCost          bool                          `json:"has_cost,omitempty"`
+}
+
+type ProviderUsageBreakdownEntry struct {
+	Kind   string `json:"kind,omitempty"`
+	Parent string `json:"parent,omitempty"`
+	Tokens int64  `json:"tokens,omitempty"`
 }
 
 type ProviderOAuthLimits struct {
@@ -596,6 +603,20 @@ func mapProviderUsageResponse(usage telemetry.ProviderUsage) *ProviderUsageRespo
 		SpendWeekMicros:  spendWeekMicros,
 		HasUsage:         usage.Usage != nil,
 		HasCost:          usage.HasCost,
+	}
+	if usage.ReasoningTokens > 0 {
+		resp.UsageBreakdowns = append(resp.UsageBreakdowns, ProviderUsageBreakdownEntry{
+			Kind:   "reasoning",
+			Parent: "output",
+			Tokens: usage.ReasoningTokens,
+		})
+	}
+	if usage.ThoughtsTokens > 0 {
+		resp.UsageBreakdowns = append(resp.UsageBreakdowns, ProviderUsageBreakdownEntry{
+			Kind:   "thoughts",
+			Parent: "total",
+			Tokens: usage.ThoughtsTokens,
+		})
 	}
 	if !usage.LastUsedAt.IsZero() {
 		resp.LastUsedAt = usage.LastUsedAt.Format(time.RFC3339)

@@ -255,6 +255,20 @@
     max-width: none;
 }
 
+.provider-card__detail--usage .provider-card__detail-value[data-has-breakdown="true"] {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.provider-card__detail-subvalue {
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: var(--font-medium);
+    white-space: nowrap;
+}
+
 .provider-card__detail-label {
     color: var(--text-secondary);
     font-weight: var(--font-medium);
