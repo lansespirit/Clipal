@@ -255,18 +255,24 @@
     max-width: none;
 }
 
-.provider-card__detail--usage .provider-card__detail-value[data-has-breakdown="true"] {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
+.provider-card__value-tooltip {
+    flex: 0 0 auto;
 }
 
-.provider-card__detail-subvalue {
-    color: var(--text-secondary);
-    font-family: var(--font-sans);
-    font-size: 0.6875rem;
-    font-weight: var(--font-medium);
-    white-space: nowrap;
+.provider-card__value-tooltip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 8px;
+}
+
+.provider-card__value-tooltip .tooltip-content {
+    left: auto;
+    right: 0;
+}
+
+.provider-card__value-tooltip .tooltip-content::before {
+    left: auto;
+    right: 10px;
 }
 
 .provider-card__detail-label {

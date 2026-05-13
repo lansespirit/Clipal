@@ -2700,6 +2700,34 @@ function app() {
             return this.formatUSDMicros(provider.usage.spend_week_micros || 0, true);
         },
 
+        suppressProviderDragTooltip(event) {
+            const card = event && event.currentTarget && event.currentTarget.closest
+                ? event.currentTarget.closest('.provider-card')
+                : null;
+            if (!card) {
+                return;
+            }
+            const title = String(card.getAttribute('title') || '');
+            if (title) {
+                card.dataset.dragTooltipTitle = title;
+                card.removeAttribute('title');
+            }
+        },
+
+        restoreProviderDragTooltip(event) {
+            const card = event && event.currentTarget && event.currentTarget.closest
+                ? event.currentTarget.closest('.provider-card')
+                : null;
+            if (!card) {
+                return;
+            }
+            const title = String(card.dataset.dragTooltipTitle || '');
+            if (title) {
+                card.setAttribute('title', title);
+                delete card.dataset.dragTooltipTitle;
+            }
+        },
+
         providerOAuthPlanRaw(provider) {
             return String((provider && provider.oauth_plan_type) || '').trim().toLowerCase();
         },

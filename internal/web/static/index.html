@@ -268,41 +268,55 @@
                                 x-show="providerSpendVisible(provider)">
                                 <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.spendToday')"></span>
-                                    <span class="provider-card__detail-value"
-                                        :title="providerSpendTodayTitle(provider)"
-                                        x-text="providerSpendToday(provider)"></span>
+                                    <span class="tooltip provider-card__value-tooltip" tabindex="0"
+                                        @mouseenter="suppressProviderDragTooltip($event)"
+                                        @mouseleave="restoreProviderDragTooltip($event)"
+                                        @focusin="suppressProviderDragTooltip($event)"
+                                        @focusout="restoreProviderDragTooltip($event)">
+                                        <span class="provider-card__detail-value"
+                                            x-text="providerSpendToday(provider)"></span>
+                                        <span class="tooltip-content" x-text="providerSpendTodayTitle(provider)"></span>
+                                    </span>
                                 </div>
                                 <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.spendWeek')"></span>
-                                    <span class="provider-card__detail-value"
-                                        :title="providerSpendWeekTitle(provider)"
-                                        x-text="providerSpendWeek(provider)"></span>
+                                    <span class="tooltip provider-card__value-tooltip" tabindex="0"
+                                        @mouseenter="suppressProviderDragTooltip($event)"
+                                        @mouseleave="restoreProviderDragTooltip($event)"
+                                        @focusin="suppressProviderDragTooltip($event)"
+                                        @focusout="restoreProviderDragTooltip($event)">
+                                        <span class="provider-card__detail-value"
+                                            x-text="providerSpendWeek(provider)"></span>
+                                        <span class="tooltip-content" x-text="providerSpendWeekTitle(provider)"></span>
+                                    </span>
                                 </div>
                             </div>
                             <div class="provider-card__detail provider-card__detail--usage"
                                 x-show="provider.usage && provider.usage.has_usage">
                                 <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.usageTotal')"></span>
-                                    <span class="provider-card__detail-value"
-                                        :data-has-breakdown="providerUsageTotalBreakdown(provider) ? 'true' : 'false'"
-                                        :title="providerUsageTotalTitle(provider)"
-                                        >
-                                        <span x-text="providerUsageTotalMain(provider)"></span>
-                                        <span class="provider-card__detail-subvalue"
-                                            x-show="providerUsageTotalBreakdown(provider)"
-                                            x-text="providerUsageTotalBreakdown(provider)"></span>
+                                    <span class="tooltip provider-card__value-tooltip" tabindex="0"
+                                        @mouseenter="suppressProviderDragTooltip($event)"
+                                        @mouseleave="restoreProviderDragTooltip($event)"
+                                        @focusin="suppressProviderDragTooltip($event)"
+                                        @focusout="restoreProviderDragTooltip($event)">
+                                        <span class="provider-card__detail-value">
+                                            <span x-text="providerUsageTotalMain(provider)"></span>
+                                        </span>
+                                        <span class="tooltip-content" x-text="providerUsageTotalTitle(provider)"></span>
                                     </span>
                                 </div>
                                 <div class="flex items-center gap-3 provider-card__usage-pair">
                                     <span class="provider-card__detail-label" x-text="t('providers.usageInOut')"></span>
-                                    <span class="provider-card__detail-value"
-                                        :data-has-breakdown="providerUsageInOutBreakdown(provider) ? 'true' : 'false'"
-                                        :title="providerUsageInOutTitle(provider)"
-                                        >
-                                        <span x-text="providerUsageInOutMain(provider)"></span>
-                                        <span class="provider-card__detail-subvalue"
-                                            x-show="providerUsageInOutBreakdown(provider)"
-                                            x-text="providerUsageInOutBreakdown(provider)"></span>
+                                    <span class="tooltip provider-card__value-tooltip" tabindex="0"
+                                        @mouseenter="suppressProviderDragTooltip($event)"
+                                        @mouseleave="restoreProviderDragTooltip($event)"
+                                        @focusin="suppressProviderDragTooltip($event)"
+                                        @focusout="restoreProviderDragTooltip($event)">
+                                        <span class="provider-card__detail-value">
+                                            <span x-text="providerUsageInOutMain(provider)"></span>
+                                        </span>
+                                        <span class="tooltip-content" x-text="providerUsageInOutTitle(provider)"></span>
                                     </span>
                                 </div>
                             </div>

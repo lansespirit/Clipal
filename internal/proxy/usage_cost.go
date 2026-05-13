@@ -60,7 +60,7 @@ func applyUsageCostSnapshot(original *http.Request, requestCtx RequestContext, p
 		return snapshot
 	}
 
-	costMicros, ok := oauthUsageCostMicros(original, requestCtx, provider, payload, snapshot)
+	costMicros, ok := inferredUsageCostMicros(original, requestCtx, provider, payload, snapshot)
 	if !ok {
 		return snapshot
 	}
@@ -69,8 +69,8 @@ func applyUsageCostSnapshot(original *http.Request, requestCtx RequestContext, p
 	return snapshot
 }
 
-func oauthUsageCostMicros(original *http.Request, requestCtx RequestContext, provider config.Provider, payload *requestPayload, snapshot telemetry.UsageSnapshot) (int64, bool) {
-	if snapshot.Usage == nil || !provider.UsesOAuth() {
+func inferredUsageCostMicros(original *http.Request, requestCtx RequestContext, provider config.Provider, payload *requestPayload, snapshot telemetry.UsageSnapshot) (int64, bool) {
+	if snapshot.Usage == nil {
 		return 0, false
 	}
 
@@ -79,18 +79,18 @@ func oauthUsageCostMicros(original *http.Request, requestCtx RequestContext, pro
 		return 0, false
 	}
 
-	switch provider.NormalizedOAuthProvider() {
-	case config.OAuthProviderCodex:
-		if requestCtx.Capability != CapabilityOpenAIResponses {
+	switch requestCtx.Family {
+	case ProtocolFamilyOpenAI:
+		if !isOpenAIGenerationCapability(requestCtx.Capability) {
 			return 0, false
 		}
 		return calculateOpenAICostMicros(model, snapshot.Usage)
-	case config.OAuthProviderClaude:
+	case ProtocolFamilyClaude:
 		if requestCtx.Capability != CapabilityClaudeMessages {
 			return 0, false
 		}
 		return calculateClaudeCostMicros(model, snapshot.Usage)
-	case config.OAuthProviderGemini:
+	case ProtocolFamilyGemini:
 		if requestCtx.Capability != CapabilityGeminiGenerateContent && requestCtx.Capability != CapabilityGeminiStreamGenerate {
 			return 0, false
 		}
@@ -354,36 +354,39 @@ func calculateGeminiCostMicros(model string, raw map[string]any) (int64, bool) {
 	}
 
 	promptTokens, _ := int64Lookup(raw, "promptTokenCount")
-	candidateTokens, _ := int64Lookup(raw, "candidatesTokenCount")
+	toolUsePromptTokens, _ := int64Lookup(raw, "toolUsePromptTokenCount")
+	candidateTokens, _ := int64Lookup(raw, "candidatesTokenCount", "responseTokenCount")
 	thoughtTokens, _ := int64Lookup(raw, "thoughtsTokenCount")
 	totalTokens, _ := int64Lookup(raw, "totalTokenCount")
 	cachedTokens, _ := int64Lookup(raw, "cachedContentTokenCount")
+	effectivePromptTokens := promptTokens + toolUsePromptTokens
 	if cachedTokens < 0 {
 		cachedTokens = 0
 	}
-	if cachedTokens > promptTokens {
-		cachedTokens = promptTokens
+	if cachedTokens > effectivePromptTokens {
+		cachedTokens = effectivePromptTokens
 	}
 
 	outputTokens := candidateTokens + thoughtTokens
-	if totalTokens > promptTokens {
-		residualOutput := totalTokens - promptTokens
+	if totalTokens > effectivePromptTokens {
+		residualOutput := totalTokens - effectivePromptTokens
 		if residualOutput > outputTokens {
 			outputTokens = residualOutput
 		}
 	}
 
 	textLikePromptTokens, audioPromptTokens := geminiPromptTokenCounts(raw, promptTokens)
+	textLikePromptTokens += toolUsePromptTokens
 	cachedTextTokens, cachedAudioTokens := geminiCachedTokenSplit(cachedTokens, textLikePromptTokens, audioPromptTokens)
 	billableTextTokens := textLikePromptTokens - cachedTextTokens
 	billableAudioTokens := audioPromptTokens - cachedAudioTokens
-	billablePromptTokens := promptTokens - cachedTokens
+	billablePromptTokens := effectivePromptTokens - cachedTokens
 	if remainder := billablePromptTokens - billableTextTokens - billableAudioTokens; remainder > 0 {
 		billableTextTokens += remainder
 	}
 
 	tier := rates.Standard
-	if rates.ThresholdTokens > 0 && promptTokens > rates.ThresholdTokens {
+	if rates.ThresholdTokens > 0 && effectivePromptTokens > rates.ThresholdTokens {
 		tier = rates.LargePrompt
 	}
 
@@ -551,7 +554,7 @@ func hasClaudeUsageFields(raw map[string]any) bool {
 }
 
 func hasGeminiUsageFields(raw map[string]any) bool {
-	return raw != nil && (hasAnyKey(raw, "promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "totalTokenCount", "cachedContentTokenCount") || hasNestedKey(raw, "promptTokensDetails"))
+	return raw != nil && (hasAnyKey(raw, "promptTokenCount", "candidatesTokenCount", "responseTokenCount", "thoughtsTokenCount", "toolUsePromptTokenCount", "totalTokenCount", "cachedContentTokenCount") || hasNestedKey(raw, "promptTokensDetails"))
 }
 
 func hasAnyKey(raw map[string]any, keys ...string) bool {

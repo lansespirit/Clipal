@@ -1,6 +1,6 @@
 {
   "name": "clipal",
-  "version": "0.17.0",
+  "version": "0.0.0-dev",
   "description": "Clipal CLI installer for the local LLM API gateway",
   "license": "MIT",
   "homepage": "https://github.com/PAIArtCom/Clipal",

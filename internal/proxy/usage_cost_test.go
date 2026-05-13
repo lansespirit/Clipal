@@ -65,6 +65,41 @@ func TestApplyUsageCostSnapshot_CodexUsesProviderOverrideAndCachedTokens(t *test
 	}
 }
 
+func TestApplyUsageCostSnapshot_OpenAIAPIProviderUsesModelFromRequest(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"gpt-5.4","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	requestCtx := RequestContext{
+		ClientType:   ClientOpenAI,
+		Family:       ProtocolFamilyOpenAI,
+		Capability:   CapabilityOpenAIResponses,
+		UpstreamPath: "/v1/responses",
+	}
+	req = withRequestContext(req, requestCtx)
+
+	provider := config.Provider{
+		AuthType: config.ProviderAuthTypeAPIKey,
+	}
+
+	snapshot := applyUsageCostSnapshot(req, requestCtx, provider, newRequestPayload(body), telemetry.UsageSnapshot{
+		Usage: map[string]any{
+			"prompt_tokens":     100000.0,
+			"completion_tokens": 20000.0,
+			"input_tokens_details": map[string]any{
+				"cached_tokens": 25000.0,
+			},
+		},
+	})
+	if !snapshot.HasCost {
+		t.Fatalf("expected api-key provider cost to be tracked")
+	}
+	if snapshot.CostMicros != 493_750 {
+		t.Fatalf("cost_micros = %d", snapshot.CostMicros)
+	}
+}
+
 func TestApplyUsageCostSnapshot_ClaudeUsesRawCacheAndWebSearchUsage(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +172,40 @@ func TestApplyUsageCostSnapshot_GeminiUsesThoughtTokensAndLargePromptTier(t *tes
 		t.Fatalf("expected gemini cost to be tracked")
 	}
 	if snapshot.CostMicros != 758_000 {
+		t.Fatalf("cost_micros = %d", snapshot.CostMicros)
+	}
+}
+
+func TestApplyUsageCostSnapshot_GeminiSupportsLiveUsageFields(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "http://proxy/clipal/v1beta/models/gemini-2.5-pro:generateContent", bytes.NewReader([]byte(`{"contents":[]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	requestCtx := RequestContext{
+		ClientType:   ClientGemini,
+		Family:       ProtocolFamilyGemini,
+		Capability:   CapabilityGeminiGenerateContent,
+		UpstreamPath: "/v1beta/models/gemini-2.5-pro:generateContent",
+	}
+	req = withRequestContext(req, requestCtx)
+
+	provider := config.Provider{
+		AuthType: config.ProviderAuthTypeAPIKey,
+	}
+
+	snapshot := applyUsageCostSnapshot(req, requestCtx, provider, newRequestPayload([]byte(`{"contents":[],"model":"gemini-2.5-pro"}`)), telemetry.UsageSnapshot{
+		Usage: map[string]any{
+			"promptTokenCount":        1000.0,
+			"responseTokenCount":      200.0,
+			"toolUsePromptTokenCount": 150.0,
+			"thoughtsTokenCount":      50.0,
+			"totalTokenCount":         1400.0,
+		},
+	})
+	if !snapshot.HasCost {
+		t.Fatalf("expected gemini api-key provider cost to be tracked")
+	}
+	if snapshot.CostMicros != 3_938 {
 		t.Fatalf("cost_micros = %d", snapshot.CostMicros)
 	}
 }

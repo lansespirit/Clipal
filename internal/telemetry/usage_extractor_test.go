@@ -20,6 +20,21 @@ func TestUsageExtractorJSON_OpenAI(t *testing.T) {
 	}
 }
 
+func TestUsageExtractorJSON_OpenAIChatCompletionsReasoning(t *testing.T) {
+	extractor := NewUsageExtractor("openai", "openai_chat_completions", "application/json")
+	extractor.Append([]byte(`{"id":"c1","usage":{"prompt_tokens":12,"completion_tokens":34,"total_tokens":46,"completion_tokens_details":{"reasoning_tokens":5}}}`))
+	usage, ok := extractor.Finalize()
+	if !ok {
+		t.Fatalf("expected usage")
+	}
+	if usage.ReasoningTokens != 5 {
+		t.Fatalf("reasoning_tokens = %d", usage.ReasoningTokens)
+	}
+	if usage.Usage["completion_tokens_details"] == nil {
+		t.Fatalf("expected raw usage payload to be preserved")
+	}
+}
+
 func TestUsageExtractorJSON_Claude(t *testing.T) {
 	extractor := NewUsageExtractor("claude", "claude_messages", "application/json")
 	extractor.Append([]byte(`{"type":"message","usage":{"input_tokens":8,"output_tokens":13,"cache_creation_input_tokens":5,"cache_read_input_tokens":21}}`))
@@ -53,6 +68,18 @@ func TestUsageExtractorJSON_Gemini(t *testing.T) {
 	}
 	if usage.Usage["thoughtsTokenCount"] == nil {
 		t.Fatalf("expected raw usage payload to be preserved")
+	}
+}
+
+func TestUsageExtractorJSON_GeminiLiveUsageShape(t *testing.T) {
+	extractor := NewUsageExtractor("gemini", "gemini_generate_content", "application/json")
+	extractor.Append([]byte(`{"usageMetadata":{"promptTokenCount":5,"responseTokenCount":7,"toolUsePromptTokenCount":3,"totalTokenCount":17,"thoughtsTokenCount":2}}`))
+	usage, ok := extractor.Finalize()
+	if !ok {
+		t.Fatalf("expected usage")
+	}
+	if usage.InputTokens != 8 || usage.OutputTokens != 7 || usage.TotalTokens != 17 {
+		t.Fatalf("usage = %#v", usage)
 	}
 }
 

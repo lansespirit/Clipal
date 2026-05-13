@@ -373,6 +373,9 @@ func snapshotFromKnownUsageObject(raw map[string]any, normalize func(map[string]
 		return UsageSnapshot{}, false
 	}
 	outputTokenDetails := nestedMap(usage, "output_tokens_details")
+	if outputTokenDetails == nil {
+		outputTokenDetails = nestedMap(usage, "completion_tokens_details")
+	}
 	return UsageSnapshot{
 		UsageDelta:      normalize(usage).normalized(),
 		Usage:           usage,
@@ -401,9 +404,10 @@ func normalizeClaudeUsage(raw map[string]any) UsageDelta {
 }
 
 func normalizeGeminiUsage(raw map[string]any) UsageDelta {
+	outputTokens := int64Value(raw["candidatesTokenCount"], raw["responseTokenCount"])
 	return UsageDelta{
-		InputTokens:  int64Value(raw["promptTokenCount"]),
-		OutputTokens: int64Value(raw["candidatesTokenCount"]),
+		InputTokens:  int64Value(raw["promptTokenCount"]) + int64Value(raw["toolUsePromptTokenCount"]),
+		OutputTokens: outputTokens,
 		TotalTokens:  int64Value(raw["totalTokenCount"]),
 	}.normalized()
 }
