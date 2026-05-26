@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"hash"
@@ -14,14 +15,17 @@ import (
 
 const (
 	claudeOAuthAnthropicVersion               = "2023-06-01"
-	claudeOAuthUserAgent                      = "claude-cli/2.1.81 (external, sdk-cli)"
+	claudeOAuthAppVersion                     = "2.1.150"
+	claudeOAuthUserAgent                      = "claude-cli/" + claudeOAuthAppVersion + " (external, cli)"
+	claudeOAuthClientApp                      = "claude-code"
+	claudeOAuthAppName                        = "claude-code"
 	claudeOAuthXApp                           = "cli"
 	claudeOAuthDangerousBrowserAccess         = "true"
 	claudeOAuthStainlessRetryCount            = "0"
 	claudeOAuthStainlessRuntime               = "node"
 	claudeOAuthStainlessLang                  = "js"
 	claudeOAuthStainlessTimeout               = "120"
-	claudeOAuthStainlessPackageVersion        = "0.74.0"
+	claudeOAuthStainlessPackageVersion        = claudeOAuthAppVersion
 	claudeOAuthStainlessRuntimeVersion        = "v24.3.0"
 	claudeOAuthStainlessOS                    = "MacOS"
 	claudeOAuthStainlessArch                  = "arm64"
@@ -33,6 +37,7 @@ var (
 )
 
 func normalizeClaudeOAuthRequest(body []byte, proxyReq *http.Request, original *http.Request, requestCtx RequestContext) []byte {
+	body = ensureClaudeOAuthAttributionBlock(body, requestCtx)
 	body = signClaudeOAuthMessageBody(body)
 	applyClaudeOAuthHeaderDefaults(proxyReq, original, requestCtx)
 	return body
@@ -89,6 +94,9 @@ func applyClaudeOAuthHeaderDefaults(proxyReq *http.Request, original *http.Reque
 
 	ensureClaudeOAuthHeader(proxyReq.Header, inbound, "Anthropic-Version", claudeOAuthAnthropicVersion)
 	ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-App", claudeOAuthXApp)
+	ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-App-Name", claudeOAuthAppName)
+	ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-App-Ver", claudeOAuthAppVersion)
+	ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-Client-App", claudeOAuthClientApp)
 
 	if isOfficialClaudeCLIUserAgent(proxyReq.Header.Get("User-Agent")) {
 		// Preserve official Claude Code fingerprints when they already exist.
@@ -109,6 +117,7 @@ func applyClaudeOAuthHeaderDefaults(proxyReq *http.Request, original *http.Reque
 	if requestCtx.Capability == CapabilityClaudeMessages {
 		ensureClaudeOAuthHeader(proxyReq.Header, inbound, "Anthropic-Dangerous-Direct-Browser-Access", claudeOAuthDangerousBrowserAccess)
 		ensureClaudeOAuthHeader(proxyReq.Header, inbound, "Connection", "keep-alive")
+		ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-Claude-Code-Session-Id", claudeOAuthSessionID())
 		ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-Stainless-Retry-Count", claudeOAuthStainlessRetryCount)
 		ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-Stainless-Runtime", claudeOAuthStainlessRuntime)
 		ensureClaudeOAuthHeader(proxyReq.Header, inbound, "X-Stainless-Lang", claudeOAuthStainlessLang)
@@ -184,8 +193,111 @@ func headerValue(header http.Header, key string) string {
 	return strings.TrimSpace(header.Get(key))
 }
 
+func claudeOAuthSessionID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "clipal-" + claudeOAuthContentHash([]byte(claudeOAuthUserAgent))
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16])
+}
+
 func isOfficialClaudeCLIUserAgent(value string) bool {
 	return claudeOAuthCLIUserAgentPattern.MatchString(strings.TrimSpace(value))
+}
+
+func ensureClaudeOAuthAttributionBlock(body []byte, requestCtx RequestContext) []byte {
+	if requestCtx.Capability != CapabilityClaudeMessages {
+		return body
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return body
+	}
+
+	var root map[string]any
+	if err := json.Unmarshal(trimmed, &root); err != nil {
+		return body
+	}
+	if claudeOAuthHasBillingHeader(root["system"]) {
+		return body
+	}
+
+	cloned, ok := cloneClaudeOAuthJSONValue(root).(map[string]any)
+	if !ok || cloned == nil {
+		return body
+	}
+	cloned["system"] = prependClaudeOAuthAttributionBlock(cloned["system"])
+
+	rewritten, err := json.Marshal(cloned)
+	if err != nil {
+		return body
+	}
+	return rewritten
+}
+
+func prependClaudeOAuthAttributionBlock(existing any) any {
+	attribution := map[string]any{
+		"type": "text",
+		"text": claudeOAuthBillingHeaderText("00000"),
+	}
+
+	switch typed := existing.(type) {
+	case nil:
+		return []any{attribution}
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return []any{attribution}
+		}
+		return []any{
+			attribution,
+			map[string]any{"type": "text", "text": typed},
+		}
+	case []any:
+		next := make([]any, 0, len(typed)+1)
+		next = append(next, attribution)
+		next = append(next, typed...)
+		return next
+	default:
+		return []any{attribution, typed}
+	}
+}
+
+func claudeOAuthBillingHeaderText(cch string) string {
+	cch = strings.ToLower(strings.TrimSpace(cch))
+	if cch == "" {
+		cch = "00000"
+	}
+	return fmt.Sprintf("x-anthropic-billing-header: cc_version=%s; cc_entrypoint=cli; cc_workload=unknown; cch=%s;", claudeOAuthAppVersion, cch)
+}
+
+func claudeOAuthHasBillingHeader(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return isClaudeOAuthBillingHeaderText(typed)
+	case []any:
+		for _, item := range typed {
+			if claudeOAuthHasBillingHeader(item) {
+				return true
+			}
+		}
+		return false
+	case map[string]any:
+		if !strings.EqualFold(strings.TrimSpace(stringValue(typed["type"])), "text") {
+			return false
+		}
+		text, _ := typed["text"].(string)
+		return isClaudeOAuthBillingHeaderText(text)
+	default:
+		return false
+	}
+}
+
+func isClaudeOAuthBillingHeaderText(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(strings.ToLower(trimmed), "x-anthropic-billing-header:")
 }
 
 func rewriteClaudeOAuthBillingHeaderPayloads(root map[string]any, cch string) (map[string]any, bool) {
@@ -242,8 +354,7 @@ func rewriteClaudeOAuthBillingHeaderValue(value any, cch string) (any, bool) {
 }
 
 func rewriteClaudeOAuthBillingHeaderText(text string, cch string) (string, bool) {
-	trimmed := strings.TrimSpace(text)
-	if !strings.HasPrefix(strings.ToLower(trimmed), "x-anthropic-billing-header:") {
+	if !isClaudeOAuthBillingHeaderText(text) {
 		return text, false
 	}
 
