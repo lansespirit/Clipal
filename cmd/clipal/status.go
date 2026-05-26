@@ -145,6 +145,15 @@ func runStatus(args []string) {
 func summarizeProviders(client string, cc config.ClientConfig) providerStatus {
 	enabled := config.GetEnabledProviders(cc)
 	ps := providerStatus{Client: client, Enabled: len(enabled)}
+	if cc.Mode == config.ClientModeManual {
+		pin := strings.TrimSpace(cc.PinnedProvider)
+		for _, p := range enabled {
+			if p.Name == pin {
+				ps.Active = p.Name
+				return ps
+			}
+		}
+	}
 	if len(enabled) > 0 {
 		ps.Active = enabled[0].Name
 	}

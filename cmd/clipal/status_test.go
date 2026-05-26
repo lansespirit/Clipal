@@ -169,6 +169,21 @@ func TestSummarizeProvidersAndPrintStatusReport(t *testing.T) {
 	}
 }
 
+func TestSummarizeProviders_ManualModeUsesPinnedProvider(t *testing.T) {
+	cc := config.ClientConfig{
+		Mode:           config.ClientModeManual,
+		PinnedProvider: "p2",
+		Providers: []config.Provider{
+			{Name: "p1", BaseURL: "https://a.example", APIKey: "k1", Priority: 1},
+			{Name: "p2", BaseURL: "https://b.example", APIKey: "k2", Priority: 2},
+		},
+	}
+	got := summarizeProviders("openai", cc)
+	if got.Enabled != 2 || got.Active != "p2" {
+		t.Fatalf("summarizeProviders = %#v, want enabled=2 active=p2", got)
+	}
+}
+
 func TestRunStatusHelperProcess(t *testing.T) {
 	if os.Getenv("CLIPAL_STATUS_HELPER") == "1" {
 		runStatus([]string{"--config-dir", os.Getenv("CLIPAL_STATUS_CONFIG_DIR"), "--json", "--no-service"})
